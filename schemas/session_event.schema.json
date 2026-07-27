@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/session_event.schema.json",
+  "title": "SessionEvent",
+  "description": "Session JSONL 树事件(schema 定稿自 docs/research/07_gemini_trace_observability.md §2,对齐 OTel GenAI 语义;COMPONENTS §2.6)。每行一条,parentId 构成单文件原地分支树。",
+  "type": "object",
+  "required": ["id", "parentId", "timestamp", "type", "payload"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "parentId": { "type": ["string", "null"], "description": "父事件 id;根事件为 null。/tree 分支即改挂 parentId。" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "type": { "enum": ["message", "tool_call", "custom"] },
+    "payload": { "type": "object" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "message" } } },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/messagePayload" } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "tool_call" } } },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/toolCallPayload" } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "custom" } } },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/customPayload" } } }
+    }
+  ],
+  "$defs": {
+    "messagePayload": {
+      "type": "object",
+      "required": ["role"],
+      "description": "type=message;OTel gen_ai.* 指标以点号键平铺。",
+      "properties": {
+        "role": { "enum": ["user", "assistant"] },
+        "content": { "type": "string" },
+        "gen_ai.request.model": { "type": "string" },
+        "gen_ai.usage.prompt_tokens": { "type": "integer", "minimum": 0 },
+        "gen_ai.usage.completion_tokens": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "toolCallPayload": {
+      "type": "object",
+      "required": ["toolCallId", "toolName"],
+      "description": "type=tool_call;对应 OTel span,参数只落摘要。",
+      "properties": {
+        "toolCallId": { "type": "string", "minLength": 1 },
+        "toolName": { "type": "string", "minLength": 1 },
+        "args_summary": { "type": "string" }
+      }
+    },
+    "customPayload": {
+      "type": "object",
+      "required": ["customType"],
+      "description": "type=custom;customType 决定子型,子型字段平铺进 payload。",
+      "properties": {
+        "customType": { "enum": ["screenshot", "score", "patch", "snapshot"] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "customType": { "const": "screenshot" } } },
+          "then": {
+            "required": ["camera_view", "image_path", "phase"],
+            "properties": {
+              "camera_view": { "type": "string" },
+              "image_path": { "type": "string", "description": "本地绝对路径/base64;原图全尺寸只落盘。" },
+              "phase": { "enum": ["scad", "blender"] }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "customType": { "const": "score" } } },
+          "then": {
+            "required": ["rubric_scores", "reasoning", "anchor_ref", "actionable_feedback", "critic_model"],
+            "properties": {
+              "rubric_scores": {
+                "type": "object",
+                "minProperties": 1,
+                "description": "维度 → 0-10 分;详见 score_event.schema.json。"
+              },
+              "reasoning": { "type": "string", "minLength": 1, "description": "强制 CoT:先推理后打分。" },
+              "anchor_ref": { "type": "string", "minLength": 1 },
+              "actionable_feedback": { "type": "string", "minLength": 1 },
+              "critic_model": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "customType": { "const": "patch" } } },
+          "then": {
+            "required": ["target_file", "diff"],
+            "properties": {
+              "target_file": { "type": "string", "minLength": 1 },
+              "diff": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "customType": { "const": "snapshot" } } },
+          "then": {
+            "required": ["blend_file_path", "hash"],
+            "properties": {
+              "blend_file_path": { "type": "string", "minLength": 1 },
+              "hash": { "type": "string", "minLength": 1, "description": "快照文件 hash(回滚点校验)。" }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

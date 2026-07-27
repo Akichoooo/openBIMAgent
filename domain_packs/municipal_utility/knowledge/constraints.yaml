@@ -1,0 +1,296 @@
+# 市政管网工程约束(市政排水为主,管线综合为辅)
+# 数据源:GB 50014-2021《室外排水设计标准》/ GB 50013-2018《室外给水设计标准》/ GB 50289-2016《城市工程管线综合规划规范》
+# 核实日期:2026-07-22
+# 字段说明:
+#   rule_id        - 规则 ID(分类前缀:DRAIN 几何水力 / WELL 检查井 / SEPARATE 雨污分流 / ELEV 竖向覆土 / AVOID 避让 / CLEAR 净距)
+#   category       - 规则类别(geometry_pipe / hydraulics / routing_vertical / routing_clash / system_separation / inspection_well / horizontal_clearance)
+#   parameter      - 参数名
+#   value/range    - 数值或区间
+#   unit           - 单位
+#   source_clause  - 准确条文号(含规范编号)
+#   verified_by    - 核实方式(original_text=见规范原文转载 / authoritative_secondary=权威二手 / unverified=未查到)
+#   confidence     - high / medium / low
+# 消费方:domain_gate(确定性规则校验)。数值错一条,生成的管网就错一片,故低置信条目需人工复核后再上线。
+
+constraints:
+  # ============ 一、管径与坡度(GB 50014-2021 §5.2)============
+  - rule_id: MU-DRAIN-001
+    category: geometry_pipe
+    parameter: min_diameter_sewage
+    value: 300
+    unit: mm
+    source_clause: GB 50014-2021 §5.2.10 表 5.2.10
+    verified_by: original_text
+    confidence: high
+    note: 污水管/合流管最小管径 300mm;原 yaml source_clause "4.2" 系设计流量章,已纠正。
+
+  - rule_id: MU-DRAIN-002
+    category: geometry_pipe
+    parameter: min_diameter_rainwater
+    value: 300
+    unit: mm
+    source_clause: GB 50014-2021 §5.2.10 表 5.2.10
+    verified_by: original_text
+    confidence: high
+    note: 雨水管最小管径 300mm(雨水口连接管除外,见 MU-DRAIN-003)。
+
+  - rule_id: MU-DRAIN-003
+    category: geometry_pipe
+    parameter: min_diameter_rainwater_connector
+    value: 200
+    unit: mm
+    source_clause: GB 50014-2021 §5.2.10 表 5.2.10
+    verified_by: original_text
+    confidence: high
+    note: 雨水口连接管最小管径 200mm(任务 B 第 6 项核实:200mm 准确)。
+
+  - rule_id: MU-DRAIN-004
+    category: geometry_pipe
+    parameter: min_slope_sewage_d300_concrete
+    value: 0.003
+    unit: ratio
+    source_clause: GB 50014-2021 §5.2.10 表 5.2.10
+    verified_by: original_text
+    confidence: high
+    note: DN300 污水管(混凝土/一般材质)最小设计坡度;原 yaml MU-DRAIN-002 数值正确,补全材质区分。
+
+  # 注:塑料管(DN300)最小坡度 0.002、雨水口连接管(DN200)最小坡度 0.01 已纳入 MU-DRAIN-012 管径序列表,不单列。
+
+  - rule_id: MU-DRAIN-007
+    category: hydraulics
+    parameter: min_velocity_sewage
+    value: 0.6
+    unit: m/s
+    source_clause: GB 50014-2021 §5.2.7 第 1 款
+    verified_by: original_text
+    confidence: high
+    note: 污水管道在设计充满度下最小设计流速 0.6m/s(防淤积)。
+
+  - rule_id: MU-DRAIN-008
+    category: hydraulics
+    parameter: min_velocity_rainstorm_combined
+    value: 0.75
+    unit: m/s
+    source_clause: GB 50014-2021 §5.2.7 第 2 款
+    verified_by: original_text
+    confidence: high
+    note: 雨水管道和合流管道在满流时最小设计流速 0.75m/s。
+
+  - rule_id: MU-DRAIN-009
+    category: geometry_pipe
+    parameter: max_diameter_reduction_steps
+    value: 2
+    unit: levels
+    source_clause: GB 50014-2021 §5.2.11
+    verified_by: original_text
+    confidence: high
+    note: "原文逐字:管道在坡度变陡处,其管径可根据水力计算确定,由大变小,但不得超过 2 级,且不得小于相应条件下的最小管径。"
+
+  - rule_id: MU-DRAIN-010
+    category: geometry_pipe
+    parameter: min_flow_turn_angle
+    value: 90
+    unit: degree
+    source_clause: GB 50014-2021 §5.3.2
+    verified_by: original_text
+    confidence: high
+    note: 管道转弯和交接处水流转角不应小于 90°;当管径≤300mm 且跌水水头>0.3m 时可不受此限。
+
+  # 注:雨水口连接管长度限值(§5.7.3,25m)仅在 §5.3.9 条文说明中被引用,未见原文,置信度低,暂不入库;需人工核对 §5.7.3 后再决定是否新增。
+
+  # 常用管径序列及对应最小设计坡度(任务 B 第 4 项)
+  - rule_id: MU-DRAIN-012
+    category: geometry_pipe
+    parameter: diameter_series_with_min_slope
+    value:
+      - {diameter_mm: 200, scope: "雨水口连接管", min_slope: 0.01}
+      - {diameter_mm: 300, scope: "污水/雨水/合流干支管(混凝土)", min_slope: 0.003}
+      - {diameter_mm: 300, scope: "污水/雨水/合流干支管(塑料)", min_slope: 0.002}
+      - {diameter_mm: 400, scope: "污水/雨水干管", min_slope: 0.0015}
+      - {diameter_mm: 500, scope: "污水/雨水干管", min_slope: null}
+      - {diameter_mm: 600, scope: "污水/雨水干管", min_slope: null}
+      - {diameter_mm: 800, scope: "污水/雨水主干管", min_slope: null}
+      - {diameter_mm: 1000, scope: "污水/雨水主干管", min_slope: null}
+    unit: mm / ratio
+    source_clause: GB 50014-2021 §5.2.10 表 5.2.10(仅 DN200/300 为规范明文最小坡度;DN400 及以上由水力计算确定)
+    verified_by: mixed
+    confidence: medium
+    note: |
+      DN200/300 最小坡度为规范明文(HIGH);DN400=0.0015 来自工程实务二手引用(MEDIUM);
+      DN500/600/800/1000 的最小坡度规范未列固定表,应按曼宁公式水力计算确定(min_slope=null 表示由水力计算给定,不设固定下限)。
+      建议人工对照 GB 50014-2021 §5.2.10 原表及条文说明复核。
+
+  # ============ 二、检查井(GB 50014-2021 §5.4)============
+  - rule_id: MU-WELL-001
+    category: inspection_well
+    parameter: max_spacing_by_diameter
+    value:
+      - {diameter_range_mm: "300-600", max_spacing_m: 75}
+      - {diameter_range_mm: "700-1000", max_spacing_m: 100}
+      - {diameter_range_mm: "1100-1500", max_spacing_m: 150}
+      - {diameter_range_mm: "1600-2000", max_spacing_m: 200}
+    unit: m
+    source_clause: GB 50014-2021 §5.4.4 表 5.4.4
+    verified_by: original_text
+    confidence: high
+    note: 检查井最大间距按管径分 4 档;表图为图片,数值经多源(含 toutiao 明确引用"表 5.4.4")交叉印证。养护车辆难以进入的道路(如透水铺装步行街)按人工养护确定,最大间距不宜大于 40m。
+
+  # ============ 三、雨污分流制(GB 50014-2021 §3.1 / §5.1 / §5.4)============
+  - rule_id: MU-SEPARATE-001
+    category: system_separation
+    parameter: rain_sewage_separation_prohibition
+    value: "sewage_into_rainwater_forbidden"
+    unit: boolean
+    source_clause: GB 50014-2021 §3.1.2 第 3 款
+    verified_by: original_text
+    confidence: high
+    note: "原文:分流制排水系统禁止污水接入雨水管网。该条非强条清单内条目,但用'禁止'用语,具强制约束力。"
+
+  - rule_id: MU-SEPARATE-002
+    category: system_separation
+    parameter: no_connection_between_rain_and_combined
+    value: "rain_combined_no_direct_connection"
+    unit: boolean
+    source_clause: GB 50014-2021 §5.1.14 第 1 款
+    verified_by: original_text
+    confidence: high
+    note: "原文:雨水管渠系统和合流管道系统之间不得设置连通管(防止雨污混接)。"
+
+  - rule_id: MU-SEPARATE-003
+    category: system_separation
+    parameter: manhole_cover_labeling
+    value: "label_rain_and_sewage"
+    unit: boolean
+    source_clause: GB 50014-2021 §5.4.2
+    verified_by: original_text
+    confidence: high
+    note: 建筑物和小区内均应采用分流制;井盖分别标识"雨"和"污",合流污水管标识"污"。
+
+  # ============ 四、竖向与覆土(GB 50014-2021 §5.3)============
+  - rule_id: MU-ELEV-001
+    category: routing_vertical
+    parameter: min_cover_depth_driveway
+    range: ">= 0.7"
+    unit: m
+    source_clause: GB 50014-2021 §5.3.7
+    verified_by: original_text
+    confidence: high
+    note: "关键纠错:原 yaml 把 0.7m 标为 GB 50289-2016,实际出自 GB 50014-2021 §5.3.7(车行道下宜为 0.7m)。GB 50289-2016 §4.1.8 为强条但只规定'应符合表 4.1.3',排水管具体 0.7m 数值在 GB 50014。"
+
+  - rule_id: MU-ELEV-002
+    category: routing_vertical
+    parameter: min_cover_depth_sidewalk
+    range: ">= 0.6"
+    unit: m
+    source_clause: GB 50014-2021 §5.3.7
+    verified_by: original_text
+    confidence: high
+    note: 人行道下管顶最小覆土深度宜为 0.6m(与车行道 0.7m 同条)。
+
+  - rule_id: MU-ELEV-003
+    category: routing_vertical
+    parameter: ice_line_burial_method
+    value: "drain_pipe_buried_below_frost_line_preferred"
+    unit: rule
+    source_clause: GB 50014-2021 §5.3.8
+    verified_by: original_text
+    confidence: high
+    note: "原文:冰冻地区的排水管道宜埋设在冰冻线以下;有浅埋经验或采取措施时可埋设在冰冻线以上,但应保证安全运行。GB 50013-2018 给水管道埋深具体条款号未查到,建议人工核对。"
+
+  # ============ 五、管线避让原则(GB 50289-2016 §3.0.4)============
+  - rule_id: MU-AVOID-001
+    category: routing_clash
+    parameter: yield_priority_ordered_list
+    value:
+      - "pressure_yields_to_gravity"
+      - "flexible_yields_to_rigid"
+      - "branch_yields_to_trunk"
+      - "small_diameter_yields_to_large"
+      - "temporary_yields_to_permanent"
+    unit: rule
+    source_clause: GB 50289-2016 §3.0.4
+    verified_by: original_text
+    confidence: high
+    note: "5 条避让原则按优先级排序;用词为'宜'(推荐)。原 yaml MU-AVOID-001 只列第 1 条,现补全 5 条。条款号(§3.0.4)置信度 medium,内容置信度 high。"
+
+  # ============ 六、管线最小水平净距(GB 50289-2016 表 B.0.1)============
+  # 任务 B 第 2 项:给排水/燃气/电力/通信 两两组合至少 6 组
+  - rule_id: MU-CLEAR-001
+    category: horizontal_clearance
+    parameter: clearance_building_to_sewage_rain
+    value: 2.5
+    unit: m
+    source_clause: GB 50289-2016 表(工程管线之间及其与建(构)筑物之间的最小水平净距)
+    verified_by: authoritative_secondary
+    confidence: high
+    note: 建筑物 ↔ 污水雨水管线 = 2.5m;多源(toutiao + mayiwenku 表)印证一致。
+
+  - rule_id: MU-CLEAR-002
+    category: horizontal_clearance
+    parameter: clearance_building_to_water_large
+    value: 3.0
+    unit: m
+    source_clause: GB 50289-2016 表(同上)
+    verified_by: authoritative_secondary
+    confidence: medium
+    note: 建筑物 ↔ 给水管(d>200mm) = 3.0m;给水管 d≤200mm 时为 1.0m。
+
+  - rule_id: MU-CLEAR-003
+    category: horizontal_clearance
+    parameter: clearance_building_to_gas_high_pressure
+    value: 1.5
+    unit: m
+    source_clause: GB 50289-2016 表(同上)
+    verified_by: authoritative_secondary
+    confidence: medium
+    note: 建筑物 ↔ 燃气管(高压)= 1.5m;低压 0.7m,中压 1.0m。
+
+  - rule_id: MU-CLEAR-004
+    category: horizontal_clearance
+    parameter: clearance_building_to_power_direct_buried
+    value: 3.0
+    unit: m
+    source_clause: GB 50289-2016 表(同上)
+    verified_by: authoritative_secondary
+    confidence: medium
+    note: 建筑物 ↔ 电力电缆(直埋)= 3.0m;>35kV 高压为 13.5m。
+
+  - rule_id: MU-CLEAR-005
+    category: horizontal_clearance
+    parameter: clearance_water_to_sewage_rain
+    range: "1.0-1.5"
+    unit: m
+    source_clause: GB 50289-2016 表(同上)
+    verified_by: authoritative_secondary
+    confidence: medium
+    note: 给水管 ↔ 污水雨水管线:给水 d≤200mm 时 1.0m,d>200mm 时 1.5m。OCR 来源,建议对原表核对。
+
+  - rule_id: MU-CLEAR-006
+    category: horizontal_clearance
+    parameter: clearance_sewage_rain_to_gas_low_pressure
+    value: 1.0
+    unit: m
+    source_clause: GB 50289-2016 表(同上)
+    verified_by: authoritative_secondary
+    confidence: medium
+    note: 污水雨水管线 ↔ 燃气(低压)= 1.0m;中压 1.5m。OCR 来源,建议对原表核对。
+
+  - rule_id: MU-CLEAR-007
+    category: horizontal_clearance
+    parameter: clearance_sewage_rain_to_telecom_direct
+    value: 0.5
+    unit: m
+    source_clause: GB 50289-2016 表(同上)
+    verified_by: authoritative_secondary
+    confidence: medium
+    note: 污水雨水管线 ↔ 电信电缆(直埋)= 0.5m。OCR 来源,建议对原表核对。
+
+  - rule_id: MU-CLEAR-008
+    category: horizontal_clearance
+    parameter: clearance_sewage_rain_to_power_direct_buried
+    value: 0.5
+    unit: m
+    source_clause: GB 50289-2016 表(同上)
+    verified_by: authoritative_secondary
+    confidence: medium
+    note: 污水雨水管线 ↔ 电力电缆(直埋)= 0.5m。OCR 来源,建议对原表核对。

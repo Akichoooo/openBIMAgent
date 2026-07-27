@@ -1,0 +1,16 @@
+# 接力调研中间产物(脚本/日志/原始摘录),正式报告在 docs/research/
+relay_workspace/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# 环境
+.env
+
+# 运行时输出
+out/
+
+# 一次性开发脚本
+scratch/

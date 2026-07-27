@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/scene_graph_ir.schema.json",
+  "title": "SceneGraphIR",
+  "description": "Planner 输出的 Scene Graph IR:资产清单 + 空间约束。只出语义不出坐标(C2),批次粒度 = 一次渲染检查单位(COMPONENTS §2.3,ARCH §2 步骤 2)。",
+  "type": "object",
+  "required": ["version", "assets", "spatial_constraints"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "type": "string", "description": "IR 格式版本,如 \"0.1\"。" },
+    "assets": {
+      "type": "array",
+      "minItems": 1,
+      "description": "资产清单(语义描述,禁坐标)。",
+      "items": {
+        "type": "object",
+        "required": ["id", "category", "description"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "category": { "type": "string", "description": "资产类别,如 building / road / prop。" },
+          "description": { "type": "string", "minLength": 1, "description": "语义描述(风格、形态、材质意向),不含坐标。" },
+          "count": { "type": "integer", "minimum": 1, "default": 1 },
+          "material_ref": { "type": "string", "description": "预置材质库条目引用;LLM 只调参数,不手写节点树。" },
+          "tags": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "spatial_constraints": {
+      "type": "array",
+      "description": "空间约束(语义关系,由 Solver 出坐标,C2)。",
+      "items": {
+        "type": "object",
+        "required": ["type", "subject", "relation"],
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "enum": ["adjacency", "alignment", "containment", "orientation", "spacing"],
+            "description": "约束类别:邻接/对齐/包含/朝向/间距。"
+          },
+          "subject": { "type": "string", "description": "资产 id。" },
+          "relation": { "type": "string", "minLength": 1, "description": "语义关系描述,如「沿街布置」「面向十字路口」。" },
+          "object": { "type": "string", "description": "目标资产 id 或空间参照(可空)。" },
+          "value": { "description": "可选数值参数(如间距米数);语义优先,坐标仍由 Solver 决定。" }
+        }
+      }
+    },
+    "batches": {
+      "type": "array",
+      "description": "渲染检查批次;每批 = 一批资产 id,对应一次 SCAD/Blender 环检查单位。",
+      "items": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+    }
+  }
+}

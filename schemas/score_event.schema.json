@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/score_event.schema.json",
+  "title": "ScoreEvent",
+  "description": "critic 评分落盘事件(session customType=score 的 payload)。强制 CoT(reasoning 先于打分)+ 防放水三件套留痕(ARCH §3、07 报告 §3、COMPONENTS §2.5)。",
+  "type": "object",
+  "required": ["customType", "rubric_scores", "reasoning", "anchor_ref", "actionable_feedback", "critic_model"],
+  "additionalProperties": true,
+  "properties": {
+    "customType": { "const": "score" },
+    "phase": {
+      "enum": ["scad", "blender"],
+      "description": "scad 环只评两维(geometry/composition);blender 环六维全出。"
+    },
+    "rubric_scores": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "description": "维度 → 0-10 分;维度键对应 vision.rubric.Dimension。",
+      "properties": {
+        "geometry": { "type": "number", "minimum": 0, "maximum": 10 },
+        "style": { "type": "number", "minimum": 0, "maximum": 10 },
+        "material": { "type": "number", "minimum": 0, "maximum": 10 },
+        "wear": { "type": "number", "minimum": 0, "maximum": 10 },
+        "lighting": { "type": "number", "minimum": 0, "maximum": 10 },
+        "composition": { "type": "number", "minimum": 0, "maximum": 10 }
+      }
+    },
+    "reasoning": {
+      "type": "string",
+      "minLength": 1,
+      "description": "强制 CoT:必须先推理后打分,全文落盘(07 报告 §3)。"
+    },
+    "anchor_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "评分使用的金标准锚点图/锚点词引用(防放水第 3 条)。"
+    },
+    "actionable_feedback": {
+      "type": "string",
+      "minLength": 1,
+      "description": "可执行返工反馈;任一维 <8 分强制 actionable_rework_command,形如「Object A 缩放 0.8 并沿 Z 降 0.2」,禁止空泛建议(防放水第 2 条)。"
+    },
+    "critic_model": { "type": "string", "minLength": 1, "description": "评分所用模型,如 gemini-3.1-pro。" },
+    "ab_swap_ref": {
+      "type": "string",
+      "description": "A/B swap 对比的上一版快照引用(防放水第 1 条)。"
+    }
+  }
+}

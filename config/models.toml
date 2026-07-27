@@ -1,0 +1,81 @@
+# config/models.toml
+# 通道一:官方(GLM/Gemini 直连,正式跑批);通道二:agentrouter(联调测试,低额度)
+# 数值为调研值,未经控制台确认;glm-5.2 不支持 vision(用户控制台确认 2026-07-21)
+[providers.glm]
+type = "openai-compatible"
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+api_key_env = "GLM_API_KEY"
+
+[providers.gemini]
+type = "google-genai"
+api_key_env = "GEMINI_API_KEY"
+
+[providers.agentrouter]
+type = "openai-compatible"               # 已实测确认 OpenAI 方言(probe_agentrouter.py)
+base_url = "https://agentrouter.org/v1"  # 已实测确认
+api_key_env = "AGENTROUTER_API_KEY"
+# 实测:agentrouter 按 User-Agent 过滤客户端,缺此 UA 一律 401「unauthorized client detected」
+default_headers = { "User-Agent" = "claude-cli/2.0.0 (external, cli)" }
+
+[models."glm-5.2"]
+provider = "glm"
+context_window = 1_000_000          # 调研值,待确认
+capabilities = ["tools"]            # 不支持 vision(控制台确认)
+cost_per_mtoken = { input = 0.84, output = 2.64 }
+
+[models."gemini-3.1-pro"]
+provider = "gemini"
+context_window = 1_000_000
+capabilities = ["tools", "vision"]
+cost_per_mtoken = { input = 2.0, output = 12.0 }
+
+[models."gemini-3.6-flash"]
+provider = "gemini"
+capabilities = ["tools", "vision"]  # 用户持有的最新模型;context/价格待官方文档确认
+
+[models."glm-5.2-ar"]
+provider = "agentrouter"
+capabilities = ["tools"]            # 不支持 vision(控制台确认)
+
+[models."claude-opus-4-8"]
+provider = "agentrouter"
+capabilities = ["tools", "vision"]
+
+[models."claude-opus-4-6"]
+provider = "agentrouter"
+capabilities = ["tools", "vision"]  # 降级链
+
+[models."gpt-5.5"]
+provider = "agentrouter"
+capabilities = ["tools", "vision"]
+
+[profiles]                          # OPENBIMAGENT_PROFILE 切换,默认 official
+[profiles.official]
+orchestrator = "glm-5.2"
+planner = "gemini-3.1-pro"
+modeler = "gemini-3.1-pro"
+critic_scad = "gemini-3.6-flash"
+critic_render = "gemini-3.1-pro"
+clarify = "gemini-3.6-flash"
+
+[profiles.test]                     # agentrouter 联调:省额度;judge 与生成模型分家(Claude 生成 → GPT 评判)
+orchestrator = "glm-5.2-ar"
+planner = "glm-5.2-ar"
+modeler = "claude-opus-4-8"         # 质量咽喉上最强
+critic_scad = "gpt-5.5"
+critic_render = "gpt-5.5"
+clarify = "glm-5.2-ar"
+
+[fallbacks]
+"gemini-3.1-pro" = ["glm-5.2"]
+"gpt-5.5" = ["claude-opus-4-6"]
+"claude-opus-4-8" = ["claude-opus-4-6", "glm-5.2-ar"]
+
+[resilience]                        # 韧性集中在 providers 层,业务代码不重复造
+retry = { max = 3, backoff = "exponential", base_ms = 1000 }
+timeout_s = 120
+circuit_breaker = { failures = 5, cooldown_s = 300 }
+
+[tracking]
+log_tokens = true
+log_cost = true

@@ -1,0 +1,16 @@
+Upstream baseline (pristine, do not edit)
+=========================================
+repo:    https://github.com/ahujasid/blender-mcp
+commit:  da4e16d2069ce5154eaa2535bf995e843caf5c73 (2026-07-21, main HEAD at fork time)
+version: 1.6.0 (pyproject.toml; repo has no git tags)
+license: see UPSTREAM_LICENSE (MIT, Siddharth Ahuja)
+
+files:
+  addon.py               <- <upstream>/addon.py
+  server.py              <- <upstream>/src/blender_mcp/server.py
+  telemetry.py           <- <upstream>/src/blender_mcp/telemetry.py
+  telemetry_decorator.py <- <upstream>/src/blender_mcp/telemetry_decorator.py
+
+known upstream quirk: telemetry.py lazily imports `.config` (telemetry_config)
+but no config.py is shipped in the repo -> TelemetryCollector() raises
+ModuleNotFoundError at runtime. Moot in the fork: telemetry is hard-disabled.

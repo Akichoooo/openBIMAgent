@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/plan.schema.json",
+  "title": "Plan",
+  "description": "playbook 实例化产物 PLAN 的结构化校验(PLAN.md/TODO.md 的结构化同源数据;ARCH §4 playbook schema、§2 步骤 2-3)。",
+  "type": "object",
+  "required": ["playbook", "phases", "deliverables"],
+  "additionalProperties": false,
+  "properties": {
+    "playbook": { "type": "string", "minLength": 1, "description": "来源 playbook 名(domain_packs/<name>)。" },
+    "targets": {
+      "type": "array",
+      "items": { "enum": ["blender", "vectorworks"] },
+      "minItems": 1,
+      "description": "启用目标;含 vectorworks 时启用 playbook 附录 B。"
+    },
+    "slots": {
+      "type": "object",
+      "additionalProperties": { "type": ["string", "number", "boolean"] },
+      "description": "Clarify 槽位填充结果(completion_score ≥ 85 放行后快照)。"
+    },
+    "phases": {
+      "type": "array",
+      "minItems": 1,
+      "description": "阶段序列(与 playbook phases 对应;TODO.md 由此派生)。",
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "agent": { "type": "string", "description": "负责角色(对应 agents/*.md 或包内覆盖)。" },
+          "tools": { "type": "array", "items": { "type": "string" }, "description": "阶段级工具/权限范围。" },
+          "output": { "type": "string", "description": "阶段输出工件路径。" },
+          "status": { "enum": ["pending", "in_progress", "done", "blocked"], "default": "pending" }
+        }
+      }
+    },
+    "acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "双环阈值;超限 ESCALATE 不死循环。",
+      "properties": {
+        "scad_loop": { "$ref": "#/$defs/loop_threshold" },
+        "blender_loop": { "$ref": "#/$defs/loop_threshold" }
+      }
+    },
+    "deliverables": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Deliver 门禁(C5)强校验清单。"
+    }
+  },
+  "$defs": {
+    "loop_threshold": {
+      "type": "object",
+      "required": ["min_score", "max_iters"],
+      "additionalProperties": false,
+      "properties": {
+        "min_score": { "type": "number", "minimum": 0, "maximum": 10 },
+        "max_iters": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}

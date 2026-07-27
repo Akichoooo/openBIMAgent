@@ -1,0 +1,218 @@
+"""Pipeline:把任务生命周期串成可用 CLI 产品(ARCH §2 完整生命周期)。
+
+链路:
+  load playbook → clarify(CLI 一问一答) → planner.instantiate(registry 真实 / 模板回退)
+  → schema_gate(已在 instantiate 内) → orchestrator.run_plan(agent_fn=真实批次执行器)
+  → 批次执行器 = builder + scad_loop/render_loop 双环
+  → deliver 门禁 → 输出交付清单。
+
+Ctrl+C 中断 → 落 checkpoint 事件(MESSAGE 形态)→ 返回 interrupted=True,可续跑。
+审批门:MCP 写操作(execute_code)前 + deliver 前调 approval_fn(y/N,--yes 跳过)。
+所有 LLM 调用走 providers registry(role=modeler/planner/critic_*),可注入替换(测试全 mock)。
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from openbimagent.assembly.batch_executor import (
+    ApprovalFn,
+    OnHtmlReport,
+    make_batch_executor,
+)
+from openbimagent.assembly.builder import make_builder_fn
+from openbimagent.clarify import slots as clarify
+from openbimagent.deliver.gate import DeliveryReport, check_deliverables, make_acceptance_fn
+from openbimagent.orchestrator.dispatch import PlanRunResult, Verdict, run_plan
+from openbimagent.planner.instantiate import PlanArtifacts, instantiate, load_playbook
+from openbimagent.session.schema import EventType
+from openbimagent.session.store import SessionStore
+
+OnPhase = Callable[[str, dict[str, Any]], None]
+"""阶段进度回调:(phase_name, payload) → None;CLI 用来打印阶段标题。"""
+
+
+@dataclass(frozen=True)
+class PipelineResult:
+    """run_pipeline 总结果:ok = 全流程成功(orchestrator ok + deliver ok)。"""
+
+    ok: bool
+    plan_run: PlanRunResult | None = None
+    delivery: DeliveryReport | None = None
+    artifacts_dir: Path | None = None
+    session: SessionStore | None = None
+    interrupted: bool = False
+    error: str | None = None
+    plan_artifacts: PlanArtifacts | None = None
+    phases_log: tuple[tuple[str, str], ...] = ()  # (phase_name, outcome_note) 序列
+
+
+def run_pipeline(
+    playbook_path: Path,
+    *,
+    out_dir: Path,
+    registry: Any = None,
+    blender_client: Any = None,
+    scad_critic: Any = None,
+    render_critic: Any = None,
+    input_func: Callable[[str], str] = input,
+    approval_fn: ApprovalFn | None = None,
+    on_html_report: OnHtmlReport | None = None,
+    on_phase: OnPhase | None = None,
+    sessions_dir: Path | None = None,
+    yes: bool = False,
+    cameras: list[str] | None = None,
+    turntable_target: str | None = None,
+    turntable_frames: int = 4,
+    image_size: int = 512,
+    max_retries: int = 3,
+    doom_max_fix: int = 3,
+) -> PipelineResult:
+    """跑全流程:load playbook → clarify → plan → orchestrate → deliver。
+
+    - registry 为空:planner + builder 都走确定性模板(可离线跑,测试默认路径)。
+    - blender_client 为空:orchestrator 跑空批次(只过 plan + deliver 缺失),测试可注入 fake。
+    - approval_fn 为空 且 yes=False:不审批(测试默认);yes=True 跳过所有审批门。
+    - Ctrl+C 中断:落 checkpoint 事件到 session,返回 interrupted=True。
+    """
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    sessions_root = Path(sessions_dir) if sessions_dir is not None else out / "sessions"
+    sessions_root.mkdir(parents=True, exist_ok=True)
+    phases_log: list[tuple[str, str]] = []
+
+    def _phase(name: str, note: str = "", **kwargs: Any) -> None:
+        phases_log.append((name, note))
+        if on_phase is not None:
+            on_phase(name, {"note": note, **kwargs})
+
+    store = SessionStore.create(sessions_root, title=f"openBIMAgent · {Path(playbook_path).parent.name}",
+                                playbook=str(playbook_path))
+
+    # ---------- 1. load playbook ----------
+    try:
+        playbook = load_playbook(Path(playbook_path))
+    except Exception as exc:
+        _phase("load_playbook", f"失败: {exc}")
+        return PipelineResult(ok=False, session=store, error=str(exc), phases_log=tuple(phases_log))
+    _phase("load_playbook", f"name={playbook['name']} batches={playbook['batches']}")
+
+    # ---------- 2. clarify(CLI 一问一答) ----------
+    try:
+        slot_state = clarify.SlotState(slots=clarify.load_playbook_slots(Path(playbook_path)))
+        clarify.run_clarify(slot_state, input_func=input_func)
+        slots_filled = {s.id: s.value for s in slot_state.slots if s.value is not None}
+        if not clarify.may_proceed(slot_state):
+            note = f"clarify 未达放行阈值(completion_score={slot_state.completion_score:.1f} < {clarify.PASS_THRESHOLD})"
+            _phase("clarify", note)
+            return PipelineResult(ok=False, session=store, error=note, phases_log=tuple(phases_log))
+        _phase("clarify", f"completion_score={slot_state.completion_score:.1f} slots={list(slots_filled)}")
+    except Exception as exc:
+        _phase("clarify", f"失败: {exc}")
+        return PipelineResult(ok=False, session=store, error=str(exc), phases_log=tuple(phases_log))
+
+    # ---------- 3. planner.instantiate(registry 真实 / 模板回退) ----------
+    try:
+        plan_artifacts = instantiate(playbook, slots_filled, out, registry=registry)
+    except Exception as exc:
+        _phase("planner_instantiate", f"失败: {exc}")
+        return PipelineResult(ok=False, session=store, error=str(exc), phases_log=tuple(phases_log))
+    ir = json.loads(plan_artifacts.scene_graph_ir.read_text(encoding="utf-8"))
+    _phase("planner_instantiate", f"ir_assets={len(ir.get('assets', []))} batches={len(ir.get('batches', []))}")
+
+    # ---------- 4. orchestrator.run_plan(agent_fn=批次执行器) ----------
+    batch_names = list(playbook["batches"]) or ["默认批次"]
+    builder_fn = make_builder_fn(registry=registry)
+    effective_approval = approval_fn if not yes else None
+
+    plan_run: PlanRunResult | None = None
+    if blender_client is None:
+        # 无 Blender(测试或离线冒烟):跑空批次直接 ESCALATE
+        _phase("orchestrate", "无 blender_client,跳过批次执行")
+
+        def _no_op_agent(batch: str, rework: str | None):
+            from openbimagent.orchestrator.dispatch import BatchReport
+
+            return BatchReport(Verdict.ESCALATE, hint=f"无 blender_client(batch={batch} 未执行)")
+
+        try:
+            plan_run = run_plan(batch_names, _no_op_agent, session=store,
+                                max_retries=max_retries, doom_max_fix=doom_max_fix)
+        except KeyboardInterrupt:
+            _record_checkpoint(store, "orchestrate", "Ctrl+C 中断(无 blender_client 路径)")
+            return PipelineResult(ok=False, session=store, interrupted=True,
+                                  error="Ctrl+C", phases_log=tuple(phases_log))
+    else:
+        agent_fn = make_batch_executor(
+            ir=ir,
+            batch_names=batch_names,
+            work_dir=out / "batches",
+            acceptance=playbook["acceptance"],
+            client=blender_client,
+            builder_fn=builder_fn,
+            scad_critic=scad_critic,
+            render_critic=render_critic,
+            session=store,
+            blend_path=out / "scene.blend",
+            cameras=cameras,
+            turntable_target=turntable_target,
+            turntable_frames=turntable_frames,
+            image_size=image_size,
+            approval_fn=effective_approval,
+            on_html_report=on_html_report,
+        )
+        try:
+            plan_run = run_plan(batch_names, agent_fn, session=store,
+                                max_retries=max_retries, doom_max_fix=doom_max_fix)
+        except KeyboardInterrupt:
+            _record_checkpoint(store, "orchestrate", "Ctrl+C 中断 @ orchestrator.run_plan")
+            _phase("orchestrate", "中断(Ctrl+C)")
+            return PipelineResult(ok=False, session=store, interrupted=True,
+                                  error="Ctrl+C", phases_log=tuple(phases_log))
+        escalated = list(plan_run.escalated)
+        _phase("orchestrate", f"ok={plan_run.ok} escalated={escalated}")
+
+    # ---------- 5. deliver 门禁 ----------
+    deliver_approval = approval_fn if not yes else None
+    if deliver_approval is not None:
+        approved = deliver_approval("deliver", {
+            "artifacts_dir": str(out),
+            "deliverables": playbook["deliverables"],
+        })
+        if not approved:
+            _phase("deliver", "用户拒绝 deliver 审批门")
+            return PipelineResult(ok=False, plan_run=plan_run, session=store,
+                                  artifacts_dir=out, error="用户拒绝 deliver 审批门",
+                                  plan_artifacts=plan_artifacts, phases_log=tuple(phases_log))
+
+    accepted_fn = make_acceptance_fn(store, playbook["acceptance"])
+    delivery = check_deliverables(playbook["deliverables"], out, accepted_fn=accepted_fn)
+    _phase("deliver", f"ok={delivery.ok} accepted={delivery.accepted} missing={delivery.missing}")
+
+    return PipelineResult(
+        ok=(plan_run.ok if plan_run is not None else False) and delivery.ok,
+        plan_run=plan_run,
+        delivery=delivery,
+        artifacts_dir=out,
+        session=store,
+        plan_artifacts=plan_artifacts,
+        phases_log=tuple(phases_log),
+    )
+
+
+def _record_checkpoint(store: SessionStore, phase: str, note: str) -> None:
+    """Ctrl+C 中断时落 checkpoint 事件(MESSAGE 形态,可后续 /tree 回退续跑)。
+
+    session.schema.CustomType 枚举不含 checkpoint,借用 MESSAGE 落地最简;后续可扩 schema。
+    """
+    store.append_new(
+        EventType.MESSAGE,
+        {"role": "assistant", "content": f"[checkpoint] phase={phase} note={note}"},
+    )
+
+
+__all__ = ["OnPhase", "PipelineResult", "run_pipeline"]
