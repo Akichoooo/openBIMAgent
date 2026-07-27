@@ -163,6 +163,14 @@ def _build_modeler_messages(
         "批次内资产声明(JSON):\n" + json.dumps(assets, ensure_ascii=False, indent=2),
         "输出契约:只输出 Python 代码块(可 ```python fence 包裹),不要任何解释文字;"
         "禁止 os/subprocess/shutil/__import__/写文件。",
+        # 风格锚点(M0 冒烟教训:modeler 易退化成灰色盒体,critic style/material 双低分)。
+        # 资产 description 已被 planner 注入 style/wear 槽位,以下词表强制模型把风格落成具体几何与材质节点。
+        "风格锚点(必须落实,禁止只产灰盒):"
+        "①结构拆分——单资产 ≥6 个子对象(主体/边框/按钮/散热口/支架/标牌等),禁止单 cube 糊形;"
+        "②PBR 材质——用 Principled BSDF,metallic/roughness 按材质区分(金属 0.7-0.9 / 塑料 0.0+粗糙 0.4),禁止纯默认灰;"
+        "③经年磨损——按 description 的磨损等级做边缘磨损与水渍(Noise Texture → Bump/Roughness),禁止一尘不染;"
+        "④风格元素——霓虹灯带用自发光材质(Emission,赛博青 #00E5FF / 品红 #FF2D95),传统元素(木纹/瓦/纸窗)用对应 base color;"
+        "⑤布光构图——补三点光(主 Key + 补 Fill + 轮廓 Rim)并设相机焦距 35-50mm。",
         # 范围锁契约:addon 按集合白名单放行(精确对象名匹配会误杀 {asset_id}_base 等子对象);
         # modeler 必须创建以首个 asset.id 命名的集合,并把所有新建对象 link 进该集合,否则被判越界回滚。
         f"范围锁契约(必须遵守):addon 范围锁按集合白名单放行,集合名 = {aid!r};"

@@ -361,3 +361,42 @@ def test_run_ok_with_mock_blender_returns_0(tmp_path, monkeypatch) -> None:
         # 注意:不用 --no-blender,让 blender_client 非 None 进 orchestrate 分支
     ])
     assert code == 0
+
+
+# ---------- usage atexit 落盘(修复 2)----------
+
+
+def test_dump_usage_on_exit_writes_when_not_done(tmp_path) -> None:
+    """atexit 兜底:done=False 时落盘 usage_summary.json,total.total_tokens 正确(修复 2)。
+
+    再追加一次 chat 后以 done=True 调 → 文件内容未变(已显式落盘则跳过,不重写)。
+    """
+    import json
+
+    from openbimagent.cli import _UsageTrackingRegistry, _dump_usage_on_exit
+
+    class FakeInner:
+        """最小 fake registry:chat 返回固定 usage。"""
+
+        def chat(self, role, messages, **kwargs):
+            return {
+                "model_resolved": "fake-1",
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            }
+
+    reg = _UsageTrackingRegistry(FakeInner())
+    reg.chat("modeler", [])  # 1 次调用,usage_log 记 1 条
+
+    # done=False:atexit 兜底应落盘
+    _dump_usage_on_exit(reg, tmp_path, {"done": False})
+    summary_path = tmp_path / "usage_summary.json"
+    assert summary_path.exists()
+    data = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert data["total"]["total_tokens"] == 15
+    assert data["total"]["calls"] == 1
+
+    # 再 chat 一次(usage_log 变 2 条),但 done=True → 不重写,文件内容未变
+    reg.chat("modeler", [])
+    first_text = summary_path.read_text(encoding="utf-8")
+    _dump_usage_on_exit(reg, tmp_path, {"done": True})
+    assert summary_path.read_text(encoding="utf-8") == first_text

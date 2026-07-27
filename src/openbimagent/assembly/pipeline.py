@@ -102,9 +102,21 @@ def run_pipeline(
     _phase("load_playbook", f"name={playbook['name']} batches={playbook['batches']}")
 
     # ---------- 2. clarify(CLI 一问一答) ----------
+    # 问答对全程捕获并落 message 事件(验收 e):assistant 问 / user 答成对写入,
+    # 支持 /tree 回退到任一追问前改答(M0 冒烟缺口:clarify 曾只走 stdout 不落 session)。
+    qa_pairs: list[tuple[str, str]] = []
+
+    def _clarify_input(prompt: str) -> str:
+        answer = input_func(prompt)
+        qa_pairs.append((prompt, answer))
+        return answer
+
     try:
         slot_state = clarify.SlotState(slots=clarify.load_playbook_slots(Path(playbook_path)))
-        clarify.run_clarify(slot_state, input_func=input_func)
+        try:
+            clarify.run_clarify(slot_state, input_func=_clarify_input)
+        finally:
+            _record_clarify_messages(store, qa_pairs)
         slots_filled = {s.id: s.value for s in slot_state.slots if s.value is not None}
         if not clarify.may_proceed(slot_state):
             note = f"clarify 未达放行阈值(completion_score={slot_state.completion_score:.1f} < {clarify.PASS_THRESHOLD})"
@@ -213,6 +225,16 @@ def _record_checkpoint(store: SessionStore, phase: str, note: str) -> None:
         EventType.MESSAGE,
         {"role": "assistant", "content": f"[checkpoint] phase={phase} note={note}"},
     )
+
+
+def _record_clarify_messages(store: SessionStore, qa_pairs: list[tuple[str, str]]) -> None:
+    """把 clarify 一问一答落成 message 事件:assistant 问 / user 答成对追加(验收 e 五类事件之 message)。
+
+    每对两条事件、按问答顺序挂事件树,使 /tree 可回退到任一追问之前改答。
+    """
+    for question, answer in qa_pairs:
+        store.append_new(EventType.MESSAGE, {"role": "assistant", "content": question})
+        store.append_new(EventType.MESSAGE, {"role": "user", "content": answer})
 
 
 __all__ = ["OnPhase", "PipelineResult", "run_pipeline"]

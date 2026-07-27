@@ -773,3 +773,53 @@ def test_pipeline_session_recorded_with_playbook(tmp_path) -> None:
     entry = next(e for e in entries if e["id"] == result.session.session_id)
     assert entry["playbook"] == str(SINGLE)
     assert "single_asset_hero" in entry["title"]
+
+
+def test_pipeline_clarify_qa_recorded_as_message_events(tmp_path) -> None:
+    """clarify 一问一答落成 message 事件:assistant 问 / user 答成对,补验收 e 缺的 message 类(修复 1)。
+
+    注入 3 个明确答案(非默认值),断言 session 里 MESSAGE 事件 ≥6 条且按问答顺序成对:
+    奇数位 role=assistant 且 content 含槽位问题文本,偶数位 role=user 且 content == 注入答案原文。
+    """
+    answers = iter(["复古售货机", "江户x赛博", "7"])
+    result = run_pipeline(
+        playbook_path=SINGLE,
+        out_dir=tmp_path / "out",
+        blender_client=None,  # 不连 Blender,走 escalate,不中断无 checkpoint message
+        input_func=lambda p: next(answers),
+        sessions_dir=tmp_path / "sessions",
+        yes=True,
+    )
+    assert result.session is not None
+    messages = [e for e in result.session.load() if e.type == EventType.MESSAGE]
+    assert len(messages) >= 6  # 3 对 = 6 条
+    # 前 6 条按问答成对:assistant 问(含槽位关键词)→ user 答(== 注入原文,非默认值)
+    expected_answers = ["复古售货机", "江户x赛博", "7"]
+    question_subs = ["做什么资产", "风格锚点", "磨损程度"]
+    for i in range(3):
+        assistant_ev = messages[2 * i]
+        user_ev = messages[2 * i + 1]
+        assert assistant_ev.payload.role == "assistant"
+        assert question_subs[i] in assistant_ev.payload.content
+        assert user_ev.payload.role == "user"
+        assert user_ev.payload.content == expected_answers[i]  # 原文,不是默认值
+
+
+def test_modeler_messages_include_style_anchors() -> None:
+    """modeler prompt 含五条风格锚点关键词(修复 3 白盒)。
+
+    冒烟 finding #4:modeler 退化灰盒 → builder._build_modeler_messages 注入结构拆分/PBR/磨损/霓虹/三点布光。
+    """
+    from openbimagent.assembly.builder import _build_modeler_messages
+
+    batch_ctx = {
+        "batch": ["vending"],
+        "ir": {"assets": [{"id": "vending", "category": "prop"}]},
+    }
+    messages = _build_modeler_messages(brief="brief", batch_ctx=batch_ctx, prev_critique=None)
+    assert len(messages) == 2
+    assert messages[0]["role"] == "system"
+    assert messages[1]["role"] == "user"
+    user_content = messages[1]["content"]
+    for kw in ("风格锚点", "Emission", "三点", "metallic"):
+        assert kw in user_content, f"modeler prompt 缺风格锚点关键词:{kw!r}"

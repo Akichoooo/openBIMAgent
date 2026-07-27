@@ -19,6 +19,7 @@ run 结束(或中断)后进入 HITL REPL,接受斜杠命令:/sessions /tree /und
 from __future__ import annotations
 
 import argparse
+import atexit
 import os
 from pathlib import Path
 from typing import Any
@@ -122,6 +123,19 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
     approval_fn = _make_cli_approval(args.yes) if not args.yes else None
 
+    # usage 落盘一次性封装 + atexit 兜底(M0 冒烟教训:崩溃时 usage_summary.json 丢失,token 只能反推估算)。
+    # 正常结束/中断路径显式落盘并置 done;atexit 仅在未落盘时补落(session_id 不可得则为 null)。
+    usage_dump_state: dict[str, bool] = {"done": False}
+
+    def _dump_usage(session: Any) -> None:
+        if registry is None:
+            return
+        _dump_usage_report(registry, args.out, session)
+        usage_dump_state["done"] = True
+
+    if registry is not None:
+        atexit.register(_dump_usage_on_exit, registry, args.out, usage_dump_state)
+
     print(_fmt_phase("load_playbook", f"playbook={args.playbook}"))
 
     def on_phase(name: str, payload: dict[str, Any]) -> None:
@@ -152,14 +166,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         # pipeline 内部已落 checkpoint;兜底
         print("\n[中断] Ctrl+C,已落 checkpoint,可用 /tree 回退续跑")
-        if registry is not None:
-            _dump_usage_report(registry, args.out, None)
+        _dump_usage(None)
         return 130
 
     _print_run_summary(result)
 
-    if registry is not None:
-        _dump_usage_report(registry, args.out, result.session)
+    _dump_usage(result.session)
 
     if not args.no_hitl and result.session is not None:
         _hitl_repl(result, args.sessions_dir or (args.out / "sessions"))
@@ -418,6 +430,16 @@ class _UsageTrackingRegistry:
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
+
+
+def _dump_usage_on_exit(registry: "_UsageTrackingRegistry", out_dir: Path, state: dict[str, bool]) -> None:
+    """atexit 兜底:进程异常退出(未捕获异常/崩溃)也落盘已记录的 usage;已显式落盘则跳过。"""
+    if state.get("done"):
+        return
+    try:
+        _dump_usage_report(registry, out_dir, None)
+    except Exception:
+        pass  # 退出阶段任何失败都不抛(atexit 中异常无意义)
 
 
 def _dump_usage_report(registry: "_UsageTrackingRegistry", out_dir: Path, session: Any) -> None:
