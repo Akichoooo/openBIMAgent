@@ -823,3 +823,142 @@ def test_modeler_messages_include_style_anchors() -> None:
     user_content = messages[1]["content"]
     for kw in ("风格锚点", "Emission", "三点", "metallic"):
         assert kw in user_content, f"modeler prompt 缺风格锚点关键词:{kw!r}"
+
+
+# ---------- M1 集成测试(Relay 013 任务 C1) ----------
+
+
+def _fake_scad_render(scad_path, out_dir):
+    """离线 SCAD 渲染桩:三视角各写 1x1 PNG(与 test_scad_loop._fake_render 同形态)。"""
+    paths = {}
+    for view in ("iso", "front", "top"):
+        png = out_dir / f"{scad_path.stem}_{view}.png"
+        png.write_bytes(_PNG_1PX)
+        paths[view] = png
+    return paths
+
+
+def test_pipeline_with_scad_loop_convergence(tmp_path) -> None:
+    """SCAD 环递增评分 [6.0, 7.5, 8.5] 收敛:session 留 ≥3 个 score 事件(3 轮 SCAD)。
+
+    注入几何 IR 触发 SCAD 环;包装 run_scad_loop 注入离线 fake render_fn(不依赖 openscad CLI);
+    mock render_loop_fn 跳过真实 Blender;deliver 预放产物 + accepted=True 隔离门禁。
+    """
+    out = tmp_path / "out"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "scene.blend").write_bytes(b"mock-blend")
+    (out / "英雄镜头渲染 x1.png").write_bytes(b"mock-png")
+
+    client, _ = _make_mock_blender_client(tmp_path)
+    render_result = _make_render_result(converged=True, best_score=9.5, terminate_reason="perfect_score")
+
+    import openbimagent.assembly.pipeline as pipeline_mod
+    from openbimagent.vision.scad_loop import run_scad_loop
+
+    orig_make = pipeline_mod.make_batch_executor
+    orig_acc = pipeline_mod.make_acceptance_fn
+
+    def _scad_loop_with_fake_render(*args, **kwargs):
+        kwargs["render_fn"] = _fake_scad_render
+        return run_scad_loop(*args, **kwargs)
+
+    def patched_make(**kwargs):
+        kwargs["ir"] = _geometric_ir()  # 几何 IR 触发 SCAD 环
+        kwargs["scad_critic"] = MockCritic([6.0, 7.5, 8.5])
+        kwargs["scad_loop_fn"] = _scad_loop_with_fake_render
+        kwargs["render_critic"] = MockCritic([9.5])
+        kwargs["render_loop_fn"] = _make_fake_async_render_fn(render_result)
+        return orig_make(**kwargs)
+
+    pipeline_mod.make_batch_executor = patched_make
+    pipeline_mod.make_acceptance_fn = lambda *a, **k: lambda: True
+    try:
+        result = run_pipeline(
+            playbook_path=SINGLE,
+            out_dir=out,
+            blender_client=client,
+            input_func=lambda p: "",
+            sessions_dir=tmp_path / "sessions",
+            yes=True,
+        )
+    finally:
+        pipeline_mod.make_batch_executor = orig_make
+        pipeline_mod.make_acceptance_fn = orig_acc
+
+    assert result.ok is True
+    assert result.plan_run is not None and result.plan_run.ok is True
+    # SCAD 环跑 3 轮(6.0→7.5→8.5 达 8.0 阈值 perfect_score)→ session 至少 3 个 score 事件
+    events = result.session.load()
+    score_events = [
+        e for e in events
+        if e.type is EventType.CUSTOM and getattr(e.payload, "customType", "") == "score"
+    ]
+    assert len(score_events) >= 3, f"SCAD 环未留足 score 事件,实得 {len(score_events)}"
+
+
+def test_pipeline_with_orchestrator_concurrent(tmp_path) -> None:
+    """orchestrator 并发:3 批次 playbook,每批 sleep 0.1s,concurrent=True 总耗时 < 1.5s。
+
+    patch run_plan 注入 concurrent=True;patch make_batch_executor 返回 sleep agent_fn;
+    3 批顺序则 ≥0.3s,并发 ~0.1s,< 1.5s 证明并发生效。
+    """
+    import time
+
+    pb = tmp_path / "playbook.md"
+    pb.write_text(
+        "---\n"
+        "name: concurrent_test\n"
+        "targets: [blender]\n"
+        "slots:\n"
+        "  - { id: a, question: Q1, default: x }\n"
+        "phases:\n"
+        "  - id: asset_batches\n"
+        "    batches: [b1, b2, b3]\n"
+        "    per_batch: [blender_build]\n"
+        "acceptance:\n"
+        "  blender_loop: { min_score: 8.5, max_iters: 4 }\n"
+        "deliverables: [.blend 工程]\n"
+        "---\n\n正文\n",
+        encoding="utf-8",
+    )
+
+    import openbimagent.assembly.pipeline as pipeline_mod
+    from openbimagent.orchestrator.dispatch import BatchReport, Verdict
+
+    orig_run_plan = pipeline_mod.run_plan
+    orig_make = pipeline_mod.make_batch_executor
+
+    def concurrent_run_plan(*args, **kwargs):
+        kwargs["concurrent"] = True
+        return orig_run_plan(*args, **kwargs)
+
+    def slow_agent_fn(batch: str, rework: str | None) -> BatchReport:
+        time.sleep(0.1)  # 模拟耗时
+        return BatchReport(Verdict.PASS, hint=f"{batch} done")
+
+    def patched_make(**kwargs):
+        return slow_agent_fn  # 忽略 ir/client,直接返回慢速 agent_fn
+
+    pipeline_mod.run_plan = concurrent_run_plan
+    pipeline_mod.make_batch_executor = patched_make
+    try:
+        start = time.monotonic()
+        result = run_pipeline(
+            playbook_path=pb,
+            out_dir=tmp_path / "out",
+            blender_client="fake-non-none",  # 非 None 触发进 orchestrate 分支
+            input_func=lambda p: "",
+            sessions_dir=tmp_path / "sessions",
+            yes=True,
+        )
+        elapsed = time.monotonic() - start
+    finally:
+        pipeline_mod.run_plan = orig_run_plan
+        pipeline_mod.make_batch_executor = orig_make
+
+    # 3 批 × 0.1s:顺序 ≥0.3s,并发 ~0.1s;< 1.5s 证明并发生效
+    assert elapsed < 1.5, f"并发未生效:耗时 {elapsed:.3f}s"
+    assert result.plan_run is not None
+    assert result.plan_run.ok is True
+    assert len(result.plan_run.outcomes) == 3
+    assert all(o.verdict is Verdict.PASS for o in result.plan_run.outcomes)

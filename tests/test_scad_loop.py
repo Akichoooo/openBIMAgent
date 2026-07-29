@@ -17,7 +17,9 @@ from openbimagent.vision.scad_loop import (
     CAMERA_VIEWS,
     DEFAULT_OPENSCAD,
     PatchRejectedError,
+    PatchValidationError,
     apply_ir_patch,
+    apply_patch,
     ir_to_scad,
     render_views,
     run_scad_loop,
@@ -260,3 +262,149 @@ def test_loop_events_replayable_from_session(ir_path, tmp_path) -> None:
     assert events[0].parentId is None
     for prev, cur in zip(events, events[1:]):
         assert cur.parentId == prev.id
+
+
+# ---------- M1 增强:IR→OpenSCAD 健壮性(Relay 013 任务 B1) ----------
+
+
+def test_ir_to_scad_unsupported_primitive() -> None:
+    """不支持图元(pyramid)→ ValueError,消息含「不支持的图元」。"""
+    ir = {"assets": [{"id": "x", "primitive": "pyramid", "size": [1, 1, 1], "position": [0, 0, 0]}]}
+    with pytest.raises(ValueError, match="不支持的图元"):
+        ir_to_scad(ir)
+
+
+def test_ir_to_scad_invalid_position() -> None:
+    """position 任一维度绝对值 > 1000 → ValueError,消息含「超出合理范围」。"""
+    ir = {"assets": [{"id": "x", "primitive": "cube", "size": [1, 1, 1], "position": [2000, 0, 0]}]}
+    with pytest.raises(ValueError, match="超出合理范围"):
+        ir_to_scad(ir)
+
+
+def test_ir_to_scad_with_color() -> None:
+    """color 为 RGB 三元组(0-1)→ OpenSCAD 代码含 color([r,g,b])(M1 RGB 支持)。
+
+    格式与现有 cube([x,y,z]) 一致:逗号无空格,定点 %.4f。
+    """
+    ir = {"assets": [
+        {"id": "red_cube", "primitive": "cube", "size": [1, 1, 1], "position": [0, 0, 0], "color": [1.0, 0.0, 0.0]}
+    ]}
+    scad = ir_to_scad(ir)
+    assert "color([1.0000,0.0000,0.0000])" in scad
+
+
+# ---------- M1 增强:JSON Patch 严格校验(RFC 6902,Relay 013 任务 B2) ----------
+
+
+def test_apply_patch_replace_old_value_mismatch() -> None:
+    """replace 的 old_value 与当前值不符 → PatchValidationError,消息含「old_value 不匹配」;入参不变。"""
+    ir = {"assets": [
+        {"id": "base", "primitive": "cube", "size": [1, 1, 1], "position": [0, 0, 0]}
+    ]}
+    ops = [{"op": "replace", "path": "/assets/0/position/0", "old_value": 99.0, "value": 10.0}]
+    with pytest.raises(PatchValidationError, match="old_value 不匹配"):
+        apply_patch(ir, ops)
+    # 原子性:入参未被改动
+    assert ir["assets"][0]["position"][0] == 0
+
+
+def test_apply_patch_replace_success() -> None:
+    """replace 的 old_value 相符(浮点容差内)→ 应用成功,assets[0].position[0] 改为新值;入参不变。"""
+    ir = {"assets": [
+        {"id": "base", "primitive": "cube", "size": [1, 1, 1], "position": [0, 0, 0]}
+    ]}
+    ops = [{"op": "replace", "path": "/assets/0/position/0", "old_value": 0.0, "value": 5.0}]
+    patched = apply_patch(ir, ops)
+    assert patched["assets"][0]["position"][0] == 5.0
+    # 原子性:入参未被改动
+    assert ir["assets"][0]["position"][0] == 0
+
+
+def test_apply_patch_add_and_remove_ops() -> None:
+    """add/remove 操作:add 在 dict 设键/list 追加,remove 删除;原子性保护。"""
+    ir = {"assets": [
+        {"id": "base", "primitive": "cube", "size": [1, 1, 1], "position": [0, 0, 0]}
+    ], "meta": {"author": "tester"}}
+    # add 新键 + remove 旧键 + replace 数值,混合 op
+    ops = [
+        {"op": "add", "path": "/meta/version", "value": "0.2"},
+        {"op": "remove", "path": "/meta/author"},
+        {"op": "replace", "path": "/assets/0/size/2", "old_value": 1.0, "value": 2.0},
+    ]
+    patched = apply_patch(ir, ops)
+    assert patched["meta"]["version"] == "0.2"
+    assert "author" not in patched["meta"]
+    assert patched["assets"][0]["size"][2] == 2.0
+    # 入参不变
+    assert "version" not in ir["meta"]
+    assert ir["assets"][0]["size"][2] == 1
+
+
+def test_apply_patch_rejects_unknown_op_and_bad_pointer() -> None:
+    """非法 op / 非 / 开头的 pointer → PatchValidationError。"""
+    ir = {"assets": [{"id": "x", "primitive": "cube", "size": [1, 1, 1], "position": [0, 0, 0]}]}
+    with pytest.raises(PatchValidationError, match="不支持的操作"):
+        apply_patch(ir, [{"op": "move", "path": "/assets/0", "value": 1}])
+    with pytest.raises(PatchValidationError, match="JSON Pointer"):
+        apply_patch(ir, [{"op": "replace", "path": "assets/0", "old_value": 0, "value": 1}])
+
+
+# ---------- M1 增强:收敛判定四选一(Relay 013 任务 B3) ----------
+
+
+def test_convergence_perfect_score(ir_path, tmp_path) -> None:
+    """perfect_score:首轮 overall=9.8 ≥ min_score=9.5 → 第 1 轮收敛。"""
+    result = run_scad_loop(
+        ir_path, tmp_path / "a", min_score=9.5, max_iters=3,
+        critic=MockCritic([9.8]), render_fn=_fake_render,
+    )
+    assert result.converged is True
+    assert result.terminate_reason == "perfect_score"
+    assert result.iters == 1
+    assert result.best_score == 9.8
+
+
+def test_convergence_delta(ir_path, tmp_path) -> None:
+    """convergence_delta:连续 2 轮 delta < 0.5 且非下降 → 第 3 轮终止(未达标但停滞)。
+
+    评分序列 [7.0, 7.3, 7.4]:
+    - 轮 1: 7.0,prev=None → 不判
+    - 轮 2: 7.3,delta=0.3 <0.5,delta_history=[0.3],len=1 <2 不触发
+    - 轮 3: 7.4,delta=0.1 <0.5,delta_history=[0.3,0.1],len=2,都<0.5,7.4>=7.3 → convergence_delta
+    """
+    result = run_scad_loop(
+        ir_path, tmp_path / "a", min_score=9.5, max_iters=5,
+        critic=MockCritic([7.0, 7.3, 7.4]), render_fn=_fake_render,
+    )
+    assert result.converged is False  # 未达标
+    assert result.terminate_reason == "convergence_delta"
+    assert result.iters == 3
+    assert result.scores == (7.0, 7.3, 7.4)
+
+
+def test_divergence_fallback(ir_path, tmp_path) -> None:
+    """divergence_fallback:连续 2 轮降分 → 回退 best-so-far(第 1 轮 IR,score=8.0 最高)。
+
+    评分序列 [8.0, 7.0, 6.0]:
+    - 轮 1: 8.0,best=8.0,prev=None
+    - 轮 2: 7.0,consecutive_drops=1
+    - 轮 3: 6.0,consecutive_drops=2 ≥2 → divergence_fallback,写回 best_ir(轮1)
+    """
+    original = json.loads(ir_path.read_text(encoding="utf-8"))
+
+    def patcher(_critique, ir):
+        # patch 让 IR 变化(模拟每轮调整),best 仍是轮 1
+        return [{"op": "replace", "asset_id": "pole", "field": "position",
+                 "old_value": ir["assets"][1]["position"], "new_value": [1, 0.5, 9]}]
+
+    result = run_scad_loop(
+        ir_path, tmp_path / "a", min_score=9.5, max_iters=5,
+        critic=MockCritic([8.0, 7.0, 6.0]), patcher=patcher, render_fn=_fake_render,
+    )
+    assert result.converged is False
+    assert result.terminate_reason == "divergence_fallback"
+    assert result.best_score == 8.0
+    assert result.iters == 3
+    # best-so-far(轮 1 IR = 原始 IR)写回 ir_path
+    restored = json.loads(ir_path.read_text(encoding="utf-8"))
+    assert restored["assets"][1]["position"] == original["assets"][1]["position"]
