@@ -171,6 +171,18 @@ def _build_modeler_messages(
         "③经年磨损——按 description 的磨损等级做边缘磨损与水渍(Noise Texture → Bump/Roughness),禁止一尘不染;"
         "④风格元素——霓虹灯带用自发光材质(Emission,赛博青 #00E5FF / 品红 #FF2D95),传统元素(木纹/瓦/纸窗)用对应 base color;"
         "⑤布光构图——补三点光(主 Key + 补 Fill + 轮廓 Rim)并设相机焦距 35-50mm。",
+        # Blender 5.2 引擎枚举(补跑教训:modeler 按 4.x 写 BLENDER_EEVEE_NEXT → 5.2 已合并为 BLENDER_EEVEE,enum 报错回滚)。
+        # 宿主实测 5.2.0 LTS,合法引擎仅 ('BLENDER_EEVEE', 'BLENDER_WORKBENCH', 'CYCLES');设 EEVEE 即可,禁写 EEVEE_NEXT。
+        "Blender 5.2 兼容(必须遵守):宿主为 5.2.0 LTS,合法渲染引擎仅 BLENDER_EEVEE / BLENDER_WORKBENCH / CYCLES;"
+        "scene.render.engine 只能赋这三个值之一(默认 BLENDER_EEVEE);禁止 BLENDER_EEVEE_NEXT(4.x 旧名,5.2 已合并,赋值必抛 TypeError)。",
+        # mathutils 取用规范(补跑教训:modeler 写 bpy.mathutils.Vector → AttributeError;mathutils 是顶层模块不是 bpy 子模块)。
+        # addon AST allowlist 允许 import mathutils;正确用法是 import 后 mathutils.Vector/Matrix/Euler,禁写 bpy.mathutils。
+        "模块取用规范:mathutils 是顶层模块,必须 `import mathutils` 后用 mathutils.Vector/Matrix/Euler;"
+        "禁止 bpy.mathutils(非 bpy 子模块,必抛 AttributeError);bmesh 同理需 `import bmesh`。",
+        # scene.node_tree(补跑教训:Run B iter3 'Scene' object has no attribute 'node_tree' 直接崩 pipeline)。
+        # 5.x 场景级合成器 API 已变;modeler 不需要做后期合成,灯光氛围用灯光对象 + 世界背景实现。
+        "禁止 scene.node_tree(Blender 5.x 场景级合成器属性已移除,赋值必抛 AttributeError);"
+        "需要背景/氛围时用 bpy.data.worlds 世界背景 + 灯光对象实现,不做后期合成节点。",
         # 范围锁契约:addon 按集合白名单放行(精确对象名匹配会误杀 {asset_id}_base 等子对象);
         # modeler 必须创建以首个 asset.id 命名的集合,并把所有新建对象 link 进该集合,否则被判越界回滚。
         f"范围锁契约(必须遵守):addon 范围锁按集合白名单放行,集合名 = {aid!r};"

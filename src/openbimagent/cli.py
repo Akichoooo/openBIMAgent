@@ -145,6 +145,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         print(f"[HTML 验收页] batch={batch_label} → {html_path}")
 
     try:
+        _install_sigbreak_bridge()
         result = run_pipeline(
             playbook_path=args.playbook,
             out_dir=args.out,
@@ -440,6 +441,27 @@ def _dump_usage_on_exit(registry: "_UsageTrackingRegistry", out_dir: Path, state
         _dump_usage_report(registry, out_dir, None)
     except Exception:
         pass  # 退出阶段任何失败都不抛(atexit 中异常无意义)
+
+
+def _install_sigbreak_bridge() -> None:
+    """Windows 中断桥:把 SIGBREAK(Ctrl+Break / CTRL_BREAK_EVENT)转抛 KeyboardInterrupt。
+
+    背景(012 冒烟实证):驱动脚本以 CREATE_NEW_PROCESS_GROUP 启动子进程时,
+    Windows 会**禁用该进程的 CTRL_C 处理器**(SIGINT 被忽略),CTRL_C_EVENT 投递无效;
+    只有 CTRL_BREAK_EVENT 可达。CPython 把它映射为 SIGBREAK,默认不抛 KeyboardInterrupt。
+    装上桥后,pipeline 的 `except KeyboardInterrupt` → checkpoint → /tree 续跑路径即生效。
+    非 Windows 无 SIGBREAK,直接跳过(POSIX 的 Ctrl+C/SIGINT 原生可用)。
+    """
+    import signal
+
+    sigbreak = getattr(signal, "SIGBREAK", None)
+    if sigbreak is None:
+        return
+
+    def _raise_keyboard_interrupt(signum: int, frame: Any) -> None:
+        raise KeyboardInterrupt
+
+    signal.signal(sigbreak, _raise_keyboard_interrupt)
 
 
 def _dump_usage_report(registry: "_UsageTrackingRegistry", out_dir: Path, session: Any) -> None:
