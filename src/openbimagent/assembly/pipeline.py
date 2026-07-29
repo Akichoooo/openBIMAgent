@@ -71,6 +71,7 @@ def run_pipeline(
     image_size: int = 512,
     max_retries: int = 3,
     doom_max_fix: int = 3,
+    session_id: str | None = None,
 ) -> PipelineResult:
     """跑全流程:load playbook → clarify → plan → orchestrate → deliver。
 
@@ -90,8 +91,7 @@ def run_pipeline(
         if on_phase is not None:
             on_phase(name, {"note": note, **kwargs})
 
-    store = SessionStore.create(sessions_root, title=f"openBIMAgent · {Path(playbook_path).parent.name}",
-                                playbook=str(playbook_path))
+    store = _open_or_create_session(sessions_root, session_id, playbook_path)
 
     # ---------- 1. load playbook ----------
     try:
@@ -112,9 +112,20 @@ def run_pipeline(
         return answer
 
     try:
-        slot_state = clarify.SlotState(slots=clarify.load_playbook_slots(Path(playbook_path)))
+        entry = store._index_entry()
+        is_resume = entry is not None and entry.get("forked_from") is not None
+        if is_resume:
+            # 分支会话(/tree fork):从 forked_from.parent_event_id 恢复已问槽位,只问剩余
+            fork_info = entry["forked_from"]
+            slot_state = clarify.resume_from_session(
+                clarify.load_playbook_slots(Path(playbook_path)),
+                store,
+                from_event_id=fork_info["parent_event_id"],
+            )
+        else:
+            slot_state = clarify.SlotState(slots=clarify.load_playbook_slots(Path(playbook_path)))
         try:
-            clarify.run_clarify(slot_state, input_func=_clarify_input)
+            clarify.run_clarify(slot_state, input_func=_clarify_input, resume=is_resume)
         finally:
             _record_clarify_messages(store, qa_pairs)
         slots_filled = {s.id: s.value for s in slot_state.slots if s.value is not None}
@@ -214,6 +225,34 @@ def run_pipeline(
         plan_artifacts=plan_artifacts,
         phases_log=tuple(phases_log),
     )
+
+
+def _open_or_create_session(sessions_root: Path, session_id: str | None, playbook_path: Path) -> SessionStore:
+    """按 session_id 打开已有会话(分支续跑)或新建会话。
+
+    session_id 支持完整 id 或唯一前缀匹配(与 cli._open_session 同规则);为 None 时新建。
+    续跑时 SessionStore 重开会沿用 index 里登记的 title/playbook/forked_from 元数据。
+    """
+    if session_id is None:
+        return SessionStore.create(
+            sessions_root,
+            title=f"openBIMAgent · {Path(playbook_path).parent.name}",
+            playbook=str(playbook_path),
+        )
+    target = sessions_root / f"{session_id}.jsonl"
+    if not target.is_file():
+        matches = list(sessions_root.glob(f"{session_id}*.jsonl"))
+        if len(matches) == 1:
+            target = matches[0]
+        elif not matches:
+            raise FileNotFoundError(
+                f"会话 {session_id!r} 不存在(sessions_dir={sessions_root})"
+            )
+        else:
+            raise FileNotFoundError(
+                f"会话 id 前缀 {session_id!r} 匹配多个:{[m.stem for m in matches]}"
+            )
+    return SessionStore(target)
 
 
 def _record_checkpoint(store: SessionStore, phase: str, note: str) -> None:

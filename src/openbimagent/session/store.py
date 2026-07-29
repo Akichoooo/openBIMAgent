@@ -142,6 +142,78 @@ class SessionStore:
             new_store.append(event)
         return new_store
 
+    def fork(self, from_event_id: str, *, title: str | None = None) -> SessionStore:
+        """`/tree` 分支(M1 强化):复制根 → from_event_id 的主干链到新 session,并在 index.json
+        标记 forked_from 关系(parent_session_id / parent_event_id),供 pipeline 检测续跑。
+
+        与 branch 的差异:fork 写 forked_from 元数据(管道据此触发 Clarify 续跑)、
+        不存在时抛 ValueError(branch 抛 KeyError);两者复制主干链的逻辑一致。
+        """
+        events = self.load()
+        fork_index = None
+        for i, event in enumerate(events):
+            if event.id == from_event_id:
+                fork_index = i
+                break
+        if fork_index is None:
+            raise ValueError(f"事件 {from_event_id!r} 不在会话 {self.session_id!r} 中")
+        new_title = title or f"{self._title} · 分支自 {from_event_id[:8]}"
+        new_session = SessionStore(
+            self.path.parent / f"{uuid7()}.jsonl",
+            title=new_title,
+            playbook=self._playbook,
+        )
+        for event in events[: fork_index + 1]:
+            new_session.append(event)
+        new_session._mark_fork(self.session_id, from_event_id)
+        return new_session
+
+    def find_event(self, event_id: str) -> SessionEvent | None:
+        """根据 event_id 查找事件;不存在返回 None(/tree 选择回退点用)。"""
+        for event in self.load():
+            if event.id == event_id:
+                return event
+        return None
+
+    def get_event_chain(self, until_event_id: str | None = None) -> list[SessionEvent]:
+        """获取从根到指定事件的事件链(按时间正向顺序);until_event_id 缺省取当前 head。
+
+        通过 parentId 反向遍历构建;until_event_id 不存在抛 ValueError;空会话返回 []。
+        """
+        events = self.load()
+        event_map = {e.id: e for e in events}
+        target_id = until_event_id if until_event_id is not None else self._head
+        if target_id is None:
+            return []
+        if target_id not in event_map:
+            raise ValueError(f"事件 {target_id!r} 不在会话 {self.session_id!r} 中")
+        chain: list[SessionEvent] = []
+        cursor: str | None = target_id
+        while cursor is not None:
+            event = event_map[cursor]
+            chain.append(event)
+            cursor = event.parentId
+        return list(reversed(chain))
+
+    def _mark_fork(self, parent_session_id: str, parent_event_id: str) -> None:
+        """在 index.json 本会话条目里写入 forked_from(parent_session_id / parent_event_id)。
+
+        _sync_index 的 update 只覆盖 title/playbook/last_active/event_count,不会删 forked_from,
+        故后续 append 触发的 _sync_index 保留本字段。
+        """
+        index_path = self._index_path()
+        index: dict[str, Any] = {"sessions": []}
+        if index_path.is_file():
+            index = json.loads(index_path.read_text(encoding="utf-8"))
+        for entry in index.get("sessions", []):
+            if entry.get("id") == self.session_id:
+                entry["forked_from"] = {
+                    "parent_session_id": parent_session_id,
+                    "parent_event_id": parent_event_id,
+                }
+                break
+        index_path.write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
+
     def record_snapshot(self, blend_file_path: Path, file_hash: str | None = None) -> SessionEvent:
         """MCP 写操作前自动落盘 snapshot 事件(回滚点);hash 缺省时按文件内容 sha256。"""
         p = Path(blend_file_path)

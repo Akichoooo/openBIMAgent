@@ -11,11 +11,17 @@
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, TYPE_CHECKING
 
 import yaml
+
+from openbimagent.session.schema import EventType
+
+if TYPE_CHECKING:
+    from openbimagent.session.store import SessionStore
 
 _FLOW_QMARK_SCALAR = re.compile(r"(\b\w+\s*:\s*)([^\"'\n{}\[\],]*?\?+)(\s*[,}\]])")
 """PyYAML 已知怪癖的修补:flow mapping 内裸标量结尾的 `?`(如 `question: 做什么资产?,`)
@@ -158,9 +164,16 @@ def run_clarify(
     *,
     input_func: Callable[[str], str] = input,
     question_provider: Callable[[Slot], str] | None = None,
+    resume: bool = False,
 ) -> SlotState:
-    """一问一答循环:逐槽位提问(带默认值),回车 = 接受默认;input_func/question_provider 可注入。"""
+    """一问一答循环:逐槽位提问(带默认值),回车 = 接受默认;input_func/question_provider 可注入。
+
+    resume=True(断点续跑):跳过 state.asked 中已问过的槽位(由 resume_from_session 预填);
+    resume=False(默认):重置 state.asked,全部按 value 重新问(向后兼容,旧调用无感)。
+    """
     provide = question_provider or (lambda s: s.question)
+    if not resume:
+        state.asked.clear()  # 非续跑:重置 asked,next_question 仅按 value 判断
     while (slot := next_question(state)) is not None:
         state.asked.add(slot.id)
         prompt = provide(slot)
@@ -177,3 +190,43 @@ def may_proceed(state: SlotState) -> bool:
     TODO(M1): 放行前生成确认单等用户点头(ARCH §2 步骤 1)。
     """
     return state.completion_score >= PASS_THRESHOLD
+
+
+def resume_from_session(
+    slots: list[Slot],
+    session: "SessionStore",
+    from_event_id: str | None = None,
+) -> SlotState:
+    """从 session 事件链恢复 Clarify 状态(已问过的槽位 + 已填的答案),供断点续跑。
+
+    匹配规则:遍历事件链,assistant 问(content 含 slot.question)→ 紧跟的 user 答 → 回填
+    slot.value 并加入 state.asked;若 assistant 问后无 user 答(只问未答),仅标记 asked,
+    value 保持 None。slots 深拷贝避免污染调用方传入的定义。
+
+    Args:
+        slots: 槽位定义(从 playbook 加载,不会被修改)
+        session: 分支会话(含 fork 复制来的问答事件)
+        from_event_id: 恢复到的事件 id(默认 session 当前 head)
+
+    Returns:
+        SlotState:已回填的 value + asked 集合;无匹配则返回空状态(slots 未回填,asked 空)
+    """
+    chain = session.get_event_chain(from_event_id)
+    state = SlotState(slots=[deepcopy(s) for s in slots])
+    i = 0
+    while i < len(chain):
+        event = chain[i]
+        if event.type is EventType.MESSAGE and getattr(event.payload, "role", "") == "assistant":
+            content = getattr(event.payload, "content", "")
+            for slot in state.slots:
+                if slot.question in content:
+                    state.asked.add(slot.id)
+                    if i + 1 < len(chain):
+                        next_event = chain[i + 1]
+                        if (next_event.type is EventType.MESSAGE
+                                and getattr(next_event.payload, "role", "") == "user"):
+                            slot.value = getattr(next_event.payload, "content", "")
+                            i += 1  # 跳过已配对的 user 答
+                    break
+        i += 1
+    return state

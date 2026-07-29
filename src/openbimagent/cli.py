@@ -26,6 +26,7 @@ from typing import Any
 
 from openbimagent.assembly.batch_executor import ApprovalFn
 from openbimagent.assembly.pipeline import PipelineResult, run_pipeline
+from openbimagent.session.schema import EventType, SessionEvent
 from openbimagent.session.store import SessionStore
 
 DEFAULT_OUT = Path("./out")
@@ -93,13 +94,14 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--turntable-frames", type=int, default=4, help="turntable 帧数")
     run_p.add_argument("--image-size", type=int, default=512, help="渲染图尺寸")
     run_p.add_argument("--no-hitl", action="store_true", help="run 结束后不进 HITL REPL(脚本场景)")
+    run_p.add_argument("--session", default=None, help="续跑已有会话 id(分支会话;/tree fork 后续跑)")
 
     sess_p = sub.add_parser("sessions", help="列出多会话(/sessions 斜杠命令的 CLI 形态)")
     sess_p.add_argument("--sessions-dir", default=DEFAULT_SESSIONS_DIR, type=Path)
 
     tree_p = sub.add_parser("tree", help="回退到某事件(分支;/tree <id> 的 CLI 形态)")
     tree_p.add_argument("session_id", help="会话 id(JSONL 文件名,无后缀)")
-    tree_p.add_argument("event_id", help="回退到的事件 id")
+    tree_p.add_argument("event_id", nargs="?", default=None, help="回退到的事件 id(缺省交互式选择)")
     tree_p.add_argument("--sessions-dir", default=DEFAULT_SESSIONS_DIR, type=Path)
     tree_p.add_argument("--title", default=None, help="新会话标题")
 
@@ -163,6 +165,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
             turntable_target=args.turntable_target,
             turntable_frames=args.turntable_frames,
             image_size=args.image_size,
+            session_id=args.session,
         )
     except KeyboardInterrupt:
         # pipeline 内部已落 checkpoint;兜底
@@ -309,18 +312,92 @@ def _cmd_sessions(args: argparse.Namespace) -> int:
     return 0
 
 
+def _format_event_for_tree(event: SessionEvent, index: int) -> str:
+    """将事件格式化为 /tree 命令的友好展示。
+
+    格式:`1. [message] assistant: 您想做什么资产?(abc12345)`
+    - message:role + content 前 50 字符(超长加 ...)
+    - tool_call:toolName + args_summary 前 30 字符
+    - custom:customType
+    - 事件 id 显示前 8 位(便于用户输入)
+    """
+    eid = event.id[:8]
+    etype = event.type.value
+    if event.type is EventType.MESSAGE:
+        role = getattr(event.payload, "role", "?")
+        content = getattr(event.payload, "content", "")
+        summary = content[:50] + ("..." if len(content) > 50 else "")
+        return f"{index}. [{etype}] {role}: {summary}({eid})"
+    if event.type is EventType.TOOL_CALL:
+        tool_name = getattr(event.payload, "toolName", "?")
+        args = getattr(event.payload, "args_summary", "")
+        summary = args[:30] + ("..." if len(args) > 30 else "")
+        return f"{index}. [{etype}] {tool_name}: {summary}({eid})"
+    if event.type is EventType.CUSTOM:
+        custom_type = getattr(event.payload, "customType", "?")
+        return f"{index}. [{etype}] {custom_type}({eid})"
+    return f"{index}. [{etype}]({eid})"
+
+
+def _resolve_tree_choice(chain: list[SessionEvent], choice: str) -> str | None:
+    """解析 /tree 交互选择:序号(1-based)或事件 id 前 8 位前缀。
+
+    返回匹配的事件 id;无匹配/多匹配返回 None。
+    """
+    if choice.isdigit():
+        idx = int(choice) - 1
+        if 0 <= idx < len(chain):
+            return chain[idx].id
+        return None
+    matches = [e.id for e in chain if e.id.startswith(choice)]
+    if len(matches) == 1:
+        return matches[0]
+    return None  # 无匹配或多匹配
+
+
 def _cmd_tree(args: argparse.Namespace) -> int:
     store = _open_session(args.sessions_dir, args.session_id)
     if store is None:
         return 1
+    target_event_id = args.event_id
+    if target_event_id is None:
+        # 交互式选择回退点
+        try:
+            chain = store.get_event_chain()
+        except ValueError as exc:
+            print(f"获取事件链失败: {exc}")
+            return 1
+        if not chain:
+            print("(会话为空,无可回退事件)")
+            return 1
+        print("可回退的事件:")
+        for i, event in enumerate(chain, start=1):
+            print(_format_event_for_tree(event, i))
+        try:
+            choice = input("\n请选择回退点(输入序号或事件 id 前 8 位): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n已取消")
+            return 1
+        if not choice:
+            print("未选择,已取消")
+            return 1
+        target_event_id = _resolve_tree_choice(chain, choice)
+        if target_event_id is None:
+            print(f"选择无效: {choice}(无匹配/多匹配,请输入序号或唯一 id 前 8 位)")
+            return 1
     try:
-        new_store = store.branch(args.event_id, title=args.title or f"{args.session_id} 的分支")
-    except KeyError as exc:
+        new_store = store.fork(target_event_id, title=args.title)
+    except ValueError as exc:
         print(f"事件 id 不存在: {exc}")
         return 1
-    print(f"新会话: {new_store.session_id}")
-    print(f"  路径: {new_store.path}")
-    print(f"  事件数: {sum(1 for line in new_store.path.read_text(encoding='utf-8').splitlines() if line.strip())}")
+    event_count = sum(1 for line in new_store.path.read_text(encoding="utf-8").splitlines() if line.strip())
+    print("\n✅ 已创建新会话(分支):")
+    print(f"Session ID: {new_store.session_id}")
+    print(f"Title: {new_store._title}")
+    print(f"已复制 {event_count} 个事件")
+    print("\n继续执行:")
+    print(f"python -m openbimagent run --playbook <playbook> --session {new_store.session_id} "
+          f"--sessions-dir {args.sessions_dir}")
     return 0
 
 
