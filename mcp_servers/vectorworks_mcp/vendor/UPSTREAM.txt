@@ -1,0 +1,26 @@
+Upstream baseline (pristine, do not edit)
+=========================================
+source:  openBIMForge vectorworks_plugin
+path:    D:/devloop/workSpace/app_codex/GenerativeBIM/openBIMForge/vectorworks_plugin/openBIMForge2024/tool_agent/vs_interface.py
+extracted: 2026-07-29 (Relay 016, M1 VW MCP phase 1)
+
+file:
+  vs_interface.py  <- openBIMForge/vectorworks_plugin/openBIMForge2024/tool_agent/vs_interface.py
+
+upstream nature:
+  This file is a proxy/bridge module loaded by the VectorWorks .vlb plugin.
+  It is NOT a direct vs.* API wrapper. It injects openBIMForge paths,
+  writes import probes to forge_runtime/handoffs/, and delegates the real
+  palette execution to forge_core/design_agent/vs_interface.py (loaded via
+  importlib.util.spec_from_file_location). The legacy _run_openbimforge_once
+  path calls forge_core.build_agent.vectorworks_execute.run_handoff.
+
+  Functions exposed: excute_webpalette_po_coder, excute_webpalette_export,
+  excute_webpalette_checking_loop, excute_final_ifc_export,
+  excute_pure_checking, excute_state_clean.
+
+known upstream quirk:
+  The module hard-depends on the VectorWorks host (vs module) and the
+  openBIMForge forge_core package; it cannot be imported standalone in the
+  test environment. The MCP runner therefore implements its own
+  execute_vs_code (exec with vs in globals) and mocks vs in unit tests.
