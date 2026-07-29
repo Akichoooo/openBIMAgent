@@ -962,3 +962,94 @@ def test_pipeline_with_orchestrator_concurrent(tmp_path) -> None:
     assert result.plan_run.ok is True
     assert len(result.plan_run.outcomes) == 3
     assert all(o.verdict is Verdict.PASS for o in result.plan_run.outcomes)
+
+
+# ---------- M1 Clarify 树回退与续跑集成(Relay 014 任务 D3) ----------
+
+
+def test_pipeline_fork_and_resume_clarify(tmp_path) -> None:
+    """分支续跑:第一次 run 答 2 槽位中止 → fork → 第二次 run 只问剩余槽位。
+
+    用无默认值 playbook 让第一次 run 第 3 槽位空答触发 clarify 不放行;
+    fork 到第 2 个 user 答事件后,第二次 run 检测 forked_from 启用续跑,
+    resume_from_session 恢复前 2 槽位,run_clarify(resume=True) 只问第 3 个。
+    """
+    pb = tmp_path / "playbook.md"
+    pb.write_text(
+        "---\n"
+        "name: fork_resume_test\n"
+        "targets: [blender]\n"
+        "slots:\n"
+        "  - { id: s1, question: Q1 }\n"
+        "  - { id: s2, question: Q2 }\n"
+        "  - { id: s3, question: Q3 }\n"
+        "phases:\n"
+        "  - id: asset_batches\n"
+        "    batches: [主体]\n"
+        "    per_batch: [blender_build]\n"
+        "acceptance:\n"
+        "  blender_loop: { min_score: 8.5, max_iters: 4 }\n"
+        "deliverables: [.blend 工程]\n"
+        "---\n\n正文\n",
+        encoding="utf-8",
+    )
+    sessions_dir = tmp_path / "sessions"
+
+    # 第一次 run:答 s1/s2,s3 空 → clarify 未放行(completion_score=66.7<85)
+    answers1 = iter(["答1", "答2", ""])
+    result1 = run_pipeline(
+        playbook_path=pb,
+        out_dir=tmp_path / "out1",
+        blender_client=None,
+        input_func=lambda p: next(answers1),
+        sessions_dir=sessions_dir,
+        yes=True,
+    )
+    assert result1.ok is False  # clarify 不放行
+    assert result1.session is not None
+
+    # fork 到第 2 个 user 答(第 4 条 message 事件,index=3)
+    messages = [e for e in result1.session.load() if e.type is EventType.MESSAGE]
+    fork_point = messages[3]  # 3 对问答=6 条;第 2 个 user 答 = index 3
+    forked = result1.session.fork(fork_point.id)
+
+    # 第二次 run:用 forked session 续跑,只问 s3
+    calls2: list[str] = []
+    answers2 = iter(["答3"])
+    run_pipeline(
+        playbook_path=pb,
+        out_dir=tmp_path / "out2",
+        blender_client=None,
+        input_func=lambda p: (calls2.append(p), next(answers2))[1],
+        sessions_dir=sessions_dir,
+        yes=True,
+        session_id=forked.session_id,
+    )
+    assert len(calls2) == 1  # resume 恢复 s1/s2,只问 s3
+
+
+def test_tree_command_integration(tmp_path, capsys) -> None:
+    """tree CLI 子命令:5 事件会话 → fork 到第 3 事件 → 新会话含前 3 事件 + index 记录分支关系。"""
+    from openbimagent.cli import main
+
+    sessions_dir = tmp_path / "sessions"
+    store = SessionStore.create(sessions_dir, title="tree-int", playbook=str(SINGLE))
+    events = [
+        store.append_new(EventType.MESSAGE, {"role": "user", "content": f"事件{i}"})
+        for i in range(5)
+    ]
+    code = main(["tree", store.session_id, events[2].id, "--sessions-dir", str(sessions_dir)])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "新会话" in out
+
+    # 新 session 含前 3 个事件
+    entries = SessionStore.list_sessions(sessions_dir)
+    assert len(entries) == 2
+    forked_entry = next(e for e in entries if e["id"] != store.session_id)
+    forked_store = SessionStore(sessions_dir / f"{forked_entry['id']}.jsonl")
+    forked_events = forked_store.load()
+    assert [e.id for e in forked_events] == [events[0].id, events[1].id, events[2].id]
+    # index 记录分支关系
+    assert forked_entry["forked_from"]["parent_session_id"] == store.session_id
+    assert forked_entry["forked_from"]["parent_event_id"] == events[2].id
