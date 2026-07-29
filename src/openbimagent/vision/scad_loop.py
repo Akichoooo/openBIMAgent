@@ -76,6 +76,9 @@ def _asset_scad(asset: dict[str, Any]) -> str:
     asset_id = str(asset.get("id") or "?")
     primitive = asset.get("primitive")
     position = _float_seq(asset.get("position"), 3, field_name="position", asset_id=asset_id)
+    # M1 健壮性:position 边界检查(任一维度绝对值 > 1000 视为异常坐标,防 LLM 产出离谱值)
+    if any(abs(p) > 1000 for p in position):
+        raise ValueError(f"asset {asset_id!r} 的 position 超出合理范围(±1000),实收 {position}")
     size = asset.get("size")
     if primitive == "cube":
         dims = _float_seq(size, 3, field_name="size", asset_id=asset_id)
@@ -90,11 +93,17 @@ def _asset_scad(asset: dict[str, Any]) -> str:
         r1, r2, height = _float_seq(size, 3, field_name="size", asset_id=asset_id)
         body = f"cylinder(r1={_fmt(r1)}, r2={_fmt(r2)}, h={_fmt(height)}, center=true)"
     else:
-        raise ValueError(f"asset {asset_id!r} 的 primitive 须为 {list(PRIMITIVES)},实收 {primitive!r}")
+        raise ValueError(f"asset {asset_id!r} 的不支持的图元: primitive={primitive!r}(须为 {list(PRIMITIVES)})")
     stmt = f"translate([{','.join(map(_fmt, position))}]) {body};"
     color = asset.get("color")
-    if color:
-        stmt = f'color("{color}") {stmt}'
+    if color is not None:
+        if isinstance(color, (list, tuple)):
+            # M1:RGB 三元组(0-1) → color([r,g,b])
+            rgb = _float_seq(color, 3, field_name="color", asset_id=asset_id)
+            stmt = f"color([{','.join(map(_fmt, rgb))}]) {stmt}"
+        else:
+            # 字符串颜色名 → color("name")(M0 行为保留)
+            stmt = f'color("{color}") {stmt}'
     return stmt
 
 
@@ -219,6 +228,120 @@ def apply_ir_patch(ir: dict[str, Any], ops: list[dict[str, Any]]) -> dict[str, A
     return patched
 
 
+# ---------- JSON Patch(RFC 6902 子集,M1) ----------
+
+
+class PatchValidationError(ValueError):
+    """JSON Patch(RFC 6902)校验失败:old_value 不匹配 / 路径不存在 / 操作非法 / op 后不可渲染。"""
+
+
+def _parse_pointer(pointer: str) -> list[int | str]:
+    """解析 JSON Pointer(RFC 6901):/assets/0/position/1 → ['assets', 0, 'position', 1]。"""
+    if not isinstance(pointer, str) or not pointer.startswith("/"):
+        raise PatchValidationError(f"JSON Pointer 须以 / 开头,实收 {pointer!r}")
+    if pointer == "/":
+        return []
+    tokens: list[int | str] = []
+    for raw in pointer[1:].split("/"):
+        token = raw.replace("~1", "/").replace("~0", "~")
+        if token.lstrip("-").isdigit():
+            tokens.append(int(token))
+        else:
+            tokens.append(token)
+    return tokens
+
+
+def _resolve_pointer(doc: Any, tokens: list[int | str]) -> tuple[Any, int | str | None, Any, bool]:
+    """沿 tokens 解析;返回 (parent, last_key, current_value, exists)。
+
+    exists=False 表示路径中断(parent 仍指向最后可达容器,last_key 为断点 token)。
+    """
+    if not tokens:
+        return doc, None, doc, True
+    current = doc
+    parent: Any = None
+    last_key: int | str | None = None
+    for token in tokens:
+        parent = current
+        last_key = token
+        if isinstance(parent, list):
+            if not isinstance(token, int) or token < 0 or token >= len(parent):
+                return parent, last_key, None, False
+            current = parent[token]
+        elif isinstance(parent, dict):
+            if not isinstance(token, str) or token not in parent:
+                return parent, last_key, None, False
+            current = parent[token]
+        else:
+            return parent, last_key, None, False
+    return parent, last_key, current, True
+
+
+def apply_patch(ir: dict[str, Any], ops: list[dict[str, Any]]) -> dict[str, Any]:
+    """对 IR 应用 JSON Patch(RFC 6902 子集:replace / add / remove;M1 任务 B2)。
+
+    操作语义:
+    - replace:path 须存在;old_value 须与当前值相等(浮点容差 1e-6),否则 PatchValidationError。
+    - add:path 不存在则插入(list 末尾追加 / dict 设键),存在则覆盖。
+    - remove:path 须存在,删除。
+    原子性:deepcopy 入参,任一 op 失败整批拒绝(抛 PatchValidationError,入参不被改动);
+    全部 op 应用后再用 ir_to_scad 复验可渲染性,不可渲染亦整批拒绝。
+    """
+    patched = deepcopy(ir)
+    for i, op in enumerate(ops):
+        if not isinstance(op, dict):
+            raise PatchValidationError(f"op[{i}] 须为 dict,实收 {type(op).__name__}")
+        op_type = op.get("op")
+        path = op.get("path")
+        if not isinstance(path, str):
+            raise PatchValidationError(f"op[{i}] 缺 path 或类型非 str,实收 {path!r}")
+        tokens = _parse_pointer(path)
+        if op_type == "replace":
+            if "old_value" not in op:
+                raise PatchValidationError(f"op[{i}] replace 缺 old_value(防 LLM 误判当前状态)")
+            if "value" not in op:
+                raise PatchValidationError(f"op[{i}] replace 缺 value")
+            parent, last_key, current, exists = _resolve_pointer(patched, tokens)
+            if not exists or last_key is None:
+                raise PatchValidationError(f"op[{i}] replace path {path!r} 不存在")
+            if not _values_equal(current, op["old_value"]):
+                raise PatchValidationError(
+                    f"op[{i}] old_value 不匹配:path {path!r} 当前值 {current!r} ≠ 声明 {op['old_value']!r}"
+                )
+            if isinstance(parent, (list, dict)):
+                parent[last_key] = deepcopy(op["value"])
+            else:
+                raise PatchValidationError(f"op[{i}] replace 目标 {path!r} 父节点非容器")
+        elif op_type == "add":
+            if "value" not in op:
+                raise PatchValidationError(f"op[{i}] add 缺 value")
+            parent, last_key, current, exists = _resolve_pointer(patched, tokens)
+            if isinstance(parent, list):
+                if exists and isinstance(last_key, int):
+                    parent[last_key] = deepcopy(op["value"])  # 已存在则覆盖
+                else:
+                    parent.append(deepcopy(op["value"]))  # 不存在则末尾追加
+            elif isinstance(parent, dict):
+                parent[str(last_key) if last_key is not None else ""] = deepcopy(op["value"])
+            else:
+                raise PatchValidationError(f"op[{i}] add 目标 {path!r} 父节点非容器")
+        elif op_type == "remove":
+            parent, last_key, current, exists = _resolve_pointer(patched, tokens)
+            if not exists or last_key is None:
+                raise PatchValidationError(f"op[{i}] remove path {path!r} 不存在")
+            if isinstance(parent, (list, dict)):
+                del parent[last_key]
+            else:
+                raise PatchValidationError(f"op[{i}] remove 目标 {path!r} 父节点非容器")
+        else:
+            raise PatchValidationError(f"op[{i}] 不支持的操作: {op_type!r}(仅 replace/add/remove)")
+    try:
+        ir_to_scad(patched)
+    except (ValueError, TypeError) as exc:
+        raise PatchValidationError(f"patch 后 IR 不可渲染,整批拒绝: {exc}") from exc
+    return patched
+
+
 # ---------- 主循环 ----------
 
 
@@ -267,6 +390,7 @@ def run_scad_loop(
     prev_score: float | None = None
     consecutive_drops = 0
     scores: list[float] = []
+    delta_history: list[float] = []  # M1:连续 2 轮 delta < CONVERGENCE_DELTA 才判 convergence_delta(ADR-0004)
     prev_images: list[Path] = []
     terminate_reason = ""
     converged = False
@@ -334,7 +458,17 @@ def run_scad_loop(
                 ir_path.write_text(json.dumps(best_ir, ensure_ascii=False, indent=2), encoding="utf-8")
                 break
             delta = abs(score - prev_score)
-            if delta < CONVERGENCE_DELTA and score > 0 and prev_score > 0 and score >= prev_score:
+            delta_history.append(delta)
+            # M1:连续 2 轮 delta < CONVERGENCE_DELTA 且非下降才判 convergence_delta
+            # (ADR-0004:单轮 delta 小可能是 patch 微动,连续 2 轮停滞才视为真正收敛)
+            if (
+                len(delta_history) >= 2
+                and delta_history[-1] < CONVERGENCE_DELTA
+                and delta_history[-2] < CONVERGENCE_DELTA
+                and score > 0
+                and prev_score > 0
+                and score >= prev_score
+            ):
                 terminate_reason = "convergence_delta"  # 未达标但已停滞;converged 保持 False
                 break
         prev_score = score
