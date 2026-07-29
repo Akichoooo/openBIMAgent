@@ -25,6 +25,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from openbimagent.assembly.asset_cache import AssetCache, RateLimitError
 from openbimagent.providers.registry import ProviderError
 from openbimagent.vision.rubric import CritiqueResult
 
@@ -58,6 +59,8 @@ def make_builder_fn(
     registry: Any = None,
     role: str = "modeler",
     role_brief: str | None = None,
+    use_cache: bool = False,
+    cache_dir: Path | None = None,
 ) -> Any:
     """构造 builder_fn(符合 vision.render_loop.BuilderFn 形态)。
 
@@ -65,22 +68,70 @@ def make_builder_fn(
       (调用方应捕获并回退模板,本工厂已内置回退,见 _safe_build)。
     - registry 为空:确定性模板,无 LLM 调用(测试默认路径,可离线)。
     - role_brief 缺省从 agents/<role>.md 正文加载(单一事实源);显式注入跳过文件读(测试友好)。
+    - use_cache:是否接入 asset_cache(hash 去重 + 429 退避);默认 False 向后兼容(测试默认不走缓存)。
+      开启后:生成前查缓存(命中直接返回),429 限速时回退模板(降级链),生成成功后写缓存。
+    - cache_dir:缓存目录;None 时用 asset_cache.DEFAULT_CACHE_DIR(.asset_cache)。
     """
     brief = role_brief if role_brief is not None else _load_role_brief(role)
+    cache = AssetCache(cache_dir) if use_cache else None
 
     def builder(prev_critique: CritiqueResult | None, batch_ctx: dict[str, Any]) -> str:
+        # asset_cache 接入(use_cache 时):查缓存命中直接返回;429 限速回退模板。
+        # 不破坏降级链:LLM 失败仍回退模板;AST 预校验在 _llm_code 内保留。
+        cache_key = _batch_cache_key(batch_ctx, prev_critique) if cache is not None else None
+        if cache is not None:
+            try:
+                cache.check_rate_limit()
+            except RateLimitError as exc:
+                # 429 退避:被 LLM provider 限速,不走 LLM,直接模板兜底(降级链保命)。
+                # 模板代码也写进缓存:下次同参命中,避免反复触发 429。
+                rework = prev_critique.actionable_feedback if prev_critique else None
+                code = _template_code(batch_ctx, prev_critique)
+                code = f"# LLM 路径被 429 限速,回退确定性模板:{exc}\n# rework={rework}\n" + code
+                cache.put_text(cache_key, code)
+                return code
+            cached = cache.get_text(cache_key)
+            if cached is not None:
+                return "# asset_cache 命中(同参已生成过,跳过 LLM/模板)\n" + cached
+
         if registry is None:
-            return _template_code(batch_ctx, prev_critique)
-        try:
-            return _llm_code(registry, role, brief, batch_ctx, prev_critique)
-        except Exception as exc:
-            # 降级链:LLM 任何失败(BuilderError/ProviderError/熔断/缺 key)都回退模板,
-            # 不让整批死掉;返工指令拼进代码注释供人审。
-            rework = prev_critique.actionable_feedback if prev_critique else None
             code = _template_code(batch_ctx, prev_critique)
-            return f"# LLM 路径失败,回退确定性模板:{exc}\n# rework={rework}\n" + code
+        else:
+            try:
+                code = _llm_code(registry, role, brief, batch_ctx, prev_critique)
+            except Exception as exc:
+                # 降级链:LLM 任何失败(BuilderError/ProviderError/熔断/缺 key)都回退模板,
+                # 不让整批死掉;返工指令拼进代码注释供人审。
+                rework = prev_critique.actionable_feedback if prev_critique else None
+                code = _template_code(batch_ctx, prev_critique)
+                code = f"# LLM 路径失败,回退确定性模板:{exc}\n# rework={rework}\n" + code
+
+        # 写缓存(use_cache 时,生成成功才写;含降级回退的模板代码也写,下次同参命中)
+        if cache is not None and cache_key is not None:
+            cache.put_text(cache_key, code)
+        return code
 
     return builder
+
+
+def _batch_cache_key(
+    batch_ctx: dict[str, Any], prev_critique: CritiqueResult | None
+) -> dict[str, Any]:
+    """提取 batch_ctx 稳定字段作缓存键(batch + ir 资产摘要 + 返工反馈)。
+
+    只取 id/category 等稳定字段(剔除 description 等易变文本,避免缓存失效过快);
+    prev_critique.actionable_feedback 进 key:FIX 轮与首轮缓存隔离(返工后代码不同)。
+    """
+    batch = list(batch_ctx.get("batch") or [])
+    ir = batch_ctx.get("ir") or {}
+    assets = ir.get("assets") or []
+    asset_summary = [
+        {"id": a.get("id"), "category": a.get("category")}
+        for a in assets
+        if isinstance(a, dict)
+    ]
+    feedback = prev_critique.actionable_feedback if prev_critique else None
+    return {"batch": batch, "assets": asset_summary, "rework": feedback}
 
 
 # ---------- 确定性模板 ----------
