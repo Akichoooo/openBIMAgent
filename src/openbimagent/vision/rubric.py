@@ -80,8 +80,8 @@ ANTI_INFLATION_FIVE: tuple[str, ...] = (
 REWORK_COMMAND_REQUIRED_BELOW = 8.0
 """低于该分必须给出 actionable_rework_command(ARCH §3 防放水第 2 条)。"""
 
-REASONING_MIN_CHARS = 20
-"""reasoning(CoT)最小字符数(防放水第 3 条,强制 CoT 留痕;阈值 20 兼容现有 fixture)。"""
+REASONING_MIN_CHARS = 50
+"""reasoning(CoT)最小字符数(防放水第 3 条,强制 CoT 留痕;50 字符确保充分阐述评分依据)。"""
 
 CRITICAL_PASS_FAIL_CHECKS: tuple[str, ...] = ("clash_free", "clearance_height", "connectivity")
 """关键维 pass/fail 硬门禁清单(碰撞/净高/连通;ARCH §3 防放水第 4 条):

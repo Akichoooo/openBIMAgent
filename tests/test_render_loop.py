@@ -298,7 +298,10 @@ def test_divergence_fallback_restores_best_snapshot(tmp_path) -> None:
 
 
 def test_convergence_delta_when_score_stalls_below_threshold(tmp_path) -> None:
-    """两轮分数 delta < 0.5 且未降分 → convergence_delta(未达标但已停滞;converged=False)。"""
+    """连续 2 轮 delta < 0.5 且未降分 → convergence_delta(未达标但已停滞;converged=False)。
+
+    与 scad_loop.test_convergence_delta 一致:需 3 轮(2 个 delta)才判停滞。
+    """
     client, _ = _make_mock_client(tmp_path=tmp_path)
     builder = _builder_factory([])
 
@@ -309,7 +312,7 @@ def test_convergence_delta_when_score_stalls_below_threshold(tmp_path) -> None:
             min_score=8.0,
             max_iters=5,
             client=client,
-            critic=MockCritic([6.0, 6.2]),
+            critic=MockCritic([6.0, 6.2, 6.3]),
             builder_fn=builder,
             work_dir=tmp_path / "work",
             cameras=["Camera"],
@@ -318,8 +321,8 @@ def test_convergence_delta_when_score_stalls_below_threshold(tmp_path) -> None:
     result = asyncio.run(run())
     assert result.converged is False
     assert result.terminate_reason == "convergence_delta"
-    assert result.iters == 2
-    assert result.scores == (6.0, 6.2)
+    assert result.iters == 3
+    assert result.scores == (6.0, 6.2, 6.3)
 
 
 def test_rework_loop_passes_prev_critique_to_builder(tmp_path) -> None:

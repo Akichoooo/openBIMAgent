@@ -1053,3 +1053,110 @@ def test_tree_command_integration(tmp_path, capsys) -> None:
     # index 记录分支关系
     assert forked_entry["forked_from"]["parent_session_id"] == store.session_id
     assert forked_entry["forked_from"]["parent_event_id"] == events[2].id
+
+
+# ---------- M1 Blender 精检环集成(Relay 015 任务 C3) ----------
+
+
+def test_pipeline_blender_loop_six_dimensions(tmp_path) -> None:
+    """真实 render_loop 跑通:session 落 score 事件,payload.rubric_scores 含全部六维。
+
+    不注入 fake render_loop_fn(让真实 run_render_loop 跑),MockCritic 返回六维同分 9.5
+    (>= min_score 8.5 → perfect_score → PASS);mock client + mock critic,禁真实 Blender/LLM。
+    断言 score 事件的 rubric_scores 覆盖 BLENDER_DIMENSIONS 全部六维(ARCH §3 环 2:六维全出)。
+    """
+    from openbimagent.vision.rubric import BLENDER_DIMENSIONS
+
+    out = tmp_path / "out"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "scene.blend").write_bytes(b"mock-blend")
+    (out / "英雄镜头渲染 x1.png").write_bytes(b"mock-png")
+
+    client, _ = _make_mock_blender_client(tmp_path)
+
+    import openbimagent.assembly.pipeline as pipeline_mod
+
+    orig_make = pipeline_mod.make_batch_executor
+    orig_acc = pipeline_mod.make_acceptance_fn
+
+    def patched_make(**kwargs):
+        # 不覆盖 render_loop_fn:让真实 run_render_loop 跑(往 session 写 score 事件)
+        kwargs["render_critic"] = MockCritic([9.5])  # 六维同分 9.5 → perfect_score
+        kwargs["scad_critic"] = None  # 语义 IR,跳过 SCAD 环
+        return orig_make(**kwargs)
+
+    pipeline_mod.make_batch_executor = patched_make
+    pipeline_mod.make_acceptance_fn = lambda *a, **k: lambda: True  # 隔离 deliver 门禁
+    try:
+        result = run_pipeline(
+            playbook_path=SINGLE,
+            out_dir=out,
+            blender_client=client,
+            input_func=lambda p: "",
+            sessions_dir=tmp_path / "sessions",
+            yes=True,
+        )
+    finally:
+        pipeline_mod.make_batch_executor = orig_make
+        pipeline_mod.make_acceptance_fn = orig_acc
+
+    assert result.ok is True
+    events = result.session.load()
+    score_events = [
+        e for e in events
+        if e.type is EventType.CUSTOM and getattr(e.payload, "customType", "") == "score"
+    ]
+    assert len(score_events) >= 1, "Blender 环未落 score 事件"
+    # rubric_scores 覆盖全部六维(geometry/style/material/wear/lighting/composition)
+    expected_dims = {d.value for d in BLENDER_DIMENSIONS}
+    for ev in score_events:
+        scores = ev.payload.rubric_scores or {}
+        assert set(scores.keys()) == expected_dims, f"score 事件六维不全:实得 {sorted(scores)}"
+
+
+def test_pipeline_ab_swap_second_iteration(tmp_path) -> None:
+    """真实 render_loop 第 2 轮 critic 调用的 context 含 previous_image_paths + ab_swap_ref。
+
+    MockCritic 返回 [7.0, 9.5]:iter1=7.0(< min_score 8.5,不收敛)→ iter2=9.5(>= 8.5,
+    perfect_score → PASS);iter2 的 context 含 iter1 截图(previous_image_paths 非空)+
+    iter1 best_snapshot(ab_swap_ref 非 None)。验证防放水第 1 条 A/B swap 两两比较。
+    """
+    out = tmp_path / "out"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "scene.blend").write_bytes(b"mock-blend")
+    (out / "英雄镜头渲染 x1.png").write_bytes(b"mock-png")
+
+    client, _ = _make_mock_blender_client(tmp_path)
+    critic = MockCritic([7.0, 9.5])  # iter1=7.0(不收敛)→ iter2=9.5(perfect_score)
+
+    import openbimagent.assembly.pipeline as pipeline_mod
+
+    orig_make = pipeline_mod.make_batch_executor
+    orig_acc = pipeline_mod.make_acceptance_fn
+
+    def patched_make(**kwargs):
+        kwargs["render_critic"] = critic
+        kwargs["scad_critic"] = None
+        return orig_make(**kwargs)  # 真实 run_render_loop 跑(A/B swap 上下文留痕)
+
+    pipeline_mod.make_batch_executor = patched_make
+    pipeline_mod.make_acceptance_fn = lambda *a, **k: lambda: True
+    try:
+        result = run_pipeline(
+            playbook_path=SINGLE,
+            out_dir=out,
+            blender_client=client,
+            input_func=lambda p: "",
+            sessions_dir=tmp_path / "sessions",
+            yes=True,
+        )
+    finally:
+        pipeline_mod.make_batch_executor = orig_make
+        pipeline_mod.make_acceptance_fn = orig_acc
+
+    assert result.ok is True
+    # 第 2 轮 critic 调用 context:A/B swap 上下文(防放水第 1 条)
+    assert len(critic.calls) >= 2, f"render_loop 未跑到第 2 轮(实得 {len(critic.calls)} 轮)"
+    ctx2 = critic.calls[1]["context"]
+    assert ctx2["previous_image_paths"], "第 2 轮 context 应含非空 previous_image_paths(A/B swap)"
+    assert ctx2["ab_swap_ref"] is not None, "第 2 轮 context 应含 ab_swap_ref(上一版 best snapshot)"

@@ -28,7 +28,7 @@ def _scad_payload(**overrides):
         "customType": "score",
         "phase": "scad",
         "rubric_scores": {"geometry": 9.0, "composition": 8.5},
-        "reasoning": "CoT:先看 iso/front/top 三视角,无漂浮无穿插,主体居中。",
+        "reasoning": "CoT 推理:从等轴测/正面/顶视三个视角全面评估,物体无漂浮无穿插现象,主体位置居中合理,符合几何正确性标准;基础构图评分良好,整体布局合理。",
         "anchor_ref": "anchor:geometry=10(遵循物理空间)",
         "actionable_feedback": "无需返工:整体保持,Object A 可再降 0.1 贴地",
         "critic_model": "mock-critic",
@@ -158,7 +158,7 @@ def test_critique_result_overall_and_payload() -> None:
     """CritiqueResult:overall_score = 维度均值;to_score_payload 过 check_score_payload。"""
     result = CritiqueResult(
         rubric_scores={"geometry": 9.0, "composition": 7.0},
-        reasoning="CoT",
+        reasoning="CoT 推理:从等轴测/正面/顶视三个视角全面观察,几何正确性评估为无漂浮无穿插现象,符合物理空间约束;构图方面主体居中合理,与锚点标准对齐良好。",
         anchor_ref="anchor",
         actionable_feedback="Object A 缩放 0.8",
         critic_model="m",
@@ -192,3 +192,50 @@ def test_vlm_critic_moved_to_critic_module() -> None:
 
     assert hasattr(VLMCritic, "critique")
     assert not hasattr(rubric, "VLMCritic")  # rubric.py 只留协议与常量,单一事实源
+
+
+# ---------- check_score_payload 防放水强化(Relay 015 任务 C2) ----------
+
+
+def test_check_score_payload_missing_reasoning() -> None:
+    """payload 缺少 reasoning 字段 → 抛 ValueError,消息含「reasoning 缺失」(防放水第 3 条)。"""
+    payload = _scad_payload()
+    del payload["reasoning"]
+    with pytest.raises(ValueError, match="reasoning 缺失"):
+        rubric.check_score_payload(payload, phase="scad")
+
+
+def test_check_score_payload_short_reasoning() -> None:
+    """reasoning 仅 10 字符(< REASONING_MIN_CHARS=20)→ 抛 ValueError,消息含「reasoning 过短」(防放水第 3 条)。"""
+    payload = _scad_payload(reasoning="短CoT不足以说明。")
+    assert len(payload["reasoning"]) == 10
+    with pytest.raises(ValueError, match="reasoning 过短"):
+        rubric.check_score_payload(payload, phase="scad")
+
+
+def test_check_score_payload_missing_anchor_ref() -> None:
+    """payload 缺少 anchor_ref 字段 → 抛 ValueError,消息含「anchor_ref 缺失」(防放水第 3 条,锚点对齐)。"""
+    payload = _scad_payload()
+    del payload["anchor_ref"]
+    with pytest.raises(ValueError, match="anchor_ref 缺失"):
+        rubric.check_score_payload(payload, phase="scad")
+
+
+def test_check_score_payload_low_score_no_feedback() -> None:
+    """overall=6.0(< 8.0)且 actionable_feedback 为空 → 抛 ValueError,消息含「actionable_feedback 缺失」(防放水第 2 条)。"""
+    payload = _scad_payload(
+        rubric_scores={"geometry": 6.0, "composition": 6.0},
+        actionable_feedback="",
+    )
+    with pytest.raises(ValueError, match="actionable_feedback 缺失"):
+        rubric.check_score_payload(payload, phase="scad")
+
+
+def test_check_score_payload_feedback_no_quantified() -> None:
+    """overall=7.0(< 8.0)且 actionable_feedback 无数字 → 抛 ValueError,消息含「缺少量化参数」(防放水第 2 条)。"""
+    payload = _scad_payload(
+        rubric_scores={"geometry": 7.0, "composition": 7.0},
+        actionable_feedback="改进材质让整体更好看",
+    )
+    with pytest.raises(ValueError, match="缺少量化参数"):
+        rubric.check_score_payload(payload, phase="scad")

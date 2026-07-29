@@ -31,7 +31,7 @@ _CURR_BYTES = _PNG_1PX + b"curr-version"
 
 VALID_SCAD_REPLY = json.dumps(
     {
-        "reasoning": "CoT:iso/front/top 三视角无漂浮无穿插,主体居中;逐维对照锚点词后打分。",
+        "reasoning": "CoT 推理:等轴测/正面/顶视三个视角全面评估,物体无漂浮无穿插现象,主体位置居中合理;对照几何正确性与基础构图两维锚点词后逐项打分,整体符合预期标准。",
         "rubric_scores": {"geometry": 9.0, "composition": 8.5},
         "anchor_ref": "anchor:geometry=10(遵循物理空间);composition=10(前景遮挡英雄机位)",
         "actionable_feedback": "无需返工:Object base 可再沿 Z 降 0.1 贴地",
@@ -41,7 +41,7 @@ VALID_SCAD_REPLY = json.dumps(
 
 VAGUE_LOW_REPLY = json.dumps(
     {
-        "reasoning": "CoT:front 视角 pole 与 base 明显重叠,几何对不上。",
+        "reasoning": "CoT 推理:从正面视角观察发现 pole 柱体与 base 底座存在明显的几何重叠问题,两者位置关系不符合物理空间约束,几何正确性评分较低,需要调整物体间距以消除穿插。",
         "rubric_scores": {"geometry": 6.0, "composition": 9.0},
         "anchor_ref": "anchor:geometry=5(轻微重叠)",
         "actionable_feedback": "整体再做好看一点",  # <8 分但无量化参数,门禁必拒
@@ -217,7 +217,7 @@ def test_blender_phase_six_dimensions(tmp_path) -> None:
     """critic_render 角色:六维全出,phase 推导为 blender;system prompt 取自 critic_render.md。"""
     reply = json.dumps(
         {
-            "reasoning": "CoT:六维逐一对照锚点词,材质略显纯色。",
+            "reasoning": "CoT 推理:几何正确性评估-物体无漂浮穿插,符合物理空间(9分);风格一致性-六维逐一对照锚点词,整体风格统一(9分);材质真实感-略显纯色,未达PBR真实感(9分);经年磨损-自然磨损表现良好(9分);灯光氛围-光影层次丰富(9分);镜头构图-构图合理居中(9分)。",
             "rubric_scores": {d: 9.0 for d in ("geometry", "style", "material", "wear", "lighting", "composition")},
             "anchor_ref": "anchor:material=5(低分重复)",
             "actionable_feedback": "整体保持",

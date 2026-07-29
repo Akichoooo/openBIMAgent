@@ -400,3 +400,67 @@ def test_dump_usage_on_exit_writes_when_not_done(tmp_path) -> None:
     first_text = summary_path.read_text(encoding="utf-8")
     _dump_usage_on_exit(reg, tmp_path, {"done": True})
     assert summary_path.read_text(encoding="utf-8") == first_text
+
+
+def test_install_sigbreak_bridge_raises_keyboard_interrupt() -> None:
+    """SIGBREAK 桥(012 冒烟:Windows CREATE_NEW_PROCESS_GROUP 禁 CTRL_C,只有 CTRL_BREAK 可达)。
+
+    装桥后 SIGBREAK 处理器应抛 KeyboardInterrupt;非 Windows 无 SIGBREAK 则跳过。
+    """
+    import signal
+
+    sigbreak = getattr(signal, "SIGBREAK", None)
+    if sigbreak is None:
+        pytest.skip("非 Windows 平台,无 SIGBREAK")
+    original = signal.getsignal(sigbreak)
+    try:
+        cli._install_sigbreak_bridge()
+        handler = signal.getsignal(sigbreak)
+        assert callable(handler)
+        with pytest.raises(KeyboardInterrupt):
+            handler(sigbreak, None)
+    finally:
+        signal.signal(sigbreak, original)  # 还原,免得影响 pytest 自身信号处理
+
+
+# ---------- HITL /tree 统一到 fork(Relay 015 任务 B2) ----------
+
+
+def test_slash_tree_uses_fork_writes_forked_from(tmp_path, capsys) -> None:
+    """HITL /tree 使用 fork(非 branch):新会话 index entry 含 forked_from 元数据(branch 不写)。
+
+    验证 Relay 015 任务 B1:HITL /tree 从 branch 统一到 fork。
+    fork 会写 forked_from(parent_session_id / parent_event_id)到 index.json;branch 不写。
+    """
+    class _Result:
+        def __init__(self, store):
+            self.session = store
+
+    sessions_dir = tmp_path / "sessions"
+    store = SessionStore.create(sessions_dir, title="repl-fork-test", playbook=str(SINGLE))
+    event = store.append_new(EventType.MESSAGE, {"role": "user", "content": "fork-test"})
+
+    assert _handle_slash("/tree", event.id, _ctx(result=_Result(store), sessions_dir=sessions_dir)) is True
+    out = capsys.readouterr().out
+    assert "新会话" in out
+
+    # fork 写 forked_from 元数据(branch 不写);验证用了 fork
+    entries = SessionStore.list_sessions(sessions_dir)
+    forked_entries = [e for e in entries if e["id"] != store.session_id]
+    assert len(forked_entries) == 1
+    forked_entry = forked_entries[0]
+    assert "forked_from" in forked_entry, "HITL /tree 应使用 fork(写 forked_from 元数据)"
+    assert forked_entry["forked_from"]["parent_session_id"] == store.session_id
+    assert forked_entry["forked_from"]["parent_event_id"] == event.id
+
+
+def test_slash_tree_fork_unknown_event_prints_error(tmp_path, capsys) -> None:
+    """HITL /tree 事件 id 不存在 → fork 抛 ValueError → 打印「事件 id 不存在」。"""
+    class _Result:
+        def __init__(self, store):
+            self.session = store
+
+    sessions_dir = tmp_path / "sessions"
+    store = SessionStore.create(sessions_dir, title="repl-fork-err", playbook=str(SINGLE))
+    assert _handle_slash("/tree", "bogus-event-id", _ctx(result=_Result(store), sessions_dir=sessions_dir)) is True
+    assert "不存在" in capsys.readouterr().out
