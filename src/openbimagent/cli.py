@@ -262,9 +262,9 @@ def _handle_slash(cmd: str, arg: str, ctx: dict[str, Any]) -> bool:
             print("(无当前会话)")
             return True
         try:
-            new_store = result.session.branch(arg, title=f"{result.session.session_id} 的分支")
+            new_store = result.session.fork(arg, title=f"{result.session.session_id} 的分支")
             print(f"  新会话: {new_store.session_id}({new_store.path})")
-        except KeyError as exc:
+        except ValueError as exc:
             print(f"  事件 id 不存在: {exc}")
         return True
     if cmd == "/export":

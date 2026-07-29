@@ -80,6 +80,9 @@ ANTI_INFLATION_FIVE: tuple[str, ...] = (
 REWORK_COMMAND_REQUIRED_BELOW = 8.0
 """低于该分必须给出 actionable_rework_command(ARCH §3 防放水第 2 条)。"""
 
+REASONING_MIN_CHARS = 20
+"""reasoning(CoT)最小字符数(防放水第 3 条,强制 CoT 留痕;阈值 20 兼容现有 fixture)。"""
+
 CRITICAL_PASS_FAIL_CHECKS: tuple[str, ...] = ("clash_free", "clearance_height", "connectivity")
 """关键维 pass/fail 硬门禁清单(碰撞/净高/连通;ARCH §3 防放水第 4 条):
 二元判定,不进六维平均,与 domain_gate(constraints.yaml 驱动)呼应;任一 fail 直接打回,不看总分。"""
@@ -103,16 +106,19 @@ _PHASE_DIMENSIONS: dict[str, tuple[Dimension, ...]] = {
 def check_score_payload(payload: dict[str, Any], *, phase: str) -> None:
     """校验评分落盘字段:rubric_scores/reasoning/anchor_ref/actionable_feedback 必填。
 
+    防放水五件套(ARCH §3):
+    - 第 2 条:任一维 < 8 分强制量化 actionable_rework_command(含数字,禁空泛建议)。
+    - 第 3 条:强制 CoT(reasoning >= REASONING_MIN_CHARS 字符)+ 锚点对齐(anchor_ref 非空)。
     phase=scad 时 rubric_scores 只许两维(SCAD_DIMENSIONS);phase=blender 时六维全出。
-    任一维 < 8 分必须含量化 actionable_rework_command,禁止空泛建议。
-    与 schemas/score_event.schema.json 对齐;违规抛 ValueError。
+    与 schemas/score_event.schema.json 对齐;违规抛 ValueError,消息注明违反防放水第几条。
     """
     if phase not in _PHASE_DIMENSIONS:
         raise ValueError(f"phase 须为 {sorted(_PHASE_DIMENSIONS)},实收 {phase!r}")
     required = ("rubric_scores", "reasoning", "anchor_ref", "actionable_feedback", "critic_model")
     missing = [key for key in required if key not in payload]
     if missing:
-        raise ValueError(f"评分落盘缺必填字段 {missing}(schemas/score_event.schema.json)")
+        detail = ", ".join(f"{k} 缺失" for k in missing)
+        raise ValueError(f"评分落盘缺必填字段: {detail}(schemas/score_event.schema.json)")
 
     scores = payload["rubric_scores"]
     if not isinstance(scores, dict) or not scores:
@@ -128,15 +134,23 @@ def check_score_payload(payload: dict[str, Any], *, phase: str) -> None:
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0.0 <= value <= 10.0:
             raise ValueError(f"rubric_scores[{key!r}] 须为 0-10 数值,实收 {value!r}")
 
+    # 强制 CoT 与锚点留痕(防放水第 3 条)
     for key in ("reasoning", "anchor_ref", "actionable_feedback", "critic_model"):
         if not isinstance(payload[key], str) or not payload[key].strip():
-            raise ValueError(f"{key} 须为非空字符串(强制 CoT 与防放水留痕)")
+            raise ValueError(f"{key} 缺失或为空白(强制 CoT 与防放水留痕)")
 
+    # reasoning 长度校验(强制 CoT,防放水第 3 条)
+    if len(payload["reasoning"].strip()) < REASONING_MIN_CHARS:
+        raise ValueError(
+            f"reasoning 过短(< {REASONING_MIN_CHARS} 字符,违反防放水第 3 条,强制 CoT)"
+        )
+
+    # 低分强制量化 actionable_rework_command(防放水第 2 条)
     if any(value < REWORK_COMMAND_REQUIRED_BELOW for value in scores.values()):
         if not _QUANTIFIED_COMMAND.search(payload["actionable_feedback"]):
             raise ValueError(
-                f"任一维 < {REWORK_COMMAND_REQUIRED_BELOW} 分强制量化 actionable_rework_command"
-                "(形如「Object A 缩放 0.8 并沿 Z 降 0.2」),禁止空泛建议(ARCH §3 防放水第 2 条)"
+                "actionable_feedback 缺少量化参数(须含数字,违反防放水第 2 条)"
+                "(形如「Object A 缩放 0.8 并沿 Z 降 0.2」),禁止空泛建议"
             )
 
 

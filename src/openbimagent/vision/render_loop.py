@@ -122,6 +122,7 @@ async def run_render_loop(
     prev_score: float | None = None
     consecutive_drops = 0
     scores: list[float] = []
+    delta_history: list[float] = []  # M1:连续 2 轮 delta < CONVERGENCE_DELTA 才判 convergence_delta(ADR-0004,与 scad_loop 一致)
     prev_critique: CritiqueResult | None = None
     prev_images: list[Path] = []
     prev_scores_dict: dict[str, float] | None = None
@@ -226,7 +227,17 @@ async def run_render_loop(
                         pass  # 回滚失败不致命:best_snapshot 仍作为引用记录,人工接管
                 break
             delta = abs(score - prev_score)
-            if delta < CONVERGENCE_DELTA and score > 0 and prev_score > 0 and score >= prev_score:
+            delta_history.append(delta)
+            # M1:连续 2 轮 delta < CONVERGENCE_DELTA 且非下降才判 convergence_delta
+            # (ADR-0004:单轮 delta 小可能是 patch 微动,连续 2 轮停滞才视为真正收敛;与 scad_loop 一致)
+            if (
+                len(delta_history) >= 2
+                and delta_history[-1] < CONVERGENCE_DELTA
+                and delta_history[-2] < CONVERGENCE_DELTA
+                and score > 0
+                and prev_score > 0
+                and score >= prev_score
+            ):
                 terminate_reason = "convergence_delta"  # 未达标但已停滞;converged 保持 False
                 break
         prev_score = score
