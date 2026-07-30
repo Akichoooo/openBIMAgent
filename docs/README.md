@@ -43,6 +43,8 @@
 | [RESEARCH_PROTOCOL.md](relays/RESEARCH_PROTOCOL.md) | 调研五段式、`relay_workspace/` 约定、报告模板、回执 |
 | [001](relays/001_gemini_research_prompt.md)-[005](relays/005_gemini_agent_ui_prompt.md) | 五条调研战线(已执行完毕,报告过审) |
 | [006](relays/006_gemini_utility_domain_prompt.md) / [007](relays/007_grok_community_intel_prompt.md) | 市政管网领域(Gemini)/ 社区情报(Grok)(已执行完毕,评审见 11) |
+| [008](relays/008_glm_constraints_verify_prompt.md)-[011](relays/011_glm_m0_smoke.md) | M0 实施:constraints 核实 / render_loop 接线 / 装配层 / M0 冒烟(已执行完毕,报告 `relay_workspace/m0_smoke/report.md`) |
+| [012](relays/012_glm_m0_tail_resmoke.md) | M0 收尾:4 项修复验证 + 回归测试 + 中断实演/六维收敛补跑(待执行) |
 
 ## 中间产物
 

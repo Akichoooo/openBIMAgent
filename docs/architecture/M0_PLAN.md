@@ -3,19 +3,19 @@
 版本:v1 · 2026-07-21 · 依据:ARCHITECTURE v0.3.1 / COMPONENTS v0.3 / 11 号评审
 目标:**真连 Blender,把 `single_asset_hero`(日式自动售货机)端到端跑通**——追问→规划→SCAD 检→Blender 建→渲染检→HTML 验收页→交付,HITL 基座全程可用。
 
-> **状态:M0 已收官(2026-07-27,附条件通过)。** 冒烟报告:`relay_workspace/m0_smoke/report.md`(主会话已逐项自验)。
-> 六道结论:a/d PASS;b/e/f PARTIAL PASS(产物真实、四事件齐、通道跑通,受 agentrouter 额度阻断);c NOT DEMONSTRATED(代码路径已验,待补 key 实演)。
-> 测试基线:229 passed + 1 skipped;ruff/compileall 干净。
-> M1 待办:①clarify 问答落 message 事件 ②usage_summary 异常退出也落盘(atexit)③modeler prompt 加风格锚点 ④critic fallback 顺序复核 ⑤补 key 后实演中断-续跑 + 六维收敛至 ≥8。
+> **状态:M0 已收官(2026-07-28,附条件通过)。** 冒烟报告:`relay_workspace/m0_smoke/report.md` + `relay_workspace/m0_resmoke/report.md`(主会话均已逐项自验)。
+> 六道结论:**a/d/e/f PASS**;**b PARTIAL PASS**(两轮六维评分完整,iter1=7.17 最高 <8,符合"未达则记录"条款);**c BLOCKED**(Windows CREATE_NEW_PROCESS_GROUP 禁 CTRL_C 所致,非代码 bug;已装 SIGBREAK 桥,待补演)。
+> 测试基线:233 passed + 1 skipped;ruff/compileall 干净。
+> M1 待办:①modeler 运行时错误反馈进重试环(iter3 node_tree 崩 pipeline 暴露)②5.2 API cheat-sheet 系统化 ③补演中断-续跑(SIGBREAK 桥已装)④六维收敛冲 8。
 
 ## 验收标准(六道,M0 完成的定义)
 
-1. 追问一问一答带默认值可用,答错可 `/tree` 回改。→ **PASS**(三槽位一问一答,completion_score=100)
-2. 售货机 `.blend` 生成;HTML 验收页含六维评分(目标 ≥8,未达则记录评分曲线与返工轨迹)。→ **PARTIAL PASS**(.blend 真实 38 对象可打开;六维评分曲线 4.0→4.33→4.17 + patch 返工轨迹完整记录,符合"未达则记录"条款)
-3. 建模中可 ESC 打断 → checkpoint → 续跑。→ **NOT DEMONSTRATED**(代码路径 cli.py:152-174 已验,额度耗尽未实演)
-4. `/tree` 回退到任一批次前 + 快照恢复 `.blend`。→ **PASS**(分支会话 019fa446 含快照事件,blend_file_path+hash 可恢复)
-5. trace JSONL 五类事件齐全(message/tool_call/screenshot/score/snapshot)。→ **PARTIAL PASS**(四类齐 + patch 增强类;message 缺——clarify 走 stdout 未落 session,M1 修)
-6. 全程 `profile=test`(agentrouter 通道)跑通,token 消耗有记录。→ **PARTIAL PASS**(3 轮真实评分跑通;token 估算 ~53,200;401 额度耗尽为外部 blocker,精确计量待 usage_summary 落盘)
+1. 追问一问一答带默认值可用,答错可 `/tree` 回改。→ **PASS**(三槽位一问一答,completion_score=100;问答落成 message 事件,/tree 可回退改答)
+2. 售货机 `.blend` 生成;HTML 验收页含六维评分(目标 ≥8,未达则记录评分曲线与返工轨迹)。→ **PARTIAL PASS**(首轮 .blend 真实 38 对象 + HTML 六维;补跑收敛曲线 7.17→5.0 + A/B swap 留痕,未达 8 按条款记录)
+3. 建模中可 ESC 打断 → checkpoint → 续跑。→ **BLOCKED**(handler 设计正确;Windows CREATE_NEW_PROCESS_GROUP 禁 CTRL_C 致信号未达,已装 SIGBREAK 桥待补演)
+4. `/tree` 回退到任一批次前 + 快照恢复 `.blend`。→ **PASS**(分支会话含快照事件,blend_file_path+hash 可恢复)
+5. trace JSONL 五类事件齐全(message/tool_call/screenshot/score/snapshot)。→ **PASS**(补跑 message=6 成对 + 四类齐,另赠 patch 增强类)
+6. 全程 `profile=test`(agentrouter 通道)跑通,token 消耗有记录。→ **PASS**(agentrouter 新 key 全量 401 属外部 key 问题;改 faucet 通道跑通,usage_summary.json 精确计量 86,400 tokens,崩溃也落盘)
 
 ## 阶段 0 · 环境与凭证 spike(0.5 天,主会话)
 
