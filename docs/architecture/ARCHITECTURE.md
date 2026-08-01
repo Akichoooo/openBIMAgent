@@ -1,6 +1,6 @@
 # openBIMAgent 总体架构
 
-版本:v0.6.0(Subagent Runtime v1 P1f 本地 Operator Console)· 2026-08-01
+版本:v0.7.0(compiled utility IR v1)· 2026-08-01
 依据:`docs/research/01-11` 全部调研与评审 · 决议:`docs/architecture/DECISIONS_DRAFT.md`
 姊妹篇:[COMPONENTS.md](COMPONENTS.md)(组件/agent/模型配置/上下文管理详设)
 
@@ -57,16 +57,17 @@ flowchart TB
 2. **Plan**:实例化 `PLAN.md` + `TODO.md` + **Scene Graph IR**(只出语义,C2)。
 3. **Schema 门禁**:工件过 JSON Schema,漂移即 FIX。
 4. **Research**:产出 `references.md`;资产进 `asset_cache`(hash + 429 退避)。
-5. **逐资产建模**:SCAD 快检挡结构错误 → MCP 精建(只调预置库/包内 tools)→ 精检环渲染评分 → 不通过给可执行返工指令 → 回滚点 = 该批前快照。**每批产出 HTML 验收页给人看**。
-6. **灯光渲染**:统一色调、氛围、英雄机位、相机轨迹。
-7. **domain_gate + Deliver**:确定性规则机器校验 → 交付清单(C5)→ **人审签**。
-8. 全程 trace;任意时刻用户可 abort(部分结果保留)、排队新消息、/tree 回退重跑。
+5. **市政编译边界**:路线 Solver 将语义 IR 编译为 `compiled utility IR v1`；契约持有坐标参考、系统、节点/端口、管段、标高/坡度/管径、IFC 映射和逐对象规则证据。Pydantic 校验跨引用与工程数值一致性，JSON Schema 阻断协议漂移；编译入口禁止生成占位坐标。
+6. **逐资产建模**:SCAD 快检挡结构错误 → MCP 精建(只调预置库/包内 tools)→ 精检环渲染评分 → 不通过给可执行返工指令 → 回滚点 = 该批前快照。**每批产出 HTML 验收页给人看**。
+7. **灯光渲染**:统一色调、氛围、英雄机位、相机轨迹。
+8. **domain_gate + Deliver**:compiled IR 的规则证据确定性聚合为 `domain_evidence` → 领域硬门禁 → 交付清单(C5)→ **人审签**。缺失或 UNKNOWN 证据不能当作通过。
+9. 全程 trace;任意时刻用户可 abort(部分结果保留)、排队新消息、/tree 回退重跑。
 
 ## 3. 双环视觉自检 + 评分分层(来源 03/10 报告)
 
 ### 评分分层(原则 10)
 
-- **确定性维**(碰撞、坡度、净距、管径序列、尺寸容差):走 `domain_gate` 机器校验(constraints.yaml 驱动),**不过 VLM**,结果二元 pass/fail。
+- **确定性维**(碰撞、坡度、净距、管径序列、尺寸容差):由 Solver/规则执行器针对 `compiled utility IR` 生成逐对象证据，再走 `domain_gate` 裁决，**不过 VLM**。结果支持 PASS/FAIL/UNKNOWN/SKIPPED，只有 PASS/SKIPPED 放行。
 - **软评分维**(外观/风格/材质/磨损/灯光/构图):走 VLM critic 六维 rubric。
 
 ### 环 1 · SCAD 结构快检环

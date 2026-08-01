@@ -1,6 +1,6 @@
 # openBIMAgent 组件与运行配置详设
 
-版本:v0.6(P1f 本地 Operator Console)· 2026-08-01 · 姊妹篇:[ARCHITECTURE.md](ARCHITECTURE.md)
+版本:v0.7(compiled utility IR v1)· 2026-08-01 · 姊妹篇:[ARCHITECTURE.md](ARCHITECTURE.md)
 
 本文档回答四个问题:**每个组件干什么、每个 agent 怎么配、多厂家模型怎么统管、上下文怎么扛住。**
 
@@ -12,6 +12,7 @@
 | ├ `clarify` | 追问:槽位检查、一问一答带默认值、放行评分 | 规则 + 小模型 | openBIMForge clarification-loop 思路 | M0 |
 | ├ `planner` | playbook → Scene Graph IR + PLAN.md/TODO.md | 强模型 JSON 输出 | SceneCraft/LayoutGPT | M0 |
 | ├ `schema_gate` | 工件 JSON Schema 校验,漂移即 FIX | jsonschema | 05 报告 | M0 |
+| ├ `utility` | Solver 输出的市政 compiled IR 契约、跨引用/数值门禁、canonical hash、evidence 投影 | Pydantic + JSON Schema | C2 + municipal utility pack | M1.5(v1 契约已实现) |
 | ├ `orchestrator` | 子代理调度、PASS/FIX/ESCALATE、并发 ≤4 | Markdown 定义角色 | Claude Code subagents + orchestrator.py | M1 |
 | ├ `vision` | 双环自检、rubric、收敛 | 移植 + 新写 | forge_core/vision_loop + 03/10 报告 | M0(SCAD)/M1(Blender) |
 | ├ `deliver` | 交付门禁,C5 | 确定性检查 | delivery_gate 思路 | M1 |
@@ -51,7 +52,15 @@
 
 输出三件套:**Scene Graph IR**(JSON,资产+空间约束)、`PLAN.md`、`TODO.md`。只出语义不出坐标(C2);批次粒度 = 一次渲染检查单位。
 
-### 2.4 orchestrator(子代理调度)
+### 2.4 utility(compiled utility IR v1)
+
+- `contracts.py` 定义严格、冻结、禁止额外字段的 `CompiledUtilityIR`，包含 source hash、坐标参考、UtilitySystem、Node/Port、PipeSegment 和 RuleEvidence。
+- 运行时失败关闭：ID 唯一；节点、端口、管段、系统和证据引用必须闭合；管段 centerline 必须连接端口；水平长度、起终标高和坡度必须一致；重力流不允许逆坡；NaN/Infinity 不进入协议。
+- `canonical_json()/canonical_sha256()` 对系统、节点、端口、管段和证据按稳定 ID 排序，确保相同网络不因输入数组顺序产生不同摘要。
+- `domain_evidence()` 按 `check_name` 聚合逐对象证据，FAIL 优先、UNKNOWN 次之、全 PASS 才通过，可直接交给现有 `evaluate_domain_gate()`。
+- `compile_solved_utility_ir()` 是最小编译门禁，不负责路线求解，不推断工程属性，不生成占位坐标；Solver/规则执行器仍是下一阶段。
+
+### 2.5 orchestrator(子代理调度)
 
 - 角色文件 = Markdown + YAML frontmatter。基础字段:`name/model/tools/permissions`;Runtime v1 字段:`context_mode/max_turns/artifact_contract/nesting`;正文为 system prompt。角色文件是受信任的能力上限,调用者不能通过请求提升 model/tools/permissions。
 - 派发:PASS / FIX(带可执行返工指令)/ ESCALATE(升模型或问人);禁嵌套;并发 ≤4。
@@ -68,14 +77,14 @@
 - **P1f Operator Console**：`console.py` 将 `ReadOnlyControlPlane` 和 `RuntimeIpcClient` 组合为独立 loopback HTTP 操作界面。GET snapshot 展示 attempts/approvals/resumes/steers；POST control 代理 Ping、Approve/Reject、Resume、Steer、Cancel。浏览器不读取 IPC discovery/token，ActorRef 在 Console 启动时固定；写请求必须通过 Host、Origin、CSRF、Content-Type、请求大小和契约校验。服务使用标准库与内嵌静态页面，不新增 Web 框架或 Node 构建链，也不获取 Runtime lease。
 - `AgentLoop.subagent` 支持 `dispatch/status/cancel/join/resume/steer`;resume 必须带稳定 `idempotency_key`；dispatch 对模型只暴露 `role/task/context_mode/execution_mode/artifact_contract`,所有 child AgentLoop 都移除 `subagent` 工具以维持禁嵌套。
 
-### 2.5 vision(双环自检 + 评分分层)
+### 2.6 vision(双环自检 + 评分分层)
 
-- 评分分层:确定性维走 domain_gate(constraints.yaml 驱动,pass/fail);软评分维走 VLM 六维。
+- 评分分层:确定性维由 Solver/规则执行器针对 compiled utility IR 生成 evidence，再走 domain_gate 四态裁决；软评分维走 VLM 六维。
 - 两环维度裁剪与 rubric 定稿见 ARCH §3;收敛四选一 + best-so-far(ADR-0004)。
 - **critic 强制 CoT**;评分事件落盘 `rubric_scores` + `reasoning` + `anchor_ref` + `actionable_feedback`。
 - 环阈值在 playbook `acceptance`;超限 ESCALATE 不死循环。
 
-### 2.6 session(trace + 多会话,schema 定稿自 07 报告)
+### 2.7 session(trace + 多会话,schema 定稿自 07 报告)
 
 每条记录 `{id, parentId, timestamp, type, payload}`:
 

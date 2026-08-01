@@ -1,7 +1,7 @@
 # openBIMAgent 项目与 Agent Core 实现详解
 
 > 更新日期：2026-08-01
-> 当前判断：**M0 已附条件收官；M1 模块级能力已大体实现并完成首轮产品级接线；Subagent Runtime v1 已推进至 P1f 本地 Operator Console；M1.5 市政管网的 Solver、真实 BIM 构件生成和端到端交付仍未完成。**
+> 当前判断：**M0 已附条件收官；M1 模块级能力已大体实现并完成首轮产品级接线；Subagent Runtime v1 已推进至 P1f 本地 Operator Console；M1.5 已落地 compiled utility IR v1 协议边界，但市政 Solver、完整规则执行器、真实 BIM 构件生成和端到端交付仍未完成。**
 
 ## 1. 项目是什么
 
@@ -228,7 +228,21 @@ P0 已新增真实 Subagent Runtime v1：
 
 产品流水线目前仍默认 `use_cache=False`，并发也未默认开启；这是为了在真实双 MCP 稳定前减少故障变量。
 
-### 3.10 SCAD 与 Blender 双环
+### 3.10 compiled utility IR v1
+
+`src/openbimagent/utility/` 已建立市政语义层与宿主 Builder 之间的确定性协议边界：
+
+- `CompiledUtilityIR` 持有 source IR SHA-256、Solver 身份、坐标参考、系统、节点/端口、管段和逐对象规则证据。
+- 管段包含 centerline、水平长度、起终内底标高、坡度、管径、材质、覆土和 IFC 类型。
+- Pydantic 运行时校验 ID 唯一、引用闭合、端口归属、系统一致、centerline 端点、坡度/标高/长度一致和重力流非逆坡。
+- `schemas/compiled_utility_ir.schema.json` 纳入 Schema Gate，禁止未知字段和协议漂移。
+- canonical JSON/SHA-256 对集合按稳定 ID 排序，避免 Solver 输出数组顺序改变审计摘要。
+- `domain_evidence()` 将逐对象 PASS/FAIL/UNKNOWN 按 `check_name` 确定性聚合，直接供现有 Domain Gate 使用。
+- `compile_solved_utility_ir()` 只校验 Solver 已完成的输出，不做路线求解、不猜测工程事实、不生成占位坐标。
+
+因此“编译 IR 契约”已经实现；路线、标高、井位、水力和避让 Solver 仍未实现，不能把当前入口误称为完整市政计算引擎。
+
+### 3.11 SCAD 与 Blender 双环
 
 SCAD 环：
 
@@ -246,7 +260,7 @@ Blender 环：
 - perfect score 通过，hard limit/convergence delta 返工，divergence fallback 升级。
 - 输出 HTML 验收页并保留 best-so-far。
 
-### 3.11 Blender MCP
+### 3.12 Blender MCP
 
 Agent Core 的 `BlenderMCPClient` 已实现 stdio 生命周期与工具调用，服务端/addon 侧已具备：
 
@@ -260,7 +274,7 @@ Agent Core 的 `BlenderMCPClient` 已实现 stdio 生命周期与工具调用，
 
 真实稳定性仍取决于 Blender 宿主、addon 版本和运行环境。
 
-### 3.12 Vectorworks MCP
+### 3.13 Vectorworks MCP
 
 链路：
 
@@ -370,8 +384,7 @@ evaluate_domain_gate(
 
 仍缺：
 
-- 路由 Solver。
-- 带管径、坡度、覆土、流速、拓扑和坐标的 compiled utility IR。
+- 路线、标高、井位和水力 Solver（compiled utility IR v1 契约已实现，Solver 尚未实现）。
 - 全部约束的确定性执行器。
 - 生产级 Vectorworks `vs.*`/IFC Builder。
 - IFC/IDS 真实验证。
@@ -510,7 +523,8 @@ P1e 单机 Runtime IPC 的最终验收结果：P1e + CLI + Schema Gate + Runtime
 | Vectorworks Agent Client | 已实现 | 本轮完成，离线契约通过 |
 | targets 分发 | 已接通 | Python API 可双端；CLI 参数尚未产品化 |
 | domain_gate 裁决 | 最小可用 | 显式 evidence 四态；不是完整规则计算器 |
-| 市政 Solver | 未实现 | M1.5 核心缺口 |
+| compiled utility IR v1 | 已实现 | 严格契约、Schema Gate、拓扑/坡度数值门禁、canonical hash、evidence 投影 |
+| 市政 Solver | 未实现 | M1.5 核心缺口；必须生成合法 compiled utility IR |
 | 市政 Vectorworks Builder | 未实现 | 需 compiled IR + IFC 映射 |
 | Deliver Gate | 已实现 | 文件 + 分数 + 审批 |
 | 通用 AgentLoop 内 MCP/vision/deliver tools | 未接通 | pipeline 已有独立生产链；subagent 已接 Runtime v1 |
@@ -528,11 +542,11 @@ P1e 单机 Runtime IPC 的最终验收结果：P1e + CLI + Schema Gate + Runtime
 
 ### P1：市政毕设主线
 
-1. 设计 `utility_compiled_ir.schema.json`。
-2. 实现路线、标高、坡度、管径、井位和拓扑 Solver。
-3. 将 `constraints.yaml` 编译为确定性规则执行器。
-4. 产出 `domain_evidence`，由现有 domain_gate 裁决。
-5. 实现市政 `VectorworksBuilder`，绑定 IFC 语义。
+1. `compiled_utility_ir.schema.json` 与 Pydantic v1 契约已完成。
+2. 实现路线、标高、坡度、管径、井位和拓扑 Solver，输出合法 compiled utility IR。
+3. 将 `constraints.yaml` 编译为确定性规则执行器，并按对象生成 RuleEvidence。
+4. 用现有 evidence 投影接通 domain_gate 自动裁决，消除外部手工 evidence 注入。
+5. 实现市政 `VectorworksBuilder`，从 compiled IR 生成 `vs.*` 对象并绑定 IFC 语义。
 6. 接 IFC/IDS 校验和纵断面交付。
 
 ### P2：架构统一与效率
