@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/subagent_request.schema.json",
+  "title": "SubagentRequestV1",
+  "type": "object",
+  "required": ["protocol_version", "request_id", "parent_session_id", "role", "task", "context_mode", "execution_mode", "artifact_contract", "depth", "lineage_id", "attempt_number", "resumed_from_request_id", "resume_id"],
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": { "type": "string", "pattern": "^1(\\.\\d+)?$" },
+    "request_id": { "type": "string", "minLength": 1 },
+    "parent_session_id": { "type": "string", "minLength": 1 },
+    "role": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9_-]+$" },
+    "task": { "type": "string", "minLength": 1, "maxLength": 100000 },
+    "context_mode": { "enum": ["isolated", "fork"] },
+    "execution_mode": { "enum": ["foreground", "background"] },
+    "artifact_contract": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "depth": { "const": 0 },
+    "lineage_id": { "type": "string", "minLength": 1 },
+    "attempt_number": { "type": "integer", "minimum": 1 },
+    "resumed_from_request_id": { "type": ["string", "null"], "minLength": 1 },
+    "resume_id": { "type": ["string", "null"], "minLength": 1 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "attempt_number": { "const": 1 } }, "required": ["attempt_number"] },
+      "then": {
+        "properties": {
+          "resumed_from_request_id": { "type": "null" },
+          "resume_id": { "type": "null" }
+        }
+      },
+      "else": {
+        "properties": {
+          "resumed_from_request_id": { "type": "string", "minLength": 1 },
+          "resume_id": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  ]
+}

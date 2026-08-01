@@ -12,8 +12,10 @@ from openbimagent.orchestrator.dispatch import (
     MAX_HINT_CHARS,
     BatchReport,
     NestedDispatchError,
+    SubagentResult,
     Verdict,
     check_doom_loop,
+    judge,
     run_plan,
 )
 from openbimagent.session.schema import EventType
@@ -27,6 +29,34 @@ def _fn_always(report: BatchReport):
         return report
 
     return fn
+
+
+# ---------- 统一 judge ----------
+
+
+def test_judge_gate_failure_requires_actionable_fix() -> None:
+    decision = judge(
+        SubagentResult(summary="schema drift", hint="补齐 $.assets[0].description"),
+        gate_ok=False,
+        score=None,
+    )
+    assert decision.verdict is Verdict.FIX
+    assert "$.assets[0].description" in (decision.rework_instruction or "")
+
+
+def test_judge_gate_failure_without_feedback_escalates() -> None:
+    decision = judge(SubagentResult(summary=""), gate_ok=False, score=None)
+    assert decision.verdict is Verdict.ESCALATE
+    assert decision.rework_instruction is None
+
+
+def test_judge_score_pass_fix_and_missing_score() -> None:
+    result = SubagentResult(summary="材质层次不足")
+    assert judge(result, gate_ok=True, score=8.5).verdict is Verdict.PASS
+    fix = judge(result, gate_ok=True, score=7.2)
+    assert fix.verdict is Verdict.FIX
+    assert "7.20" in (fix.rework_instruction or "")
+    assert judge(result, gate_ok=True, score=None).verdict is Verdict.ESCALATE
 
 
 # ---------- PASS 直通 ----------

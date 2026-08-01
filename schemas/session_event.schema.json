@@ -47,7 +47,8 @@
       "properties": {
         "toolCallId": { "type": "string", "minLength": 1 },
         "toolName": { "type": "string", "minLength": 1 },
-        "args_summary": { "type": "string" }
+        "args_summary": { "type": "string" },
+        "args_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
       }
     },
     "customPayload": {
@@ -55,7 +56,27 @@
       "required": ["customType"],
       "description": "type=custom;customType 决定子型,子型字段平铺进 payload。",
       "properties": {
-        "customType": { "enum": ["screenshot", "score", "patch", "snapshot"] }
+        "customType": {
+          "enum": [
+            "screenshot",
+            "score",
+            "patch",
+            "snapshot",
+            "subagent_created",
+            "subagent_started",
+            "subagent_completed",
+            "subagent_failed",
+            "subagent_cancelled",
+            "artifact_committed",
+            "delivery_receipt",
+            "approval_requested",
+            "approval_decided",
+            "resume_requested",
+            "resume_receipt",
+            "steer_requested",
+            "steer_receipt"
+          ]
+        }
       },
       "allOf": [
         {
@@ -103,6 +124,119 @@
             "properties": {
               "blend_file_path": { "type": "string", "minLength": 1 },
               "hash": { "type": "string", "minLength": 1, "description": "快照文件 hash(回滚点校验)。" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "customType": {
+                "enum": ["subagent_created", "subagent_started", "subagent_completed", "subagent_failed", "subagent_cancelled"]
+              }
+            }
+          },
+          "then": {
+            "required": ["request_id", "agent_id", "parent_session_id", "child_session_id", "child_session_path", "status"],
+            "properties": {
+              "request_id": { "type": "string", "minLength": 1 },
+              "agent_id": { "type": "string", "minLength": 1 },
+              "parent_session_id": { "type": "string", "minLength": 1 },
+              "child_session_id": { "type": "string", "minLength": 1 },
+              "child_session_path": { "type": "string", "minLength": 1 },
+              "status": { "enum": ["created", "queued", "running", "completed", "failed", "cancelled"] }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "customType": { "const": "artifact_committed" } } },
+          "then": {
+            "required": ["request_id", "agent_id", "artifact"],
+            "properties": {
+              "request_id": { "type": "string", "minLength": 1 },
+              "agent_id": { "type": "string", "minLength": 1 },
+              "artifact": { "type": "object" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "customType": { "const": "delivery_receipt" } } },
+          "then": {
+            "required": ["request_id", "agent_id", "child_session_id", "receipt_id", "status", "manifest_path"],
+            "properties": {
+              "request_id": { "type": "string", "minLength": 1 },
+              "agent_id": { "type": "string", "minLength": 1 },
+              "child_session_id": { "type": "string", "minLength": 1 },
+              "receipt_id": { "type": "string", "minLength": 1 },
+              "status": { "enum": ["completed", "failed", "cancelled"] },
+              "manifest_path": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "customType": { "const": "approval_requested" } } },
+          "then": {
+            "required": ["protocol_version", "approval_id", "request_id", "agent_id", "parent_session_id", "child_session_id", "tool_name", "permission_key", "args_summary", "args_sha256", "requested_at"],
+            "properties": {
+              "protocol_version": { "type": "string", "pattern": "^1(?:\\.\\d+)?$" },
+              "approval_id": { "type": "string", "minLength": 1 },
+              "request_id": { "type": "string", "minLength": 1 },
+              "agent_id": { "type": "string", "minLength": 1 },
+              "parent_session_id": { "type": "string", "minLength": 1 },
+              "child_session_id": { "type": "string", "minLength": 1 },
+              "tool_name": { "type": "string", "minLength": 1 },
+              "permission_key": { "type": "string", "minLength": 1 },
+              "args_summary": { "type": "string", "maxLength": 500 },
+              "args_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "requested_at": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "customType": { "const": "approval_decided" } } },
+          "then": {
+            "required": ["protocol_version", "receipt_id", "approval_id", "request_id", "agent_id", "parent_session_id", "child_session_id", "tool_name", "permission_key", "args_sha256", "decision", "decided_by", "reason", "decided_at"],
+            "properties": {
+              "protocol_version": { "type": "string", "pattern": "^1(?:\\.\\d+)?$" },
+              "receipt_id": { "type": "string", "minLength": 1 },
+              "approval_id": { "type": "string", "minLength": 1 },
+              "request_id": { "type": "string", "minLength": 1 },
+              "agent_id": { "type": "string", "minLength": 1 },
+              "parent_session_id": { "type": "string", "minLength": 1 },
+              "child_session_id": { "type": "string", "minLength": 1 },
+              "tool_name": { "type": "string", "minLength": 1 },
+              "permission_key": { "type": "string", "minLength": 1 },
+              "args_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "decision": { "enum": ["approved", "rejected", "cancelled", "timed_out", "runtime_restarted"] },
+              "decided_by": { "type": "object" },
+              "reason": { "type": "string" },
+              "decided_at": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "customType": { "const": "resume_requested" } } },
+          "then": {
+            "required": ["protocol_version", "resume_id", "source_request_id", "source_agent_id", "source_child_session_id", "new_request_id", "lineage_id", "attempt_number", "instruction", "instruction_sha256", "idempotency_key", "requested_by", "requested_at"]
+          }
+        },
+        {
+          "if": { "properties": { "customType": { "const": "resume_receipt" } } },
+          "then": {
+            "required": ["protocol_version", "receipt_id", "resume_id", "source_request_id", "new_request_id", "new_agent_id", "new_child_session_id", "lineage_id", "attempt_number", "created_at"]
+          }
+        },
+        {
+          "if": { "properties": { "customType": { "const": "steer_requested" } } },
+          "then": {
+            "required": ["protocol_version", "steer_id", "request_id", "agent_id", "child_session_id", "lineage_id", "attempt_number", "instruction", "instruction_sha256", "requested_by", "requested_at"]
+          }
+        },
+        {
+          "if": { "properties": { "customType": { "const": "steer_receipt" } } },
+          "then": {
+            "required": ["protocol_version", "receipt_id", "steer_id", "request_id", "agent_id", "status", "reason", "created_at"],
+            "properties": {
+              "status": { "enum": ["accepted", "applied", "rejected", "superseded", "runtime_restarted"] }
             }
           }
         }

@@ -3,6 +3,10 @@ name: deliver
 model: glm-5.2
 tools: [read, bash]
 permissions: { read: allow, bash: ask }
+context_mode: isolated
+max_turns: 10
+artifact_contract: summary-v1
+nesting: false
 ---
 你是 Deliver 交付门禁(C5,确定性检查,COMPONENTS §3)。
 

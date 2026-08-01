@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -69,6 +70,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_tree(args)
     if args.cmd == "export":
         return _cmd_export(args)
+    if args.cmd == "control":
+        return _cmd_control(args)
     parser.print_help()
     return 2
 
@@ -109,6 +112,20 @@ def _build_parser() -> argparse.ArgumentParser:
     exp_p.add_argument("session_id", help="会话 id")
     exp_p.add_argument("out_path", nargs="?", default=None, type=Path, help="导出路径(默认 <id>.jsonl)")
     exp_p.add_argument("--sessions-dir", default=DEFAULT_SESSIONS_DIR, type=Path)
+
+    control_p = sub.add_parser("control", help="只读查询 Subagent Runtime 控制面")
+    control_p.add_argument(
+        "resource",
+        choices=["attempts", "attempt", "lineage", "approvals", "resumes", "steers"],
+        help="查询资源",
+    )
+    control_p.add_argument("resource_id", nargs="?", default=None, help="attempt request_id 或 lineage_id")
+    control_p.add_argument("--sessions-dir", default=DEFAULT_SESSIONS_DIR, type=Path)
+    control_p.add_argument("--status", default=None, help="attempts 按状态过滤")
+    control_p.add_argument("--parent-session-id", default=None, help="attempts 按父 Session 过滤")
+    control_p.add_argument("--request-id", default=None, help="approvals/steers 按 request_id 过滤")
+    control_p.add_argument("--pending-only", action="store_true", help="approvals 只显示未决请求")
+    control_p.add_argument("--json", action="store_true", dest="as_json", help="输出 JSON 数组/对象")
 
     return parser
 
@@ -409,6 +426,55 @@ def _cmd_export(args: argparse.Namespace) -> int:
     store.export_jsonl(out_path)
     print(f"导出: {out_path}")
     return 0
+
+
+def _cmd_control(args: argparse.Namespace) -> int:
+    """只读控制面 CLI；不获取 Runtime lease，也不执行控制副作用。"""
+    from openbimagent.orchestrator.control_plane import ControlPlaneError, ReadOnlyControlPlane
+
+    plane = ReadOnlyControlPlane(args.sessions_dir)
+    try:
+        if args.resource == "attempts":
+            result: Any = plane.list_attempts(
+                status=args.status,
+                parent_session_id=args.parent_session_id,
+            )
+        elif args.resource == "attempt":
+            if not args.resource_id:
+                raise ControlPlaneError("control attempt 需要 request_id")
+            result = plane.get_attempt(args.resource_id)
+        elif args.resource == "lineage":
+            if not args.resource_id:
+                raise ControlPlaneError("control lineage 需要 lineage_id")
+            result = plane.get_lineage(args.resource_id)
+        elif args.resource == "approvals":
+            result = plane.list_approvals(request_id=args.request_id, pending_only=args.pending_only)
+        elif args.resource == "resumes":
+            result = plane.list_resumes(lineage_id=args.resource_id)
+        else:
+            result = plane.list_steers(request_id=args.request_id)
+    except (ControlPlaneError, ValueError) as exc:
+        print(f"[control error] {exc}")
+        return 1
+    payload = _control_payload(result)
+    if args.as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+    rows = payload if isinstance(payload, list) else [payload]
+    if not rows:
+        print("(无控制面记录)")
+        return 0
+    for row in rows:
+        identity = row.get("request_id") or row.get("approval_id") or row.get("resume_id") or row.get("steer_id")
+        state = row.get("status") or row.get("decision") or row.get("latest_status") or row.get("phase")
+        print(f"{identity}  {state or '-'}  {json.dumps(row, ensure_ascii=False, separators=(',', ':'))}")
+    return 0
+
+
+def _control_payload(value: Any) -> Any:
+    if isinstance(value, tuple):
+        return [item.model_dump(mode="json") for item in value]
+    return value.model_dump(mode="json")
 
 
 def _open_session(sessions_dir: Path, session_id: str) -> SessionStore | None:

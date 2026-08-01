@@ -13,11 +13,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import threading
+import time
 import warnings
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO, Iterator
 
 from openbimagent.session.schema import (
     CustomPayload,
@@ -32,6 +35,89 @@ from openbimagent.session.schema import (
 
 INDEX_FILENAME = "index.json"
 """多会话索引文件名(位于 sessions 目录根部)。"""
+
+_INDEX_LOCKS: dict[str, threading.RLock] = {}
+_INDEX_LOCKS_GUARD = threading.Lock()
+
+
+def _index_lock(path: Path) -> threading.RLock:
+    """同进程内按 index.json 绝对路径共享锁。"""
+    key = str(Path(path).resolve())
+    with _INDEX_LOCKS_GUARD:
+        return _INDEX_LOCKS.setdefault(key, threading.RLock())
+
+
+@contextmanager
+def _locked_index(path: Path) -> Iterator[None]:
+    """同进程 RLock + 跨进程 lock file；Windows/POSIX 均锁定首字节。"""
+    index_path = Path(path)
+    lock_path = index_path.with_name(f".{index_path.name}.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with lock_path.open("xb") as initializer:
+            initializer.write(b"0")
+            initializer.flush()
+            os.fsync(initializer.fileno())
+    except FileExistsError:
+        pass
+    with _index_lock(index_path):
+        with lock_path.open("r+b") as handle:
+            _acquire_file_lock(handle)
+            try:
+                yield
+            finally:
+                _release_file_lock(handle)
+
+
+def _acquire_file_lock(handle: BinaryIO) -> None:
+    handle.seek(0)
+    if os.name == "nt":
+        import msvcrt
+
+        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        return
+    import fcntl
+
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+
+
+def _release_file_lock(handle: BinaryIO) -> None:
+    handle.seek(0)
+    if os.name == "nt":
+        import msvcrt
+
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        return
+    import fcntl
+
+    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
+    """原子替换可变 JSON；调用方必须已持有对应跨进程锁。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(f".{path.name}.{uuid7()}.tmp")
+    try:
+        with temp.open("x", encoding="utf-8") as handle:
+            json.dump(data, handle, ensure_ascii=False, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _replace_with_retry(temp, path)
+    finally:
+        if temp.exists():
+            temp.unlink()
+
+
+def _replace_with_retry(source: Path, target: Path, *, attempts: int = 8) -> None:
+    """Windows 可能短暂锁住刚关闭的文件；仅对瞬时访问错误做有界原子替换重试。"""
+    for index in range(attempts):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if os.name != "nt" or index == attempts - 1:
+                raise
+            time.sleep(0.01 * (index + 1))
 
 
 def _utc_now_iso() -> str:
@@ -201,18 +287,53 @@ class SessionStore:
         _sync_index 的 update 只覆盖 title/playbook/last_active/event_count,不会删 forked_from,
         故后续 append 触发的 _sync_index 保留本字段。
         """
+        self._update_index_metadata(
+            "forked_from",
+            {
+                "parent_session_id": parent_session_id,
+                "parent_event_id": parent_event_id,
+            },
+        )
+
+    def mark_child_of(
+        self,
+        *,
+        parent_session_id: str,
+        parent_event_id: str | None,
+        request_id: str,
+        agent_id: str,
+        role: str,
+        lineage_id: str | None = None,
+        attempt_number: int = 1,
+        resumed_from_request_id: str | None = None,
+    ) -> None:
+        """把本会话登记为 Subagent child session，供父代理按需深翻与重启后恢复关联。"""
+        self._update_index_metadata(
+            "child_of",
+            {
+                "parent_session_id": parent_session_id,
+                "parent_event_id": parent_event_id,
+                "request_id": request_id,
+                "agent_id": agent_id,
+                "role": role,
+                "lineage_id": lineage_id or request_id,
+                "attempt_number": attempt_number,
+                "resumed_from_request_id": resumed_from_request_id,
+            },
+        )
+
+    def _update_index_metadata(self, key: str, value: dict[str, Any]) -> None:
+        """在 index.json 当前会话条目写入扩展元数据；后续 _sync_index 保留未知字段。"""
         index_path = self._index_path()
-        index: dict[str, Any] = {"sessions": []}
-        if index_path.is_file():
-            index = json.loads(index_path.read_text(encoding="utf-8"))
-        for entry in index.get("sessions", []):
-            if entry.get("id") == self.session_id:
-                entry["forked_from"] = {
-                    "parent_session_id": parent_session_id,
-                    "parent_event_id": parent_event_id,
-                }
-                break
-        index_path.write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
+        with _locked_index(index_path):
+            index: dict[str, Any] = {"sessions": []}
+            if index_path.is_file():
+                index = json.loads(index_path.read_text(encoding="utf-8"))
+            for entry in index.get("sessions", []):
+                if entry.get("id") == self.session_id:
+                    entry[key] = value
+                    break
+            _atomic_write_json(index_path, index)
 
     def record_snapshot(self, blend_file_path: Path, file_hash: str | None = None) -> SessionEvent:
         """MCP 写操作前自动落盘 snapshot 事件(回滚点);hash 缺省时按文件内容 sha256。"""
@@ -259,9 +380,10 @@ class SessionStore:
     def list_sessions(cls, sessions_dir: Path) -> list[dict[str, Any]]:
         """读 sessions/index.json,按 last_active 倒序返回会话条目(侧边栏数据源)。"""
         index_path = Path(sessions_dir) / INDEX_FILENAME
-        if not index_path.is_file():
-            return []
-        entries = json.loads(index_path.read_text(encoding="utf-8")).get("sessions", [])
+        with _locked_index(index_path):
+            if not index_path.is_file():
+                return []
+            entries = json.loads(index_path.read_text(encoding="utf-8")).get("sessions", [])
         return sorted(entries, key=lambda e: e.get("last_active", ""), reverse=True)
 
     def _index_path(self) -> Path:
@@ -269,11 +391,12 @@ class SessionStore:
 
     def _index_entry(self) -> dict[str, Any] | None:
         index_path = self._index_path()
-        if not index_path.is_file():
-            return None
-        for entry in json.loads(index_path.read_text(encoding="utf-8")).get("sessions", []):
-            if entry.get("id") == self.session_id:
-                return entry
+        with _locked_index(index_path):
+            if not index_path.is_file():
+                return None
+            for entry in json.loads(index_path.read_text(encoding="utf-8")).get("sessions", []):
+                if entry.get("id") == self.session_id:
+                    return entry
         return None
 
     def _sync_index(self) -> None:
@@ -282,22 +405,26 @@ class SessionStore:
             text = self.path.read_text(encoding="utf-8")
             event_count = sum(1 for line in text.splitlines() if line.strip())
         index_path = self._index_path()
-        index: dict[str, Any] = {"sessions": []}
-        if index_path.is_file():
-            index = json.loads(index_path.read_text(encoding="utf-8"))
-        entry = self._index_entry() or {"id": self.session_id, "created_at": self._created_at}
-        entry.update(
-            {
-                "title": self._title,
-                "playbook": self._playbook,
-                "last_active": _utc_now_iso(),
-                "event_count": event_count,
-            }
-        )
-        sessions = [e for e in index.get("sessions", []) if e.get("id") != self.session_id]
-        sessions.append(entry)
-        index["sessions"] = sessions
-        index_path.write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
+        with _locked_index(index_path):
+            index: dict[str, Any] = {"sessions": []}
+            if index_path.is_file():
+                index = json.loads(index_path.read_text(encoding="utf-8"))
+            entry = next(
+                (item for item in index.get("sessions", []) if item.get("id") == self.session_id),
+                {"id": self.session_id, "created_at": self._created_at},
+            )
+            entry.update(
+                {
+                    "title": self._title,
+                    "playbook": self._playbook,
+                    "last_active": _utc_now_iso(),
+                    "event_count": event_count,
+                }
+            )
+            sessions = [e for e in index.get("sessions", []) if e.get("id") != self.session_id]
+            sessions.append(entry)
+            index["sessions"] = sessions
+            _atomic_write_json(index_path, index)
 
 
 __all__ = ["SessionStore", "SessionEvent", "SnapshotPayload"]

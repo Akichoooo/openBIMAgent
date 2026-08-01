@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/decision_receipt.schema.json",
+  "title": "DecisionReceiptV1",
+  "type": "object",
+  "required": ["protocol_version", "receipt_id", "approval_id", "request_id", "agent_id", "decision", "decided_by", "reason", "decided_at"],
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": { "type": "string", "pattern": "^1(?:\\.\\d+)?$" },
+    "receipt_id": { "type": "string", "minLength": 1 },
+    "approval_id": { "type": "string", "minLength": 1 },
+    "request_id": { "type": "string", "minLength": 1 },
+    "agent_id": { "type": "string", "minLength": 1 },
+    "decision": { "enum": ["approved", "rejected", "cancelled", "timed_out", "runtime_restarted"] },
+    "decided_by": {
+      "type": "object",
+      "required": ["protocol_version", "actor_id", "actor_type", "display_name"],
+      "additionalProperties": false,
+      "properties": {
+        "protocol_version": { "type": "string", "pattern": "^1(?:\\.\\d+)?$" },
+        "actor_id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:@/-]+$" },
+        "actor_type": { "enum": ["human", "agent", "service", "runtime", "legacy"] },
+        "display_name": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "reason": { "type": "string", "maxLength": 1000 },
+    "decided_at": { "type": "string", "format": "date-time" }
+  }
+}

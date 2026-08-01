@@ -512,7 +512,7 @@ def describe_capabilities() -> dict[str, Any]:
 
 
 @mcp.tool()
-def execute_vs_code(code: str) -> dict[str, Any]:
+def execute_vs_code(code: str, approved: bool = False) -> dict[str, Any]:
     """执行 VectorScript 代码 (vs.* API 调用)。
 
     OPENBIMAGENT (b): 经文件 IPC 发送 execute_code 命令,runner 在 VW 内嵌
@@ -526,6 +526,8 @@ def execute_vs_code(code: str) -> dict[str, Any]:
 
     Args:
         code: VectorScript 代码字符串
+        approved: 是否已由上层人工审批；服务端只在此值为 True 时向内部门禁传递
+            ``_approved=True``，避免将内部协议字段直接暴露为 MCP 参数。
 
     Returns:
         执行结果 (含 ok/stdout/stderr 或 error/traceback);校验/门禁失败时
@@ -533,7 +535,10 @@ def execute_vs_code(code: str) -> dict[str, Any]:
     """
     try:
         client = get_client()
-        result = client.send_command("execute_code", {"code": code})
+        params: dict[str, Any] = {"code": code}
+        if approved:
+            params["_approved"] = True
+        result = client.send_command("execute_code", params)
         return result
     except ValueError as e:
         # arity 校验失败

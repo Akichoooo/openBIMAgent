@@ -103,5 +103,12 @@ def test_execute_vs_code_tool(monkeypatch: pytest.MonkeyPatch) -> None:
         cmd, params = fake.calls[0]
         assert cmd == "execute_code"
         assert params == {"code": "vs.Message('test')"}
+
+        approved_result = server.execute_vs_code("vs.IFC_ExportWithUI('x.ifc')", approved=True)
+        assert approved_result["ok"] is True
+        assert fake.calls[-1] == (
+            "execute_code",
+            {"code": "vs.IFC_ExportWithUI('x.ifc')", "_approved": True},
+        )
     finally:
         server._client = None  # type: ignore[attr-defined]

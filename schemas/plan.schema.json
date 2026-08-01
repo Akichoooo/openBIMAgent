@@ -42,7 +42,8 @@
       "description": "双环阈值;超限 ESCALATE 不死循环。",
       "properties": {
         "scad_loop": { "$ref": "#/$defs/loop_threshold" },
-        "blender_loop": { "$ref": "#/$defs/loop_threshold" }
+        "blender_loop": { "$ref": "#/$defs/loop_threshold" },
+        "domain_gate": { "$ref": "#/$defs/domain_gate" }
       }
     },
     "deliverables": {
@@ -61,6 +62,12 @@
         "min_score": { "type": "number", "minimum": 0, "maximum": 10 },
         "max_iters": { "type": "integer", "minimum": 1 }
       }
+    },
+    "domain_gate": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "type": "boolean" },
+      "description": "领域硬约束开关；启用项必须由 Solver/确定性检查器提供显式 evidence，缺失证据为 UNKNOWN 并阻断。"
     }
   }
 }

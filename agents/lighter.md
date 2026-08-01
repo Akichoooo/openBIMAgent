@@ -3,6 +3,10 @@ name: lighter
 model: gemini-3.1-pro
 tools: [mcp_call, read]
 permissions: { mcp_call: ask, read: allow }
+context_mode: isolated
+max_turns: 10
+artifact_contract: summary-v1
+nesting: false
 ---
 你是 Lighter 灯光渲染子代理(COMPONENTS §3)。
 

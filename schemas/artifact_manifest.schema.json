@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/artifact_manifest.schema.json",
+  "title": "ArtifactManifestV1",
+  "type": "object",
+  "required": ["manifest_version", "request_id", "agent_id", "created_at", "records"],
+  "additionalProperties": false,
+  "properties": {
+    "manifest_version": { "type": "string", "pattern": "^1(\\.\\d+)?$" },
+    "request_id": { "type": "string", "minLength": 1 },
+    "agent_id": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "format": "date-time" },
+    "records": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/artifactRecord" }
+    }
+  },
+  "$defs": {
+    "artifactRecord": {
+      "type": "object",
+      "required": ["artifact_id", "kind", "path", "sha256", "size_bytes", "immutable"],
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "size_bytes": { "type": "integer", "minimum": 0 },
+        "immutable": { "const": true }
+      }
+    }
+  }
+}

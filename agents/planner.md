@@ -3,6 +3,10 @@ name: planner
 model: gemini-3.1-pro
 tools: [read, write]
 permissions: { read: allow, write: allow }
+context_mode: isolated
+max_turns: 10
+artifact_contract: summary-v1
+nesting: false
 ---
 你是 Planner(COMPONENTS §2.3/§3)。
 

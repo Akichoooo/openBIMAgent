@@ -35,6 +35,19 @@ class CustomType(StrEnum):
     SCORE = "score"
     PATCH = "patch"
     SNAPSHOT = "snapshot"
+    SUBAGENT_CREATED = "subagent_created"
+    SUBAGENT_STARTED = "subagent_started"
+    SUBAGENT_COMPLETED = "subagent_completed"
+    SUBAGENT_FAILED = "subagent_failed"
+    SUBAGENT_CANCELLED = "subagent_cancelled"
+    ARTIFACT_COMMITTED = "artifact_committed"
+    DELIVERY_RECEIPT = "delivery_receipt"
+    APPROVAL_REQUESTED = "approval_requested"
+    APPROVAL_DECIDED = "approval_decided"
+    RESUME_REQUESTED = "resume_requested"
+    RESUME_RECEIPT = "resume_receipt"
+    STEER_REQUESTED = "steer_requested"
+    STEER_RECEIPT = "steer_receipt"
 
 
 class MessagePayload(BaseModel):
@@ -56,6 +69,7 @@ class ToolCallPayload(BaseModel):
     toolCallId: str
     toolName: str
     args_summary: str = ""
+    args_sha256: str | None = None
     phase: Literal["call", "result"] = "call"
     result_llm_view: str | None = None
     result_ui_view: dict[str, Any] | None = None

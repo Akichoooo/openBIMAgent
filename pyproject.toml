@@ -1,7 +1,7 @@
 [project]
 name = "openbimagent"
 version = "0.0.0"
-description = "openBIMAgent:Agent + 两个 MCP 的生成式 BIM/场景构建系统(M0 骨架,见 docs/architecture/)"
+description = "openBIMAgent:Agent Core + Blender/Vectorworks MCP 的生成式 BIM/场景构建系统"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

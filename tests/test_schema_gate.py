@@ -21,18 +21,40 @@ INVALID_PLAN = {
 }
 
 
-def test_loads_five_schemas() -> None:
-    """schemas/ 目录 5 个 JSON Schema 全部加载(glob 自动覆盖新增文件)。"""
+def test_loads_all_schemas() -> None:
+    """schemas/ 目录 15 个 JSON Schema 全部加载，包含 P1d actor/control 契约。"""
     names = gate.SchemaGate().schema_names()
-    assert len(names) == 5
+    assert len(names) == 15
     assert "plan.schema.json" in names
     assert "scad_scene_ir.schema.json" in names  # 阶段3b 新增:SCAD 环编译 IR
+    assert "subagent_request.schema.json" in names
+    assert "subagent_result.schema.json" in names
+    assert "artifact_manifest.schema.json" in names
+    assert "actor_ref.schema.json" in names
+    assert "approval_request.schema.json" in names
+    assert "decision_receipt.schema.json" in names
+    assert "resume_request.schema.json" in names
+    assert "resume_receipt.schema.json" in names
+    assert "steer_directive.schema.json" in names
+    assert "steer_receipt.schema.json" in names
 
 
 def test_valid_plan_passes() -> None:
     """合法工件:错误列表为空,gate_or_fix 不抛。"""
     assert gate.validate_artifact("plan", VALID_PLAN) == []
     gate.gate_or_fix("plan.schema.json", VALID_PLAN)  # 不抛即通过
+
+
+def test_plan_accepts_domain_gate_requirements() -> None:
+    plan = {
+        **VALID_PLAN,
+        "targets": ["blender", "vectorworks"],
+        "acceptance": {
+            **VALID_PLAN["acceptance"],
+            "domain_gate": {"clash_free": True, "slope_in_spec": True},
+        },
+    }
+    assert gate.validate_artifact("plan", plan) == []
 
 
 def test_invalid_plan_reports_field_level_errors() -> None:

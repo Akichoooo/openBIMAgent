@@ -25,9 +25,16 @@ from openbimagent.assembly.batch_executor import (
     make_batch_executor,
 )
 from openbimagent.assembly.builder import make_builder_fn
+from openbimagent.assembly.target_executor import (
+    VectorworksBuilder,
+    combine_target_executors,
+    make_vectorworks_batch_executor,
+    missing_target_executor,
+)
 from openbimagent.clarify import slots as clarify
 from openbimagent.deliver.gate import DeliveryReport, check_deliverables, make_acceptance_fn
-from openbimagent.orchestrator.dispatch import PlanRunResult, Verdict, run_plan
+from openbimagent.domain_gate import DomainGateReport, evaluate_domain_gate
+from openbimagent.orchestrator.dispatch import PlanRunResult, run_plan
 from openbimagent.planner.instantiate import PlanArtifacts, instantiate, load_playbook
 from openbimagent.session.schema import EventType
 from openbimagent.session.store import SessionStore
@@ -48,6 +55,7 @@ class PipelineResult:
     interrupted: bool = False
     error: str | None = None
     plan_artifacts: PlanArtifacts | None = None
+    domain_gate: DomainGateReport | None = None
     phases_log: tuple[tuple[str, str], ...] = ()  # (phase_name, outcome_note) 序列
 
 
@@ -57,6 +65,9 @@ def run_pipeline(
     out_dir: Path,
     registry: Any = None,
     blender_client: Any = None,
+    vectorworks_client: Any = None,
+    vectorworks_builder: VectorworksBuilder | None = None,
+    domain_evidence: dict[str, Any] | None = None,
     scad_critic: Any = None,
     render_critic: Any = None,
     input_func: Callable[[str], str] = input,
@@ -76,7 +87,10 @@ def run_pipeline(
     """跑全流程:load playbook → clarify → plan → orchestrate → deliver。
 
     - registry 为空:planner + builder 都走确定性模板(可离线跑,测试默认路径)。
-    - blender_client 为空:orchestrator 跑空批次(只过 plan + deliver 缺失),测试可注入 fake。
+    - ``targets`` 控制后端；未声明时向后兼容为 ``[blender]``。声明目标缺少 client/builder
+      时对应批次明确 ESCALATE，不静默跳过。
+    - acceptance.domain_gate 启用项必须在 domain_evidence 中有显式 bool 证据；缺失为
+      UNKNOWN 并在构建前阻断，避免语义 IR 被误判为工程合规。
     - approval_fn 为空 且 yes=False:不审批(测试默认);yes=True 跳过所有审批门。
     - Ctrl+C 中断:落 checkpoint 事件到 session,返回 interrupted=True。
     """
@@ -147,59 +161,114 @@ def run_pipeline(
     ir = json.loads(plan_artifacts.scene_graph_ir.read_text(encoding="utf-8"))
     _phase("planner_instantiate", f"ir_assets={len(ir.get('assets', []))} batches={len(ir.get('batches', []))}")
 
-    # ---------- 4. orchestrator.run_plan(agent_fn=批次执行器) ----------
+    # ---------- 4. domain_gate(确定性 evidence；UNKNOWN 不得放行) ----------
+    domain_report = evaluate_domain_gate(
+        playbook["acceptance"].get("domain_gate"),
+        domain_evidence,
+    )
+    _phase(
+        "domain_gate",
+        f"status={domain_report.status.value} failed={list(domain_report.failed)} unknown={list(domain_report.unknown)}",
+    )
+    if not domain_report.ok:
+        return PipelineResult(
+            ok=False,
+            artifacts_dir=out,
+            session=store,
+            error=domain_report.rework_instruction or "domain_gate 未通过",
+            plan_artifacts=plan_artifacts,
+            domain_gate=domain_report,
+            phases_log=tuple(phases_log),
+        )
+
+    # ---------- 5. orchestrator.run_plan(agent_fn=targets 批次执行器) ----------
     batch_names = list(playbook["batches"]) or ["默认批次"]
     builder_fn = make_builder_fn(registry=registry)
     effective_approval = approval_fn if not yes else None
 
-    plan_run: PlanRunResult | None = None
-    if blender_client is None:
-        # 无 Blender(测试或离线冒烟):跑空批次直接 ESCALATE
-        _phase("orchestrate", "无 blender_client,跳过批次执行")
+    targets = list(playbook.get("targets") or ["blender"])
+    executors: dict[str, Any] = {}
+    if "blender" in targets:
+        if blender_client is None:
+            executors["blender"] = missing_target_executor("blender", "缺少 blender_client")
+        else:
+            executors["blender"] = make_batch_executor(
+                ir=ir,
+                batch_names=batch_names,
+                work_dir=out / "batches" / "blender",
+                acceptance=playbook["acceptance"],
+                client=blender_client,
+                builder_fn=builder_fn,
+                scad_critic=scad_critic,
+                render_critic=render_critic,
+                session=store,
+                blend_path=out / "scene.blend",
+                cameras=cameras,
+                turntable_target=turntable_target,
+                turntable_frames=turntable_frames,
+                image_size=image_size,
+                approval_fn=effective_approval,
+                on_html_report=on_html_report,
+            )
+    if "vectorworks" in targets:
+        if vectorworks_client is None:
+            executors["vectorworks"] = missing_target_executor(
+                "vectorworks", "缺少 vectorworks_client"
+            )
+        elif vectorworks_builder is None:
+            executors["vectorworks"] = missing_target_executor(
+                "vectorworks", "缺少 vectorworks_builder，不能从语义 IR 伪造 BIM 代码"
+            )
+        else:
+            executors["vectorworks"] = make_vectorworks_batch_executor(
+                ir=ir,
+                batch_names=batch_names,
+                work_dir=out / "batches" / "vectorworks",
+                client=vectorworks_client,
+                builder_fn=vectorworks_builder,
+                approval_fn=effective_approval,
+                auto_approve=yes,
+            )
 
-        def _no_op_agent(batch: str, rework: str | None):
-            from openbimagent.orchestrator.dispatch import BatchReport
-
-            return BatchReport(Verdict.ESCALATE, hint=f"无 blender_client(batch={batch} 未执行)")
-
-        try:
-            plan_run = run_plan(batch_names, _no_op_agent, session=store,
-                                max_retries=max_retries, doom_max_fix=doom_max_fix)
-        except KeyboardInterrupt:
-            _record_checkpoint(store, "orchestrate", "Ctrl+C 中断(无 blender_client 路径)")
-            return PipelineResult(ok=False, session=store, interrupted=True,
-                                  error="Ctrl+C", phases_log=tuple(phases_log))
-    else:
-        agent_fn = make_batch_executor(
-            ir=ir,
-            batch_names=batch_names,
-            work_dir=out / "batches",
-            acceptance=playbook["acceptance"],
-            client=blender_client,
-            builder_fn=builder_fn,
-            scad_critic=scad_critic,
-            render_critic=render_critic,
-            session=store,
-            blend_path=out / "scene.blend",
-            cameras=cameras,
-            turntable_target=turntable_target,
-            turntable_frames=turntable_frames,
-            image_size=image_size,
-            approval_fn=effective_approval,
-            on_html_report=on_html_report,
+    missing_targets = [
+        target
+        for target in targets
+        if (target == "blender" and blender_client is None)
+        or (target == "vectorworks" and (vectorworks_client is None or vectorworks_builder is None))
+    ]
+    if missing_targets:
+        _phase("target_dispatch", f"配置不完整: missing={missing_targets}")
+        agent_fn = missing_target_executor(
+            "configuration",
+            f"声明目标缺少运行依赖: {missing_targets}；为避免部分写入，所有 target 均未执行",
         )
-        try:
-            plan_run = run_plan(batch_names, agent_fn, session=store,
-                                max_retries=max_retries, doom_max_fix=doom_max_fix)
-        except KeyboardInterrupt:
-            _record_checkpoint(store, "orchestrate", "Ctrl+C 中断 @ orchestrator.run_plan")
-            _phase("orchestrate", "中断(Ctrl+C)")
-            return PipelineResult(ok=False, session=store, interrupted=True,
-                                  error="Ctrl+C", phases_log=tuple(phases_log))
-        escalated = list(plan_run.escalated)
-        _phase("orchestrate", f"ok={plan_run.ok} escalated={escalated}")
+    else:
+        agent_fn = combine_target_executors(executors)
+        _phase("target_dispatch", f"targets={targets} available={list(executors)}")
+    plan_run: PlanRunResult | None = None
+    try:
+        plan_run = run_plan(
+            batch_names,
+            agent_fn,
+            session=store,
+            max_retries=max_retries,
+            doom_max_fix=doom_max_fix,
+        )
+    except KeyboardInterrupt:
+        _record_checkpoint(store, "orchestrate", "Ctrl+C 中断 @ orchestrator.run_plan")
+        _phase("orchestrate", "中断(Ctrl+C)")
+        return PipelineResult(
+            ok=False,
+            session=store,
+            interrupted=True,
+            error="Ctrl+C",
+            domain_gate=domain_report,
+            phases_log=tuple(phases_log),
+        )
+    escalated = list(plan_run.escalated)
+    _phase("orchestrate", f"ok={plan_run.ok} escalated={escalated}")
 
-    # ---------- 5. deliver 门禁 ----------
+    # ---------- 6. deliver 门禁 ----------
     deliver_approval = approval_fn if not yes else None
     if deliver_approval is not None:
         approved = deliver_approval("deliver", {
@@ -210,7 +279,8 @@ def run_pipeline(
             _phase("deliver", "用户拒绝 deliver 审批门")
             return PipelineResult(ok=False, plan_run=plan_run, session=store,
                                   artifacts_dir=out, error="用户拒绝 deliver 审批门",
-                                  plan_artifacts=plan_artifacts, phases_log=tuple(phases_log))
+                                  plan_artifacts=plan_artifacts, domain_gate=domain_report,
+                                  phases_log=tuple(phases_log))
 
     accepted_fn = make_acceptance_fn(store, playbook["acceptance"])
     delivery = check_deliverables(playbook["deliverables"], out, accepted_fn=accepted_fn)
@@ -223,6 +293,7 @@ def run_pipeline(
         artifacts_dir=out,
         session=store,
         plan_artifacts=plan_artifacts,
+        domain_gate=domain_report,
         phases_log=tuple(phases_log),
     )
 

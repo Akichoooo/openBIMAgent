@@ -2,12 +2,21 @@
 
 import hashlib
 import json
+import multiprocessing
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
 from openbimagent.session.schema import CustomType, EventType
 from openbimagent.session.store import SessionStore
+
+
+def _create_session_in_process(args: tuple[str, int]) -> str:
+    sessions_dir, index = args
+    child = SessionStore.create(sessions_dir, title=f"process-child-{index}")
+    child.append_new(EventType.MESSAGE, {"role": "assistant", "content": str(index)})
+    return child.session_id
 
 
 @pytest.fixture()
@@ -64,6 +73,55 @@ def test_branch_creates_new_session_file(store, sessions_dir) -> None:
 
     with pytest.raises(KeyError):
         store.branch("不存在的id")
+
+
+def test_atomic_index_replace_retries_transient_windows_permission_error(tmp_path, monkeypatch) -> None:
+    from openbimagent.session import store as store_module
+
+    source = tmp_path / "source.json"
+    target = tmp_path / "target.json"
+    source.write_text('{"ok": true}', encoding="utf-8")
+    calls = 0
+    original = store_module.os.replace
+
+    def flaky_replace(src, dst):
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise PermissionError("transient Windows sharing violation")
+        return original(src, dst)
+
+    monkeypatch.setattr(store_module.os, "name", "nt")
+    monkeypatch.setattr(store_module.os, "replace", flaky_replace)
+    monkeypatch.setattr(store_module.time, "sleep", lambda _: None)
+    store_module._replace_with_retry(source, target)
+    assert calls == 3
+    assert target.read_text(encoding="utf-8") == '{"ok": true}'
+
+
+def test_index_concurrent_session_creation_keeps_all_entries(sessions_dir) -> None:
+    """P1a 同进程并发 child Session 共享 index 锁，不丢失任一索引条目。"""
+
+    def create_one(index: int) -> str:
+        child = SessionStore.create(sessions_dir, title=f"child-{index}")
+        child.append_new(EventType.MESSAGE, {"role": "assistant", "content": str(index)})
+        return child.session_id
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        ids = set(executor.map(create_one, range(12)))
+    entries = SessionStore.list_sessions(sessions_dir)
+    assert ids <= {entry["id"] for entry in entries}
+    assert len(entries) == 12
+
+
+def test_index_multiprocess_creation_keeps_all_entries(sessions_dir) -> None:
+    """P1b spawn 多进程创建 Session，跨进程锁与原子替换不得丢索引。"""
+    context = multiprocessing.get_context("spawn")
+    with context.Pool(processes=4) as pool:
+        ids = set(pool.map(_create_session_in_process, [(str(sessions_dir), index) for index in range(8)]))
+    entries = SessionStore.list_sessions(sessions_dir)
+    assert ids <= {entry["id"] for entry in entries}
+    assert len(entries) == 8
 
 
 def test_index_multi_sessions(sessions_dir) -> None:

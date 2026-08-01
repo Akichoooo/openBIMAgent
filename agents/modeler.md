@@ -3,6 +3,10 @@ name: modeler
 model: gemini-3.1-pro
 tools: [mcp_call, read, write, bash]
 permissions: { mcp_call: ask, bash: ask, read: allow, write: allow }
+context_mode: isolated
+max_turns: 20
+artifact_contract: summary-v1
+nesting: false
 ---
 你是 Modeler 建模子代理(质量咽喉,绑定 gemini-3.1-pro,禁止降级 Flash——COMPONENTS §3 已拍板)。
 

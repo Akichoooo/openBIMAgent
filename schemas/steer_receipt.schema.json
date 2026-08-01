@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/steer_receipt.schema.json",
+  "title": "SteerReceiptV1",
+  "type": "object",
+  "required": ["protocol_version", "receipt_id", "steer_id", "request_id", "agent_id", "status", "reason", "created_at"],
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": { "type": "string", "pattern": "^1(?:\\.\\d+)?$" },
+    "receipt_id": { "type": "string", "minLength": 1 },
+    "steer_id": { "type": "string", "minLength": 1 },
+    "request_id": { "type": "string", "minLength": 1 },
+    "agent_id": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["accepted", "applied", "rejected", "superseded", "runtime_restarted"] },
+    "reason": { "type": "string", "maxLength": 1000 },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

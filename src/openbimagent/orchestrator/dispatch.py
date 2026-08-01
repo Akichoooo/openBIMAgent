@@ -40,6 +40,9 @@ DOOM_LOOP_MIN_DELTA = 0.3
 DEFAULT_MAX_RETRIES = 3
 """同一批次 FIX 重试上限(重试次数,不含首次调用);超限 ESCALATE 不死循环。"""
 
+DEFAULT_PASS_SCORE = 8.5
+"""统一 judge 的默认通过分；与 Blender 主环默认 min_score 保持一致。"""
+
 _SCORE_PATTERN = re.compile(r"(?:overall|score)=([0-9]+(?:\.[0-9]+)?)")
 """从 BatchReport.hint 提取评分(overall=X.X 或 score=X.X)的正则(M1 doom_loop 增强)。"""
 
@@ -61,12 +64,28 @@ class NestedDispatchError(RuntimeError):
 
 @dataclass(frozen=True)
 class SubagentResult:
-    """子代理返回(ARCH §6):摘要 + 工件路径 + <200 字提示;过程留 child session。"""
+    """Orchestrator 裁决视图：兼容旧 agent_fn，并可由 Runtime v1 结果信封构造。"""
 
     summary: str
     artifact_paths: list[Path] = field(default_factory=list)
     hint: str = ""  # <200 字核心提示/警告,超长截断并告警
     child_session: Path | None = None
+    request_id: str | None = None
+    agent_id: str | None = None
+    receipt_id: str | None = None
+
+    @classmethod
+    def from_envelope(cls, envelope: object) -> "SubagentResult":
+        """把 SubagentResultEnvelope 转成现有 judge() 可消费的紧凑视图，避免过程污染。"""
+        return cls(
+            summary=str(getattr(envelope, "summary")),
+            artifact_paths=[Path(record.path) for record in getattr(envelope, "artifacts")],
+            hint=truncate_hint(str(getattr(envelope, "hint"))),
+            child_session=Path(str(getattr(envelope, "child_session_path"))),
+            request_id=str(getattr(envelope, "request_id")),
+            agent_id=str(getattr(envelope, "agent_id")),
+            receipt_id=str(getattr(envelope, "receipt_id")),
+        )
 
 
 @dataclass(frozen=True)
@@ -357,17 +376,50 @@ def _call_agent(batch: str, attempt: int, rework: str | None, agent_fn: AgentFn,
 # ---------- M1 待接:真实子代理派发与裁决 ----------
 
 
-def judge(result: SubagentResult, *, gate_ok: bool, score: float | None) -> DispatchDecision:
-    """对子代理结果裁决 PASS / FIX(带可执行返工指令)/ ESCALATE。
+def judge(
+    result: SubagentResult,
+    *,
+    gate_ok: bool,
+    score: float | None,
+    min_score: float = DEFAULT_PASS_SCORE,
+) -> DispatchDecision:
+    """统一裁决 Schema/Domain Gate 与双环评分。
 
-    TODO(M1): 结合 schema_gate 结果与双环评分;FIX 指令必须可执行。
+    规则：
+    - gate 失败：使用子代理 hint/summary 作为可执行返工依据；两者都为空则无法安全
+      自动修复，ESCALATE。
+    - gate 通过但 score 缺失：缺少客观验收证据，ESCALATE，不伪造 PASS。
+    - score 达标：PASS。
+    - score 未达标：FIX，并给出目标分、当前分和子代理反馈。
     """
-    raise NotImplementedError("TODO(M1): judge 结合 schema_gate 与双环评分裁决")
+    if min_score < 0:
+        raise ValueError(f"min_score 须 ≥ 0,实收 {min_score}")
+    feedback = (result.hint or result.summary or "").strip()
+    if not gate_ok:
+        if not feedback:
+            return DispatchDecision(Verdict.ESCALATE)
+        return DispatchDecision(
+            Verdict.FIX,
+            rework_instruction=f"修复 Schema/Domain Gate 失败项后重新生成并复验：{feedback}",
+        )
+    if score is None:
+        return DispatchDecision(Verdict.ESCALATE)
+    if score >= min_score:
+        return DispatchDecision(Verdict.PASS)
+    detail = feedback or "重新执行 critic，定位低分维度并逐项修复"
+    return DispatchDecision(
+        Verdict.FIX,
+        rework_instruction=(
+            f"当前评分 {score:.2f} 低于通过线 {min_score:.2f}；{detail}；"
+            "修复后重新运行确定性门禁与 critic 评分"
+        ),
+    )
 
 
 __all__ = [
     "DOOM_LOOP_MAX_FIX",
     "DOOM_LOOP_MIN_DELTA",
+    "DEFAULT_PASS_SCORE",
     "MAX_CONCURRENCY",
     "MAX_HINT_CHARS",
     "BatchOutcome",

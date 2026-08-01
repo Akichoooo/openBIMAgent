@@ -1,6 +1,6 @@
 # openBIMAgent 组件与运行配置详设
 
-版本:v0.3(知识库四层 + agentrouter 双通道 + 基座补充)· 2026-07-21 · 姊妹篇:[ARCHITECTURE.md](ARCHITECTURE.md)
+版本:v0.4(P1d Actor/Resume 幂等/只读 Control Plane)· 2026-08-01 · 姊妹篇:[ARCHITECTURE.md](ARCHITECTURE.md)
 
 本文档回答四个问题:**每个组件干什么、每个 agent 怎么配、多厂家模型怎么统管、上下文怎么扛住。**
 
@@ -52,9 +52,18 @@
 
 ### 2.4 orchestrator(子代理调度)
 
-- 角色文件 = Markdown + YAML frontmatter(定稿字段:`name/model/tools/permissions` + 正文 system prompt)。
+- 角色文件 = Markdown + YAML frontmatter。基础字段:`name/model/tools/permissions`;Runtime v1 字段:`context_mode/max_turns/artifact_contract/nesting`;正文为 system prompt。角色文件是受信任的能力上限,调用者不能通过请求提升 model/tools/permissions。
 - 派发:PASS / FIX(带可执行返工指令)/ ESCALATE(升模型或问人);禁嵌套;并发 ≤4。
 - **子代理返回** = 结构化摘要 + 工件路径 + **<200 字核心提示/警告**;原始过程留 child session,父代理按需深翻。
+- **Runtime v1**:`contracts.py` 定义版本化 Request/Handle/Result;`runtime.py` 创建真实 child Session 并执行受控 child runner;`artifacts.py` 原子提交不可变工件和 `manifest.json`(size + SHA-256)。请求、结果、manifest 均经过 Schema Gate。
+- **P1a 后台生命周期**:`LocalSubagentRuntime.submit/status/cancel/join` 使用最多 4 worker 的进程内线程池;取消信号传到 child Loop/Provider。终态与 Manifest、lifecycle、receipt 同步发布。
+- **P1b-A 持久恢复**:`state.py` 将 background Request/Handle/status/result 以原子 JSON 写入 `sessions/_runtime`；`runtime.py` 在独占 `RuntimeLease` 内 rehydrate。终态不重跑，`finalizing` 幂等补签，遗留运行任务以 `RuntimeRestarted` 失败关闭；损坏记录严格失败。`SessionStore` 以进程内共享锁、跨进程文件锁和原子替换保护 `sessions/index.json`。
+- **P1b-B Approval Broker**:`approval.py` 定义 `ApprovalRequest/DecisionReceipt` v1。child `Permission.ASK` 经父 Session 转发，支持旧 bool callback 和父侧 `pending_approvals()/decide_approval()`；超时、取消、回调异常和 Runtime 重启均失败关闭。恢复时对账父子事件并补齐单边 receipt，冲突事实严格失败。工具参数仅落字段类型摘要与 SHA-256。
+- **P1c Resume/Steer**：`control.py` 定义 `ResumeRequest/ResumeReceipt/SteerDirective/SteerReceipt`。每次 `resume` 创建新 `request_id/agent_id/child_session_id`，共享 `lineage_id` 并递增 `attempt_number`；旧 Artifact 只按路径和 SHA-256 引用，任务前缀禁止假设或重放旧副作用。`steer` 同时绑定 request/agent/child/lineage/attempt，只在 `AgentLoop` 下一轮 Provider 调用前消费，不插入 Provider 请求或同一工具批次中间；取消、终态、身份不匹配或 Runtime 重启签发失败回执，历史 accepted 指令不重新入队。
+- **P1c 恢复与审计**：RuntimeState 持久化 resume request/receipt 并在重启时幂等补齐父、source child、new child 三方事件；steer 请求/回执对账父子 Session，单边缺失自动补齐、冲突事实严格失败。遗留非终态 attempt 仍按 P1b-A 失败关闭，绝不自动重新提交模型或工具。
+- **P1d Actor 与 Resume 幂等**：`actor.py` 定义版本化 `ActorRef`；Approval、Resume、Steer 新事实使用稳定 `actor_id/actor_type`，历史字符串兼容读取为 `legacy`。Resume 强制调用方 `idempotency_key` 和 `instruction_sha256`；相同 actor/key/语义返回原 Handle/Receipt，不同语义失败，RuntimeState 使重启后仍可复用。
+- **P1d Control Plane**：`control_plane.py` 从 RuntimeState 和父/子 Session 构建只读投影，查询 attempts、lineage、approvals、resumes、steers，去重重复事实并对冲突/损坏失败关闭；默认视图不返回 task/instruction 原文。CLI `control` 子命令支持文本/JSON。查询不获取 Runtime lease；无 IPC 服务前不提供跨进程写控制。
+- `AgentLoop.subagent` 支持 `dispatch/status/cancel/join/resume/steer`;resume 必须带稳定 `idempotency_key`；dispatch 对模型只暴露 `role/task/context_mode/execution_mode/artifact_contract`,所有 child AgentLoop 都移除 `subagent` 工具以维持禁嵌套。
 
 ### 2.5 vision(双环自检 + 评分分层)
 
@@ -68,10 +77,10 @@
 每条记录 `{id, parentId, timestamp, type, payload}`:
 
 - `type: message` → `payload.role`、`gen_ai.request.model`、`gen_ai.usage.*` 等 OTel 字段。
-- `type: tool_call` → `payload.toolCallId`、`payload.toolName`、参数摘要。
-- `type: custom` → `customType: screenshot` / `score` / `patch` / `snapshot`(字段见 ARCH §6)。
+- `type: tool_call` → `payload.toolCallId`、`payload.toolName`、参数字段类型摘要和 `args_sha256`；不保存原始工具参数。
+- `type: custom` → `customType: screenshot` / `score` / `patch` / `snapshot` / Subagent lifecycle / `artifact_committed` / `delivery_receipt` / `approval_requested` / `approval_decided`(字段见 ARCH §6)。
 
-**多会话**:每会话一个 JSONL 文件 + `sessions/index.json`(id/标题/ playbook/最后活跃/分支摘要)——TUI 侧边栏与未来 Web UI 会话列表的数据源;`/sessions` 列出,点击跳转。单文件原地分支(`/tree`);快照在每次 MCP 写操作前自动落盘;M3 按需导出 BIMBench 评测格式。
+**多会话**:每会话一个 JSONL 文件 + `sessions/index.json`(id/标题/ playbook/最后活跃/分支摘要/`child_of`)——TUI 侧边栏与未来 Web UI 会话列表的数据源;`/sessions` 列出,点击跳转。单文件原地分支(`/tree`);快照在每次 MCP 写操作前自动落盘;M3 按需导出 BIMBench 评测格式。索引写入受同进程共享 `RLock` 与跨进程文件锁双重保护，并通过临时文件、`fsync`、`os.replace` 原子发布。
 
 ## 3. 内置 agent 规格(角色-模型绑定,定稿)
 

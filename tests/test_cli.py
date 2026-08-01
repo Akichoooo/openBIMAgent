@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -128,6 +129,62 @@ def test_export_subcommand_default_path(tmp_path, capsys, monkeypatch) -> None:
     code = main(["export", store.session_id, "--sessions-dir", str(sessions_dir)])
     assert code == 0
     assert (tmp_path / f"{store.session_id}.jsonl").is_file()
+
+
+def _write_control_attempt(sessions_dir: Path):
+    from openbimagent.orchestrator.contracts import ExecutionMode, SubagentHandle, SubagentRequest, SubagentStatus
+    from openbimagent.orchestrator.state import RuntimeStateStore
+
+    request = SubagentRequest.create(
+        parent_session_id="parent-session",
+        role="worker",
+        task="private task",
+        execution_mode=ExecutionMode.BACKGROUND,
+    )
+    handle = SubagentHandle(
+        request_id=request.request_id,
+        agent_id="agent-1",
+        parent_session_id=request.parent_session_id,
+        child_session_id="child-1",
+        child_session_path=str(sessions_dir / "child-1.jsonl"),
+        status=SubagentStatus.QUEUED,
+        lineage_id=request.lineage_id,
+        attempt_number=1,
+    )
+    RuntimeStateStore(sessions_dir / "_runtime").write(
+        request=request,
+        handle=handle,
+        status=SubagentStatus.QUEUED,
+        phase="prepared",
+    )
+    return request
+
+
+def test_control_attempts_json_is_read_only_projection(tmp_path, capsys) -> None:
+    sessions_dir = tmp_path / "sessions"
+    request = _write_control_attempt(sessions_dir)
+    code = main(["control", "attempts", "--sessions-dir", str(sessions_dir), "--json"])
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload[0]["request_id"] == request.request_id
+    assert payload[0]["status"] == "queued"
+    assert "task" not in payload[0]
+
+
+def test_control_attempt_requires_id_and_unknown_returns_1(tmp_path, capsys) -> None:
+    sessions_dir = tmp_path / "sessions"
+    assert main(["control", "attempt", "--sessions-dir", str(sessions_dir)]) == 1
+    assert "需要 request_id" in capsys.readouterr().out
+    assert main(["control", "attempt", "missing", "--sessions-dir", str(sessions_dir)]) == 1
+    assert "未知 request_id" in capsys.readouterr().out
+
+
+def test_control_attempts_invalid_status_returns_1(tmp_path, capsys) -> None:
+    code = main([
+        "control", "attempts", "--sessions-dir", str(tmp_path / "sessions"), "--status", "invalid",
+    ])
+    assert code == 1
+    assert "control error" in capsys.readouterr().out
 
 
 # ---------- HITL 斜杠命令(_handle_slash) ----------

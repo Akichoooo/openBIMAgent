@@ -7,6 +7,8 @@ import pytest
 
 from openbimagent.core.loop import AgentLoop
 from openbimagent.core.permissions import Permission
+from openbimagent.orchestrator.contracts import SubagentStatus
+from openbimagent.orchestrator.runtime import ChildRunOutput, LocalSubagentRuntime
 from openbimagent.session.schema import EventType
 from openbimagent.session.store import SessionStore
 
@@ -77,9 +79,15 @@ def test_loop_read_then_final_answer(session, workdir) -> None:
         EventType.MESSAGE,  # 助手终答
     ]
     assert events[0].payload.role == "user" and events[0].payload.content == "读一下 hello.txt"
-    assert events[1].payload.model_dump()["tool_calls"][0]["toolName"] == "read"
+    recorded_call = events[1].payload.model_dump()["tool_calls"][0]
+    assert recorded_call["toolName"] == "read"
+    assert recorded_call["args_summary"] == '{"path":"str"}'
+    assert "hello.txt" not in str(recorded_call)
+    assert len(recorded_call["args_sha256"]) == 64
     call = events[2].payload
     assert call.phase == "call" and call.toolName == "read" and call.toolCallId == "call_1"
+    assert call.args_summary == '{"path":"str"}'
+    assert len(call.args_sha256) == 64
     result = events[3].payload
     assert result.phase == "result" and result.status == "ok"
     # 双视图:llm_view 给模型(含文件内容),ui_view 给 UI(结构化)
@@ -166,6 +174,84 @@ def test_loop_unimplemented_tool_returns_error_result(session, workdir) -> None:
     assert final == "MCP 还没接,先到这里。"
     result = session.load()[3].payload
     assert result.status == "error" and "TODO(M0 阶段2+)" in result.result_llm_view
+
+
+def test_loop_subagent_tool_uses_runtime_v1(session, workdir, tmp_path) -> None:
+    """subagent 工具创建 child Session，父循环只收到紧凑结果信封。"""
+    agents = tmp_path / "agents"
+    agents.mkdir()
+    (agents / "worker.md").write_text(
+        "---\nname: worker\nmodel: fake\ntools: [read]\npermissions: { read: allow }\n"
+        "context_mode: isolated\nmax_turns: 5\nartifact_contract: summary-v1\nnesting: false\n---\nworker",
+        encoding="utf-8",
+    )
+    runtime = LocalSubagentRuntime(
+        sessions_dir=tmp_path / "sessions",
+        artifacts_dir=tmp_path / "artifacts",
+        agents_dir=agents,
+        child_runner=lambda request, profile, child: ChildRunOutput(summary="子任务完成", hint="完成"),
+    )
+    provider = FakeProvider(
+        [
+            _resp("派发", [_tool_call("subagent", {"role": "worker", "task": "检查文件"})]),
+            _resp("已收到子任务结果。"),
+        ]
+    )
+    loop = AgentLoop(
+        ["read", "subagent"],
+        session,
+        chat_fn=provider,
+        workdir=workdir,
+        permission_rules={"subagent": Permission.ALLOW},
+        subagent_runtime=runtime,
+    )
+    assert loop.run("派发检查") == "已收到子任务结果。"
+    tool_message = next(message for message in provider.calls[1]["messages"] if message["role"] == "tool")
+    assert "子任务完成" in tool_message["content"]
+    result_event = [event for event in session.load() if event.type is EventType.TOOL_CALL][-1]
+    assert result_event.payload.result_ui_view["status"] == SubagentStatus.COMPLETED.value
+    assert result_event.payload.result_ui_view["child_session_path"]
+
+
+def test_loop_subagent_background_dispatch_status_and_join(session, workdir, tmp_path) -> None:
+    agents = tmp_path / "agents"
+    agents.mkdir()
+    (agents / "worker.md").write_text(
+        "---\nname: worker\nmodel: fake\ntools: []\npermissions: {}\n"
+        "context_mode: isolated\nmax_turns: 5\nartifact_contract: summary-v1\nnesting: false\n---\nworker",
+        encoding="utf-8",
+    )
+    runtime = LocalSubagentRuntime(
+        sessions_dir=tmp_path / "sessions",
+        artifacts_dir=tmp_path / "artifacts",
+        agents_dir=agents,
+        child_runner=lambda *_: ChildRunOutput(summary="后台完成"),
+    )
+    loop = AgentLoop(
+        ["subagent"],
+        session,
+        chat_fn=FakeProvider([]),
+        workdir=workdir,
+        permission_rules={"subagent": Permission.ALLOW},
+        subagent_runtime=runtime,
+    )
+    dispatched = loop._tool_subagent(
+        {"role": "worker", "task": "后台检查", "execution_mode": "background"}
+    )
+    request_id = dispatched["ui_view"]["request_id"]
+    assert dispatched["status"] == "ok"
+    assert "queued" in dispatched["llm_view"]
+    status = loop._tool_subagent({"action": "status", "request_id": request_id})
+    assert status["ui_view"]["status"] in {"queued", "running", "completed"}
+    joined = loop._tool_subagent({"action": "join", "request_id": request_id, "timeout_s": 5})
+    assert joined["status"] == "ok"
+    assert "后台完成" in joined["llm_view"]
+    runtime.shutdown()
+
+
+def test_child_loop_cannot_mount_subagent_tool(session, workdir) -> None:
+    with pytest.raises(ValueError, match="禁嵌套"):
+        AgentLoop(["subagent"], session, chat_fn=FakeProvider([]), workdir=workdir, depth=1)
 
 
 def test_tool_count_limit(session) -> None:

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import json
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -174,6 +176,103 @@ def test_sse_line_roundtrip_pure() -> None:
         {"content_parts": ["正"], "reasoning_parts": [], "tool_calls": {}, "finish_reason": "stop", "usage": None},
         aborted=False,
     )["choices"][0]["message"]  # 无 reasoning 时不透出该字段
+
+
+def test_google_messages_convert_multimodal_and_tools() -> None:
+    """OpenAI 消息中的 system/text/data-URI/tool_calls 可转换为 Gemini Content。"""
+    from google.genai import types
+
+    png = base64.b64encode(b"fake-png").decode("ascii")
+    messages = [
+        {"role": "system", "content": "你是 BIM critic"},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "看图"},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{png}"}},
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "call_1", "type": "function", "function": {"name": "read", "arguments": '{"path":"a"}'}}
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "done"},
+    ]
+    system, contents = dialects._messages_to_google_contents(messages, types)
+    assert system == "你是 BIM critic"
+    assert [c.role for c in contents] == ["user", "model", "user"]
+    assert contents[0].parts[0].text == "看图"
+    assert contents[0].parts[1].inline_data.mime_type == "image/png"
+    assert contents[0].parts[1].inline_data.data == b"fake-png"
+    assert contents[1].parts[0].function_call.name == "read"
+    assert contents[2].parts[0].function_response.response == {"result": "done"}
+
+
+def test_google_tools_and_response_normalized() -> None:
+    """OpenAI tools 转 Gemini declaration，Gemini 响应再归一化为 chat.completion。"""
+    from google.genai import types
+
+    tools = [{
+        "type": "function",
+        "function": {
+            "name": "read",
+            "description": "读文件",
+            "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
+        },
+    }]
+    converted = dialects._tools_to_google(tools, types)
+    declaration = converted[0].function_declarations[0]
+    assert declaration.name == "read"
+    assert declaration.parameters_json_schema["required"] == ["path"]
+
+    candidate = SimpleNamespace(
+        finish_reason="STOP",
+        content=SimpleNamespace(parts=[
+            SimpleNamespace(text="思考", thought=True, function_call=None),
+            SimpleNamespace(text="完成", thought=False, function_call=None),
+            SimpleNamespace(
+                text=None,
+                thought=False,
+                function_call=SimpleNamespace(id="fc1", name="read", args={"path": "a.txt"}),
+            ),
+        ]),
+    )
+    response = SimpleNamespace(
+        candidates=[candidate],
+        usage_metadata=SimpleNamespace(
+            prompt_token_count=10,
+            candidates_token_count=4,
+            thoughts_token_count=2,
+            total_token_count=16,
+        ),
+    )
+    result = dialects._google_response_to_completion(response)
+    message = result["choices"][0]["message"]
+    assert message["content"] == "完成"
+    assert message["reasoning"] == "思考"
+    assert message["tool_calls"][0]["function"]["name"] == "read"
+    assert json.loads(message["tool_calls"][0]["function"]["arguments"]) == {"path": "a.txt"}
+    assert result["usage"] == {"prompt_tokens": 10, "completion_tokens": 6, "total_tokens": 16}
+
+
+def test_google_cancel_before_call_short_circuits(monkeypatch: pytest.MonkeyPatch) -> None:
+    """调用前 cancel_event 已置位时不初始化 SDK client，直接返回 aborted completion。"""
+    import threading
+
+    cancel = threading.Event()
+    cancel.set()
+    result = dialects.chat(
+        Dialect.GOOGLE_GENAI,
+        model="gemini-test",
+        messages=[{"role": "user", "content": "hi"}],
+        api_key="dummy",
+        cancel_event=cancel,
+    )
+    assert result["aborted"] is True
+    assert result["choices"][0]["finish_reason"] == "cancelled"
 
 
 def test_waf_html_response_raises_retryable(monkeypatch: pytest.MonkeyPatch) -> None:

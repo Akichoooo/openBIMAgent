@@ -40,6 +40,21 @@ def test_profile_switch_via_env(monkeypatch) -> None:
     assert reg.model_name_for_role("critic_render") == "gpt-5.5"
 
 
+def test_faucet_profile_uses_independent_generator_and_critic_models() -> None:
+    """免费联调 profile 不覆盖官方配置，生成与评判模型分家。"""
+    reg = ModelRegistry.load(CONFIG_PATH, profile="faucet")
+    assert reg.providers["freetokenfaucet"].api_key_env == "FREETOKENFAUCET_API_KEY"
+    assert reg.providers["freetokenfaucet"].base_url == "https://freetokenfaucet.com/v1"
+    assert reg.model_name_for_role("planner") == "gpt-5.6-terra"
+    assert reg.model_name_for_role("critic_render") == "mimo-v2.5-pro"
+    assert reg.model_name_for_role("orchestrator") == "deepseek-v4-flash"
+    assert reg.fallback_chain("gpt-5.6-terra") == [
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+        "deepseek-v4-flash",
+    ]
+
+
 def test_unknown_profile_and_role_raise() -> None:
     with pytest.raises(ValueError, match="未知 profile"):
         ModelRegistry.load(CONFIG_PATH, profile="不存在的通道")

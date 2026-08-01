@@ -11,6 +11,7 @@ anthropic / google-genai / openai-responses 留 TODO(M1)。
 
 from __future__ import annotations
 
+import base64
 import json
 import threading
 import time
@@ -87,7 +88,271 @@ def chat(
             cancel_event=cancel_event,
             default_headers=default_headers,
         )
+    if dialect is Dialect.GOOGLE_GENAI:
+        return _chat_google_genai(
+            model=model,
+            messages=messages,
+            base_url=base_url,
+            api_key=api_key,
+            tools=tools,
+            tool_choice=tool_choice,
+            timeout_s=timeout_s,
+            cancel_event=cancel_event,
+            default_headers=default_headers,
+        )
     raise NotImplementedError(f"TODO(M1): {dialect} 方言未实现")
+
+
+def _chat_google_genai(
+    *,
+    model: str,
+    messages: list[dict[str, Any]],
+    base_url: str | None,
+    api_key: str | None,
+    tools: list[dict[str, Any]] | None,
+    tool_choice: str | dict[str, Any] | None,
+    timeout_s: int,
+    cancel_event: threading.Event | None,
+    default_headers: dict[str, str] | None,
+) -> dict[str, Any]:
+    """Google Gen AI SDK 方言:消息/图片/函数调用双向适配为统一 chat.completion 形态。
+
+    使用 SDK 的同步 ``models.generate_content``。调用前和返回后检查 cancel_event;
+    SDK 当前不提供同步请求的跨线程安全强制中断,所以置位后以 aborted=True 丢弃完整响应,
+    保持上层 checkpoint 语义。base_url/default_headers 仅在显式配置时经 HttpOptions 透传。
+    """
+    if not api_key:
+        raise DialectError("google-genai provider 缺少 api_key")
+    if cancel_event is not None and cancel_event.is_set():
+        return _empty_aborted_completion()
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError as exc:  # pragma: no cover - pyproject 已声明依赖
+        raise DialectError("google-genai 方言需要 google-genai 依赖") from exc
+
+    system_instruction, contents = _messages_to_google_contents(messages, types)
+    config_kwargs: dict[str, Any] = {}
+    if system_instruction:
+        config_kwargs["system_instruction"] = system_instruction
+    google_tools = _tools_to_google(tools, types)
+    if google_tools:
+        config_kwargs["tools"] = google_tools
+        tool_config = _tool_config_to_google(tool_choice, google_tools, types)
+        if tool_config is not None:
+            config_kwargs["tool_config"] = tool_config
+
+    http_options_kwargs: dict[str, Any] = {"timeout": int(timeout_s * 1000)}
+    if base_url:
+        http_options_kwargs["base_url"] = base_url
+    if default_headers:
+        http_options_kwargs["headers"] = dict(default_headers)
+    http_options = types.HttpOptions(**http_options_kwargs)
+    client = genai.Client(api_key=api_key, http_options=http_options)
+    try:
+        response = client.models.generate_content(
+            model=model,
+            contents=contents,
+            config=types.GenerateContentConfig(**config_kwargs),
+        )
+    finally:
+        client.close()
+    if cancel_event is not None and cancel_event.is_set():
+        return _empty_aborted_completion()
+    return _google_response_to_completion(response)
+
+
+def _messages_to_google_contents(messages: list[dict[str, Any]], types: Any) -> tuple[str | None, list[Any]]:
+    """OpenAI messages → (system_instruction, Google Content[])。"""
+    system_parts: list[str] = []
+    contents: list[Any] = []
+    for message in messages:
+        role = str(message.get("role") or "user")
+        content = message.get("content", "")
+        if role == "system":
+            text = _content_text(content)
+            if text:
+                system_parts.append(text)
+            continue
+        if role == "tool":
+            name = str(message.get("name") or message.get("tool_call_id") or "tool")
+            payload = _json_object_or_text(content)
+            contents.append(
+                types.Content(
+                    role="user",
+                    parts=[types.Part.from_function_response(name=name, response=payload)],
+                )
+            )
+            continue
+        parts = _content_to_google_parts(content, types)
+        tool_calls = message.get("tool_calls") or []
+        if tool_calls and len(parts) == 1 and getattr(parts[0], "text", None) == "":
+            parts.clear()
+        for tool_call in tool_calls:
+            fn = tool_call.get("function") or {}
+            args = _json_object_or_text(fn.get("arguments", {}))
+            parts.append(types.Part.from_function_call(name=str(fn.get("name") or "tool"), args=args))
+        if not parts:
+            parts = [types.Part.from_text(text="")]
+        contents.append(types.Content(role="model" if role == "assistant" else "user", parts=parts))
+    if not contents:
+        contents = [types.Content(role="user", parts=[types.Part.from_text(text="")])]
+    return ("\n\n".join(system_parts) or None), contents
+
+
+def _content_to_google_parts(content: Any, types: Any) -> list[Any]:
+    """OpenAI 字符串/content-parts → Google Part[]，支持 base64 data-URI 图片。"""
+    if isinstance(content, str):
+        return [types.Part.from_text(text=content)]
+    if not isinstance(content, list):
+        return [types.Part.from_text(text=str(content))]
+    parts: list[Any] = []
+    for item in content:
+        if not isinstance(item, dict):
+            parts.append(types.Part.from_text(text=str(item)))
+            continue
+        if item.get("type") == "text":
+            parts.append(types.Part.from_text(text=str(item.get("text") or "")))
+            continue
+        if item.get("type") == "image_url":
+            image = item.get("image_url") or {}
+            url = image.get("url") if isinstance(image, dict) else image
+            if not isinstance(url, str) or not url.startswith("data:"):
+                raise DialectError("google-genai 当前只支持 base64 data-URI image_url")
+            mime_type, data = _decode_data_uri(url)
+            parts.append(types.Part.from_bytes(data=data, mime_type=mime_type))
+            continue
+        parts.append(types.Part.from_text(text=json.dumps(item, ensure_ascii=False)))
+    return parts
+
+
+def _decode_data_uri(uri: str) -> tuple[str, bytes]:
+    """解码 ``data:<mime>;base64,<payload>``。"""
+    try:
+        header, encoded = uri.split(",", 1)
+        mime_type = header[5:].split(";", 1)[0]
+        if ";base64" not in header or not mime_type:
+            raise ValueError
+        return mime_type, base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError) as exc:
+        raise DialectError("image_url 不是合法 base64 data-URI") from exc
+
+
+def _tools_to_google(tools: list[dict[str, Any]] | None, types: Any) -> list[Any]:
+    """OpenAI function tools → Google Tool(function_declarations)。"""
+    declarations: list[Any] = []
+    for item in tools or []:
+        if item.get("type") != "function" or not isinstance(item.get("function"), dict):
+            continue
+        fn = item["function"]
+        declarations.append(
+            types.FunctionDeclaration(
+                name=str(fn.get("name") or "tool"),
+                description=str(fn.get("description") or ""),
+                parameters_json_schema=fn.get("parameters") or {"type": "object", "properties": {}},
+            )
+        )
+    return [types.Tool(function_declarations=declarations)] if declarations else []
+
+
+def _tool_config_to_google(tool_choice: Any, google_tools: list[Any], types: Any) -> Any | None:
+    """OpenAI tool_choice → Google FunctionCallingConfig。"""
+    if not google_tools or tool_choice is None or tool_choice == "auto":
+        return None
+    mode = "AUTO"
+    allowed: list[str] | None = None
+    if tool_choice == "none":
+        mode = "NONE"
+    elif tool_choice == "required":
+        mode = "ANY"
+    elif isinstance(tool_choice, dict):
+        fn = tool_choice.get("function") or {}
+        if fn.get("name"):
+            mode, allowed = "ANY", [str(fn["name"])]
+    return types.ToolConfig(
+        function_calling_config=types.FunctionCallingConfig(mode=mode, allowed_function_names=allowed)
+    )
+
+
+def _google_response_to_completion(response: Any) -> dict[str, Any]:
+    """GenerateContentResponse → OpenAI chat.completion 形态。"""
+    candidates = getattr(response, "candidates", None) or []
+    if not candidates:
+        raise DialectError("google-genai 响应缺 candidates(可能被安全策略拦截)")
+    candidate = candidates[0]
+    content_parts: list[str] = []
+    reasoning_parts: list[str] = []
+    tool_calls: list[dict[str, Any]] = []
+    for index, part in enumerate(getattr(getattr(candidate, "content", None), "parts", None) or []):
+        text = getattr(part, "text", None)
+        if isinstance(text, str):
+            (reasoning_parts if getattr(part, "thought", False) else content_parts).append(text)
+        fn = getattr(part, "function_call", None)
+        if fn is not None and getattr(fn, "name", None):
+            call_id = str(getattr(fn, "id", None) or f"call_google_{index}")
+            tool_calls.append(
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": str(fn.name),
+                        "arguments": json.dumps(getattr(fn, "args", None) or {}, ensure_ascii=False),
+                    },
+                }
+            )
+    message: dict[str, Any] = {"role": "assistant", "content": "".join(content_parts)}
+    if reasoning_parts:
+        message["reasoning"] = "".join(reasoning_parts)
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+    finish = str(getattr(candidate, "finish_reason", None) or "stop").split(".")[-1].lower()
+    result: dict[str, Any] = {
+        "choices": [{"message": message, "finish_reason": "tool_calls" if tool_calls else finish}],
+        "aborted": False,
+    }
+    usage = getattr(response, "usage_metadata", None)
+    if usage is not None:
+        prompt = int(getattr(usage, "prompt_token_count", 0) or 0)
+        completion = int(getattr(usage, "candidates_token_count", 0) or 0) + int(
+            getattr(usage, "thoughts_token_count", 0) or 0
+        )
+        result["usage"] = {
+            "prompt_tokens": prompt,
+            "completion_tokens": completion,
+            "total_tokens": int(getattr(usage, "total_token_count", 0) or prompt + completion),
+        }
+    return result
+
+
+def _content_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            str(item.get("text") or "") for item in content if isinstance(item, dict) and item.get("type") == "text"
+        )
+    return str(content) if content is not None else ""
+
+
+def _json_object_or_text(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+        return {"result": value}
+    return {"result": value}
+
+
+def _empty_aborted_completion() -> dict[str, Any]:
+    return {
+        "choices": [{"message": {"role": "assistant", "content": ""}, "finish_reason": "cancelled"}],
+        "aborted": True,
+    }
 
 
 def _chat_openai_completions(

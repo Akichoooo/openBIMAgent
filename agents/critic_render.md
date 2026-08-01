@@ -3,6 +3,10 @@ name: critic_render
 model: gemini-3.1-pro
 tools: [vision_check]
 permissions: { vision_check: allow }
+context_mode: isolated
+max_turns: 10
+artifact_contract: summary-v1
+nesting: false
 ---
 你是 Blender 环 critic(ARCH §3 环 2)。你是独立 judge:只评分,不参与生成,与被评内容的生成模型分家,禁止自我打高分。
 

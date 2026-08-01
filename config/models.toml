@@ -17,6 +17,11 @@ api_key_env = "AGENTROUTER_API_KEY"
 # 实测:agentrouter 按 User-Agent 过滤客户端,缺此 UA 一律 401「unauthorized client detected」
 default_headers = { "User-Agent" = "claude-cli/2.0.0 (external, cli)" }
 
+[providers.freetokenfaucet]
+type = "openai-compatible"
+base_url = "https://freetokenfaucet.com/v1"
+api_key_env = "FREETOKENFAUCET_API_KEY"
+
 [models."glm-5.2"]
 provider = "glm"
 context_window = 1_000_000          # 调研值,待确认
@@ -49,6 +54,26 @@ capabilities = ["tools", "vision"]  # 降级链
 provider = "agentrouter"
 capabilities = ["tools", "vision"]
 
+[models."gpt-5.6-luna"]
+provider = "freetokenfaucet"
+capabilities = ["tools"]
+
+[models."gpt-5.6-terra"]
+provider = "freetokenfaucet"
+capabilities = ["tools"]
+
+[models."deepseek-v4-flash"]
+provider = "freetokenfaucet"
+capabilities = ["tools"]
+
+[models."mimo-v2.5"]
+provider = "freetokenfaucet"
+capabilities = ["tools"]
+
+[models."mimo-v2.5-pro"]
+provider = "freetokenfaucet"
+capabilities = ["tools"]
+
 [profiles]                          # OPENBIMAGENT_PROFILE 切换,默认 official
 [profiles.official]
 orchestrator = "glm-5.2"
@@ -66,10 +91,22 @@ critic_scad = "gpt-5.5"
 critic_render = "gpt-5.5"
 clarify = "glm-5.2-ar"
 
+[profiles.faucet]                   # 免费联调:Terra 生成、MiMo Pro 独立评判、DeepSeek 高频调度
+orchestrator = "deepseek-v4-flash"
+planner = "gpt-5.6-terra"
+modeler = "gpt-5.6-terra"
+critic_scad = "mimo-v2.5-pro"
+critic_render = "mimo-v2.5-pro"
+clarify = "deepseek-v4-flash"
+researcher = "gpt-5.6-luna"
+deliver = "mimo-v2.5"
+
 [fallbacks]
 "gemini-3.1-pro" = ["glm-5.2"]
 "gpt-5.5" = ["claude-opus-4-6"]
 "claude-opus-4-8" = ["claude-opus-4-6", "glm-5.2-ar"]
+"gpt-5.6-terra" = ["gpt-5.6-luna", "deepseek-v4-flash"]
+"mimo-v2.5-pro" = ["mimo-v2.5", "deepseek-v4-flash"]
 
 [resilience]                        # 韧性集中在 providers 层,业务代码不重复造
 retry = { max = 3, backoff = "exponential", base_ms = 1000 }

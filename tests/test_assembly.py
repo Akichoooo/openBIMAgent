@@ -591,6 +591,25 @@ def test_pipeline_no_blender_escalates_and_deliver_missing(tmp_path) -> None:
     assert "deliver" in phase_names
 
 
+def test_pipeline_domain_gate_unknown_blocks_before_targets(tmp_path) -> None:
+    """市政硬约束缺 evidence 时 UNKNOWN，必须在后端构建前阻断。"""
+    result = run_pipeline(
+        playbook_path=Path(__file__).resolve().parents[1]
+        / "domain_packs" / "municipal_utility" / "playbook.md",
+        out_dir=tmp_path / "out",
+        blender_client=None,
+        vectorworks_client=None,
+        input_func=lambda p: "",
+        sessions_dir=tmp_path / "sessions",
+        yes=True,
+    )
+    assert result.ok is False
+    assert result.domain_gate is not None
+    assert result.domain_gate.status.value == "UNKNOWN"
+    assert "Solver" in (result.error or "")
+    assert "orchestrate" not in [name for name, _ in result.phases_log]
+
+
 def test_pipeline_with_mock_blender_full_success(tmp_path) -> None:
     """全 mock Blender:builder 模板 + render_loop fake perfect_score → PASS → deliver accepted。
 

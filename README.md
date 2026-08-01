@@ -12,7 +12,7 @@
 
 ## 状态
 
-设计阶段。当前仅有调研与架构文档,原型待审核后开工。
+M1 持续实现中。已具备确定性 Pipeline、Blender/Vectorworks MCP 客户端、Domain Gate，以及 Subagent Runtime v1 的 child Session、不可变 Artifact、background/status/cancel/join、跨进程 Session 索引锁、重启 rehydrate、Approval Broker、P1c `resume/steer` 和 P1d 控制面基础。`resume` 永远创建新的 request/agent/child attempt，以 `lineage_id + attempt_number` 保持谱系；P1d 增加稳定 `ActorRef`、`instruction_sha256` 和调用方 `idempotency_key`，同键同语义重试返回原 attempt，同键不同语义严格冲突，重启后仍从持久化 Resume 事实复用。旧结果只作为不可变只读上下文，禁止静默重放旧工具副作用；`steer` 仅绑定当前 queued/running attempt，在下一轮 Provider 调用前的安全边界应用，终态、取消或 Runtime 重启时失败关闭且不会串入后续 attempt。新增只读 `ReadOnlyControlPlane` 与 `control` CLI，可查询 attempts、lineage、approvals、resumes、steers，不获取 Runtime lease、不执行控制副作用。通用 Loop 的 MCP/vision/deliver 接线和双宿主 E2E 仍在推进。
 
 ## 文档地图
 
@@ -36,13 +36,14 @@ uv sync
 在仓库根目录创建 `.env`(providers profile 与模型 key;**禁止提交到 git**):
 
 ```bash
-# 选填:指定 providers profile(见 config/profiles/*.yaml;缺省走 default)
-OPENBIMAGENT_PROFILE=default
+# 选填:official / test / faucet；缺省 official
+OPENBIMAGENT_PROFILE=faucet
 
-# 模型 API key(按实际使用的 provider 填,只配你用的那个)
-OPENAI_API_KEY=sk-...
+# 只配置实际使用的 provider；禁止提交真实 key
+FREETOKENFAUCET_API_KEY=...
+GLM_API_KEY=...
 GEMINI_API_KEY=...
-ANTHROPIC_API_KEY=sk-ant-...
+AGENTROUTER_API_KEY=...
 ```
 
 > 无 `.env` 也可跑:planner / builder 走确定性模板(离线冒烟),critic 走 MockCritic;只是不调真实 LLM。
@@ -60,6 +61,18 @@ uv run python -m openbimagent run --playbook domain_packs/single_asset_hero/play
 # 跳过所有审批门(自动化场景)
 uv run python -m openbimagent run --playbook domain_packs/single_asset_hero/playbook.md --yes
 ```
+
+P1d 只读控制面示例（可与活跃 Runtime 并行查询，不触发副作用）：
+
+```bash
+uv run python -m openbimagent control attempts --sessions-dir out/sessions --json
+uv run python -m openbimagent control lineage <lineage_id> --sessions-dir out/sessions --json
+uv run python -m openbimagent control approvals --pending-only --sessions-dir out/sessions --json
+uv run python -m openbimagent control resumes --sessions-dir out/sessions --json
+uv run python -m openbimagent control steers --request-id <request_id> --sessions-dir out/sessions --json
+```
+
+> CLI 目前故意只读。`resume/steer/approval` 写控制必须在持有 Runtime lease 的进程内调用，仓库尚无 IPC 服务时不伪装成跨进程可写控制面。
 
 常用参数:
 

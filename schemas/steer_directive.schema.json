@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/steer_directive.schema.json",
+  "title": "SteerDirectiveV1",
+  "type": "object",
+  "required": ["protocol_version", "steer_id", "request_id", "agent_id", "child_session_id", "lineage_id", "attempt_number", "instruction", "instruction_sha256", "requested_by", "requested_at"],
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": { "type": "string", "pattern": "^1(?:\\.\\d+)?$" },
+    "steer_id": { "type": "string", "minLength": 1 },
+    "request_id": { "type": "string", "minLength": 1 },
+    "agent_id": { "type": "string", "minLength": 1 },
+    "child_session_id": { "type": "string", "minLength": 1 },
+    "lineage_id": { "type": "string", "minLength": 1 },
+    "attempt_number": { "type": "integer", "minimum": 1 },
+    "instruction": { "type": "string", "minLength": 1, "maxLength": 20000 },
+    "instruction_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "requested_by": {
+      "type": "object",
+      "required": ["protocol_version", "actor_id", "actor_type", "display_name"],
+      "additionalProperties": false,
+      "properties": {
+        "protocol_version": { "type": "string", "pattern": "^1(?:\\.\\d+)?$" },
+        "actor_id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:@/-]+$" },
+        "actor_type": { "enum": ["human", "agent", "service", "runtime", "legacy"] },
+        "display_name": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "requested_at": { "type": "string", "format": "date-time" }
+  }
+}

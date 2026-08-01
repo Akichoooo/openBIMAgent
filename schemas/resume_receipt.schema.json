@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/resume_receipt.schema.json",
+  "title": "ResumeReceiptV1",
+  "type": "object",
+  "required": ["protocol_version", "receipt_id", "resume_id", "source_request_id", "new_request_id", "new_agent_id", "new_child_session_id", "lineage_id", "attempt_number", "created_at"],
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": { "type": "string", "pattern": "^1(?:\\.\\d+)?$" },
+    "receipt_id": { "type": "string", "minLength": 1 },
+    "resume_id": { "type": "string", "minLength": 1 },
+    "source_request_id": { "type": "string", "minLength": 1 },
+    "new_request_id": { "type": "string", "minLength": 1 },
+    "new_agent_id": { "type": "string", "minLength": 1 },
+    "new_child_session_id": { "type": "string", "minLength": 1 },
+    "lineage_id": { "type": "string", "minLength": 1 },
+    "attempt_number": { "type": "integer", "minimum": 2 },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

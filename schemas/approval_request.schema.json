@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/approval_request.schema.json",
+  "title": "ApprovalRequestV1",
+  "type": "object",
+  "required": ["protocol_version", "approval_id", "request_id", "agent_id", "parent_session_id", "child_session_id", "tool_name", "permission_key", "args_summary", "args_sha256", "requested_at"],
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": { "type": "string", "pattern": "^1(?:\\.\\d+)?$" },
+    "approval_id": { "type": "string", "minLength": 1 },
+    "request_id": { "type": "string", "minLength": 1 },
+    "agent_id": { "type": "string", "minLength": 1 },
+    "parent_session_id": { "type": "string", "minLength": 1 },
+    "child_session_id": { "type": "string", "minLength": 1 },
+    "tool_name": { "type": "string", "minLength": 1 },
+    "permission_key": { "type": "string", "minLength": 1 },
+    "args_summary": { "type": "string", "maxLength": 500 },
+    "args_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "requested_at": { "type": "string", "format": "date-time" }
+  }
+}

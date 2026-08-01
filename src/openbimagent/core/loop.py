@@ -11,6 +11,7 @@ system prompt + 工具定义 < 2000 token;状态外置(session JSONL 树),中断
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import threading
@@ -21,6 +22,7 @@ from openbimagent.core.permissions import Permission, check_permission
 from openbimagent.session.schema import EventType
 
 if TYPE_CHECKING:
+    from openbimagent.orchestrator.runtime import LocalSubagentRuntime
     from openbimagent.session.store import SessionStore
 
 ToolName = Literal["read", "write", "edit", "bash", "mcp_call", "vision_check", "subagent", "deliver"]
@@ -134,11 +136,45 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "type": "function",
         "function": {
             "name": "subagent",
-            "description": "派发子代理(禁嵌套,并发 ≤4)。",
+            "description": "派发受控子代理(禁嵌套,并发 ≤4,过程留 child session)。",
             "parameters": {
                 "type": "object",
-                "properties": {"role": {"type": "string"}, "task": {"type": "string"}},
-                "required": ["role", "task"],
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["dispatch", "status", "cancel", "join", "resume", "steer"],
+                        "default": "dispatch",
+                    },
+                    "role": {"type": "string", "description": "dispatch 时的受信任 agents/<role>.md 角色名"},
+                    "task": {"type": "string", "description": "dispatch 时的任务"},
+                    "request_id": {"type": "string", "description": "status/cancel/join 的 background request_id"},
+                    "timeout_s": {"type": "number", "minimum": 0, "description": "join 最长等待秒数"},
+                    "instruction": {"type": "string", "description": "resume/steer 的显式新指令"},
+                    "requested_by": {"type": "string", "default": "parent-agent"},
+                    "idempotency_key": {"type": "string", "description": "resume 调用方提供的稳定幂等键"},
+                    "context_mode": {"type": "string", "enum": ["isolated", "fork"], "default": "isolated"},
+                    "execution_mode": {"type": "string", "enum": ["foreground", "background"], "default": "foreground"},
+                    "artifact_contract": {"type": "string", "default": "summary-v1"},
+                },
+                "additionalProperties": False,
+                "oneOf": [
+                    {
+                        "properties": {"action": {"const": "dispatch"}},
+                        "required": ["role", "task"],
+                    },
+                    {
+                        "properties": {"action": {"enum": ["status", "cancel", "join"]}},
+                        "required": ["action", "request_id"],
+                    },
+                    {
+                        "properties": {"action": {"const": "resume"}},
+                        "required": ["action", "request_id", "instruction", "idempotency_key"],
+                    },
+                    {
+                        "properties": {"action": {"const": "steer"}},
+                        "required": ["action", "request_id", "instruction"],
+                    },
+                ],
             },
         },
     },
@@ -162,6 +198,12 @@ ChatFn = Callable[..., dict[str, Any]]
 
 ApprovalCallback = Callable[[str, dict[str, Any]], bool]
 """审批门回调(tool_name, args)→ 是否放行;默认 CLI input 确认。"""
+
+ApprovalRequestCallback = Callable[[str, str, dict[str, Any], threading.Event | None], bool]
+"""P1b-B 审批回调(tool_name, permission_key, args, cancel_event)→ 是否放行。"""
+
+SteerCallback = Callable[[], tuple[str, ...]]
+"""P1c 在安全轮次边界拉取当前 attempt 的 steer 指令。"""
 
 
 def _default_chat_fn(role: str, messages: list[dict[str, Any]], **kwargs: Any) -> dict[str, Any]:
@@ -192,11 +234,15 @@ class AgentLoop:
         *,
         chat_fn: ChatFn | None = None,
         approval_callback: ApprovalCallback | None = None,
+        approval_request_callback: ApprovalRequestCallback | None = None,
+        steer_callback: SteerCallback | None = None,
         permission_rules: dict[str, Permission] | None = None,
         max_steps: int = 10,
         workdir: Path | None = None,
         system_prompt: str | None = None,
         role: str = "orchestrator",
+        subagent_runtime: LocalSubagentRuntime | None = None,
+        depth: int = 0,
     ) -> None:
         """挂载工具(≤8,超出报错)并绑定 session 树;system prompt 超 token 预算即配置错误。"""
         if len(tools) > MAX_TOOLS:
@@ -208,10 +254,17 @@ class AgentLoop:
         self.session = session
         self.chat_fn = chat_fn or _default_chat_fn
         self.approval_callback = approval_callback or _cli_approval
+        self.approval_request_callback = approval_request_callback
+        self.steer_callback = steer_callback
         self.permission_rules = permission_rules or {}
+        self._cancel_event: threading.Event | None = None
         self.max_steps = max_steps
         self.workdir = Path(workdir) if workdir else Path.cwd()
         self.role = role
+        self.subagent_runtime = subagent_runtime
+        self.depth = depth
+        if depth > 0 and "subagent" in self.tools:
+            raise ValueError("child AgentLoop 不得挂载 subagent 工具(禁嵌套)")
         self.system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
         est_tokens = (len(self.system_prompt) + len(json.dumps(self._tool_schemas(), ensure_ascii=False))) // 4
         if est_tokens > MAX_SYSTEM_PROMPT_TOKENS:
@@ -227,11 +280,20 @@ class AgentLoop:
         """
         self.session.append_new(EventType.MESSAGE, {"role": "user", "content": user_input})
         self.messages.append({"role": "user", "content": user_input})
+        self._cancel_event = cancel_event
         content = ""
         for step in range(self.max_steps):
             if cancel_event is not None and cancel_event.is_set():
                 self._checkpoint(step, "cancelled")
                 return content
+            if self.steer_callback is not None:
+                for instruction in self.steer_callback():
+                    steer_message = f"[steer] {instruction}"
+                    self.session.append_new(
+                        EventType.MESSAGE,
+                        {"role": "user", "content": steer_message, "steer": True},
+                    )
+                    self.messages.append({"role": "user", "content": steer_message})
             resp = self.chat_fn(
                 role=self.role,
                 messages=self.messages,
@@ -244,7 +306,13 @@ class AgentLoop:
                 payload["gen_ai.request.model"] = resp["model_resolved"]
             if tool_calls:
                 payload["tool_calls"] = [
-                    {"toolCallId": tc["id"], "toolName": tc["name"], "args": tc["arguments"]} for tc in tool_calls
+                    {
+                        "toolCallId": tc["id"],
+                        "toolName": tc["name"],
+                        "args_summary": _summarize_tool_args(tc["arguments"]),
+                        "args_sha256": _hash_tool_args(tc["arguments"]),
+                    }
+                    for tc in tool_calls
                 ]
             self.session.append_new(EventType.MESSAGE, payload)
             assistant_msg: dict[str, Any] = {"role": "assistant", "content": content}
@@ -282,10 +350,15 @@ class AgentLoop:
     def _execute_tool(self, tc: dict[str, Any]) -> dict[str, Any]:
         """执行一次工具调用:写 tool_call(call) 事件 → 审批门 → 执行 → 写 tool_call(result) 事件。"""
         name, args = tc["name"], tc["arguments"]
-        args_summary = json.dumps(args, ensure_ascii=False)[:200]
         self.session.append_new(
             EventType.TOOL_CALL,
-            {"toolCallId": tc["id"], "toolName": name, "args_summary": args_summary, "phase": "call"},
+            {
+                "toolCallId": tc["id"],
+                "toolName": name,
+                "args_summary": _summarize_tool_args(args),
+                "args_sha256": _hash_tool_args(args),
+                "phase": "call",
+            },
         )
         result = self._dispatch(name, args)
         self.session.append_new(
@@ -307,8 +380,14 @@ class AgentLoop:
         perm = check_permission(perm_key, self.permission_rules)
         if perm is Permission.DENY:
             return _tool_result("denied", f"工具 {perm_key} 被权限规则拒绝(deny)。", {"permission": "deny"})
-        if perm is Permission.ASK and not self.approval_callback(name, args):
-            return _tool_result("rejected", f"工具 {perm_key} 被用户拒绝。", {"permission": "rejected"})
+        if perm is Permission.ASK:
+            approved = (
+                self.approval_request_callback(name, perm_key, args, self._cancel_event)
+                if self.approval_request_callback is not None
+                else self.approval_callback(name, args)
+            )
+            if not approved:
+                return _tool_result("rejected", f"工具 {perm_key} 被用户拒绝。", {"permission": "rejected"})
         try:
             return self._run_tool(name, args)
         except NotImplementedError as exc:
@@ -395,8 +474,77 @@ class AgentLoop:
         raise NotImplementedError("TODO(M0 阶段2+): vision_check 接入视觉双环")
 
     def _tool_subagent(self, args: dict[str, Any]) -> dict[str, Any]:
-        """TODO(M0 阶段2+):接 orchestrator.dispatch(PASS/FIX/ESCALATE,child session)。"""
-        raise NotImplementedError("TODO(M0 阶段2+): subagent 接入 orchestrator 调度")
+        """派发或管理受控 child Session；模型不能指定 model/tools/permissions。"""
+        from openbimagent.orchestrator.contracts import ExecutionMode, SubagentRequest
+        from openbimagent.orchestrator.runtime import SubagentRuntimeError
+
+        if self.depth > 0:
+            raise SubagentRuntimeError("子代理禁嵌套：child AgentLoop 不能继续派发")
+        if self.subagent_runtime is None:
+            raise SubagentRuntimeError("未配置 SubagentRuntime，不能执行 subagent 工具")
+        action = str(args.get("action") or "dispatch")
+        if action == "status":
+            handle = self.subagent_runtime.status(str(args["request_id"]))
+            data = handle.model_dump(mode="json")
+            return _tool_result("ok", f"{handle.request_id}: {handle.status.value}", data)
+        if action == "cancel":
+            accepted = self.subagent_runtime.cancel(str(args["request_id"]))
+            status = self.subagent_runtime.status(str(args["request_id"]))
+            data = {**status.model_dump(mode="json"), "cancel_accepted": accepted}
+            return _tool_result("ok", f"cancel_accepted={accepted}; status={status.status.value}", data)
+        if action == "join":
+            envelope = self.subagent_runtime.join(str(args["request_id"]), timeout_s=args.get("timeout_s"))
+            status = "ok" if envelope.status.value == "completed" else "error"
+            return _tool_result(status, envelope.llm_summary(), envelope.ui_dict())
+        if action == "resume":
+            handle, receipt = self.subagent_runtime.resume(
+                str(args["request_id"]),
+                instruction=str(args["instruction"]),
+                idempotency_key=str(args["idempotency_key"]),
+                requested_by=str(args.get("requested_by") or "parent-agent"),
+            )
+            data = {
+                "handle": handle.model_dump(mode="json"),
+                "resume_receipt": receipt.model_dump(mode="json"),
+            }
+            return _tool_result(
+                "ok",
+                f"resumed as new attempt: request_id={handle.request_id}; attempt={handle.attempt_number}",
+                data,
+            )
+        if action == "steer":
+            receipt = self.subagent_runtime.steer(
+                str(args["request_id"]),
+                instruction=str(args["instruction"]),
+                requested_by=str(args.get("requested_by") or "parent-agent"),
+            )
+            return _tool_result(
+                "ok",
+                f"steer accepted: steer_id={receipt.steer_id}",
+                receipt.model_dump(mode="json"),
+            )
+        if action != "dispatch":
+            raise SubagentRuntimeError(f"未知 subagent action: {action}")
+
+        request = SubagentRequest.create(
+            parent_session_id=self.session.session_id,
+            role=str(args["role"]),
+            task=str(args["task"]),
+            context_mode=args.get("context_mode", "isolated"),
+            execution_mode=args.get("execution_mode", "foreground"),
+            artifact_contract=args.get("artifact_contract", "summary-v1"),
+        )
+        if request.execution_mode is ExecutionMode.BACKGROUND:
+            handle = self.subagent_runtime.submit(request, parent_session=self.session)
+            data = handle.model_dump(mode="json")
+            return _tool_result(
+                "ok",
+                f"queued: request_id={handle.request_id}; agent_id={handle.agent_id}; child_session={handle.child_session_path}",
+                data,
+            )
+        envelope = self.subagent_runtime.run(request, parent_session=self.session)
+        status = "ok" if envelope.status.value == "completed" else "error"
+        return _tool_result(status, envelope.llm_summary(), envelope.ui_dict())
 
     def _tool_deliver(self, args: dict[str, Any]) -> dict[str, Any]:
         """TODO(M0 阶段2+):接 deliver.gate 交付门禁(C5,人审签)。"""
@@ -421,6 +569,24 @@ class AgentLoop:
 def _tool_result(status: str, llm_view: str, ui_view: dict[str, Any]) -> dict[str, Any]:
     """工具结果双视图信封(ARCH §0 原则 5):llm_view 回灌模型,ui_view 落 session 供 UI。"""
     return {"status": status, "llm_view": llm_view, "ui_view": ui_view}
+
+
+def _canonical_tool_args(args: dict[str, Any]) -> bytes:
+    return json.dumps(args, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+
+
+def _hash_tool_args(args: dict[str, Any]) -> str:
+    return hashlib.sha256(_canonical_tool_args(args)).hexdigest()
+
+
+def _summarize_tool_args(args: dict[str, Any]) -> str:
+    """Session 只记录参数结构；原始值仅在当前进程内用于工具执行。"""
+    return json.dumps(
+        {str(key): type(value).__name__ for key, value in sorted(args.items())},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )[:500]
 
 
 def _permission_key(name: str, args: dict[str, Any]) -> str:

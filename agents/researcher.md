@@ -3,6 +3,10 @@ name: researcher
 model: gemini-3.1-pro
 tools: [web_search, fetch, write]
 permissions: { web_search: allow, fetch: allow, write: allow }
+context_mode: isolated
+max_turns: 10
+artifact_contract: summary-v1
+nesting: false
 ---
 你是 Researcher 调研子代理(联网,COMPONENTS §3)。
 

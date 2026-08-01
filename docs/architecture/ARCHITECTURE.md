@@ -1,6 +1,6 @@
 # openBIMAgent 总体架构
 
-版本:v0.3.1(并入环境实测与基座能力补充)· 2026-07-21
+版本:v0.4.0(Subagent Runtime v1 P1d 控制面收口)· 2026-08-01
 依据:`docs/research/01-11` 全部调研与评审 · 决议:`docs/architecture/DECISIONS_DRAFT.md`
 姊妹篇:[COMPONENTS.md](COMPONENTS.md)(组件/agent/模型配置/上下文管理详设)
 
@@ -138,7 +138,17 @@ domain_packs/<name>/
 ## 6. 子代理、trace 与事件协议
 
 - 子代理 = Markdown + YAML frontmatter;禁嵌套;并发 ≤4;child session;返回 = 摘要 + 工件路径 + <200 字核心提示。
-- trace = pi JSONL 树 + OTel `gen_ai.*` 对齐 + custom 事件(screenshot/score/patch/snapshot)+ VLM 留痕(reasoning/anchor_ref/actionable_feedback);纯文件,不接 Langfuse。
+- **Subagent Runtime v1(P0 + P1a + P1b-A + P1b-B Approval + P1c Resume/Steer + P1d Control Plane 已接通)**:版本化 `SubagentRequest/SubagentHandle/SubagentResultEnvelope` + JSON Schema;模型只可请求 `role/task/context_mode/execution_mode/artifact_contract`,实际 model/tools/permissions 由受信任角色 profile 决定。`LocalSubagentRuntime` 每次创建真实 child Session,将 summary/output 复制到不可变运行目录,生成含 size/SHA-256 的 `ArtifactManifest`,父 Session 只接收紧凑结果与工件指针。
+- P1a 已实现进程内 `background → status/cancel/join`,线程池并发硬上限 4。取消使用协作式 `threading.Event`,贯穿默认 child `AgentLoop` 和 Provider 流式调用;只有 Manifest、终态 lifecycle 与 receipt 全部完成后才暴露终态。
+- P1b-A 将 background 可变状态原子写入 `sessions/_runtime/<request_id>.json`。启动时：终态直接恢复且不重跑模型；`finalizing` 幂等补齐 lifecycle/receipt；遗留 `prepared/running` 以 `RuntimeRestarted(retryable=true)` 失败关闭，避免重复副作用；损坏状态文件严格失败并报告路径。
+- P1b-B Approval Broker 将 child 的 `Permission.ASK` 记录为版本化 `ApprovalRequest`，同时投递父/子 Session；父侧可使用兼容旧接口的 bool callback，或调用 `pending_approvals()/decide_approval()` 异步决策。`DecisionReceipt` 支持 approved/rejected/cancelled/timed_out/runtime_restarted、同决策幂等和冲突拒绝。Session 仅保存参数字段类型摘要及 canonical SHA-256，不保存 code/content/token 等原始值。
+- 同一 `sessions` 目录由进程生命周期 `RuntimeLease` 独占，取得 lease 后才允许 rehydrate；第二个活跃 Runtime 立即失败，崩溃后锁由 OS 释放。`sessions/index.json` 使用进程内共享 `RLock` + Windows `msvcrt`/POSIX `flock` 跨进程锁，并以 `fsync + os.replace` 原子更新。审批恢复会对账父/子 Session：任一侧已有合法 decision receipt 时复用并补齐另一侧；均未决才失败关闭为 `runtime_restarted`；冲突事实严格失败。
+- P1c 将单次运行明确为 attempt：`request_id` 只代表一个 attempt，逻辑任务由 `lineage_id` 关联，`attempt_number` 单调递增。`resume` 新建 request/agent/child，不复制旧 child tool-call 事件，不自动重跑旧工具；旧结果只以终态摘要、不可变 Artifact 路径与 SHA-256 作为只读上下文，并要求新 attempt 先检查当前外部状态。
+- `steer` 仅接受 queued/running attempt，并绑定 request/agent/child/lineage/attempt 五重身份；内存队列只服务当前 Runtime，在 `AgentLoop` 下一轮 Provider 调用前的安全边界消费。它不打断正在进行的 Provider 请求，不插入同一工具批次，也不能绕过 Approval Broker。终态、取消、身份不匹配或 Runtime 重启均签发明确回执，历史 accepted steer 不重入队、不串入 resume attempt。
+- P1d 将 `requested_by/decided_by` 升级为版本化 `ActorRef(actor_id, actor_type, display_name)`；历史字符串 actor 在读取时规范化为 `legacy`，新写入使用稳定身份。Resume 增加 `instruction_sha256 + idempotency_key`，幂等域是 `actor_id + idempotency_key`：同语义重试复用原 Handle/Receipt，不同 source 或指令哈希严格冲突，重启后从 RuntimeState 恢复同一事实。
+- P1d `ReadOnlyControlPlane` 只投影 `sessions/_runtime/*.json` 与父/子 Session 审计事实，提供 attempts/lineage/approvals/resumes/steers 查询；默认不暴露 task/instruction 原文。`control` CLI 支持文本和 JSON 输出，可与活跃 Runtime 并行读取且不获取 lease。仓库尚无 IPC 服务，因此 CLI 不提供伪跨进程写控制；Resume/Steer/Approval 写入仍只允许持有 lease 的 Runtime 进程执行。
+- v1 生命周期用 custom 事件记录 `subagent_created/started/completed/failed/cancelled`、`artifact_committed`、`delivery_receipt`、`approval_requested/approval_decided`、`resume_requested/resume_receipt`、`steer_requested/steer_receipt`;父子关系及 attempt lineage 写入 `sessions/index.json.child_of`。Resume/Steer 控制事件支持幂等补写和父子/三方对账，冲突事实严格失败。
+- trace = pi JSONL 树 + OTel `gen_ai.*` 对齐 + custom 事件(screenshot/score/patch/snapshot/subagent lifecycle/artifact/receipt)+ VLM 留痕(reasoning/anchor_ref/actionable_feedback);纯文件,不接 Langfuse。
 - SSE(M0 定 schema,M2 实现):全走 `data-*` parts;双视图(tool-result 给 LLM 文本,data 流给 UI 素材)。
 
 ### 6.5 HITL 基座与预览双线(M0 必备)

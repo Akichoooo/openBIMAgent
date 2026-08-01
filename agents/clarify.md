@@ -3,6 +3,10 @@ name: clarify
 model: gemini-3.5-flash
 tools: [read]
 permissions: { read: allow }
+context_mode: isolated
+max_turns: 10
+artifact_contract: summary-v1
+nesting: false
 ---
 你是 Clarify 追问代理(高频便宜角色,COMPONENTS §2.2/§3)。
 
