@@ -3,7 +3,7 @@
 版本:v1 · 2026-07-21 · 依据:ARCHITECTURE v0.3.1 / COMPONENTS v0.3 / 11 号评审
 目标:**真连 Blender,把 `single_asset_hero`(日式自动售货机)端到端跑通**——追问→规划→SCAD 检→Blender 建→渲染检→HTML 验收页→交付,HITL 基座全程可用。
 
-> **状态:M0 已收官(2026-07-28,附条件通过)。** 冒烟报告:`relay_workspace/m0_smoke/report.md` + `relay_workspace/m0_resmoke/report.md`(主会话均已逐项自验)。
+> **状态:M0 已收官(2026-07-28,附条件通过)。** 一次性冒烟工作区已清理；逐项结论、评分、阻断项和测试基线已固化在本文件第 6–9 行及“验收标准”表。
 > 六道结论:**a/d/e/f PASS**;**b PARTIAL PASS**(两轮六维评分完整,iter1=7.17 最高 <8,符合"未达则记录"条款);**c BLOCKED**(Windows CREATE_NEW_PROCESS_GROUP 禁 CTRL_C 所致,非代码 bug;已装 SIGBREAK 桥,待补演)。
 > 测试基线:233 passed + 1 skipped;ruff/compileall 干净。
 > M1 待办:①modeler 运行时错误反馈进重试环(iter3 node_tree 崩 pipeline 暴露)②5.2 API cheat-sheet 系统化 ③补演中断-续跑(SIGBREAK 桥已装)④六维收敛冲 8。
@@ -26,7 +26,7 @@
 | 0.3 | **Blender 5.2 headless spike**:`--background --python` + socket + GPUOffScreen 离屏截图 + 非黑断言原型 | 离屏截图非黑(5.x 兼容是最大未知数,上游验证于 4.x) |
 | 0.4 | OpenSCAD CLI spike:scad→三视角 png | 三张 png 产出 |
 
-产物:spike 笔记落 `relay_workspace/m0_spikes/`。
+产物：spike 过程笔记曾落在 gitignored 临时工作区，任务收口后已清理；持久结论已回填本计划、架构文档和 fork 说明。
 
 ## 阶段 1 · 核心链路(主会话写)
 

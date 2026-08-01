@@ -17,7 +17,7 @@
 | [ARCHITECTURE.md](architecture/ARCHITECTURE.md) | 设计原则、任务生命周期、Domain Pack、MunicipalRuleSet、compiled utility IR、两个 MCP、Subagent Runtime P1f、HITL 与 Operator Console | v0.8.4 当前有效 |
 | [COMPONENTS.md](architecture/COMPONENTS.md) | 组件总表、core/utility/Rule Set 模块规格、Subagent Runtime/Operator Console、模型配置、上下文管理与安全权限 | v0.8.4 当前有效 |
 | [DECISIONS_DRAFT.md](architecture/DECISIONS_DRAFT.md) | 全局架构决策决议:Domain Pack、12 条 P0、选型表 + 附录 A(v1.1 对齐 V1-V7) | v1.1 当前有效 |
-| [M0_PLAN.md](architecture/M0_PLAN.md) | M0 实施计划:六道验收、阶段 0-4、主会话/GLM/Flash 分工、风险 | v1 待开工 |
+| [M0_PLAN.md](architecture/M0_PLAN.md) | M0 实施计划与收官记录：六道验收、阶段 0-4、主会话/GLM/Flash 分工、风险 | v1 已附条件收官 |
 
 ## 调研(research/)
 
@@ -40,15 +40,13 @@
 | 文档 | 内容 |
 |---|---|
 | [RELAY_WORKFLOW.md](relays/RELAY_WORKFLOW.md) | 角色分工、流程、提示词契约、质量门 |
-| [RESEARCH_PROTOCOL.md](relays/RESEARCH_PROTOCOL.md) | 调研五段式、`relay_workspace/` 约定、报告模板、回执 |
-| [001](relays/001_gemini_research_prompt.md)-[005](relays/005_gemini_agent_ui_prompt.md) | 五条调研战线(已执行完毕,报告过审) |
-| [006](relays/006_gemini_utility_domain_prompt.md) / [007](relays/007_grok_community_intel_prompt.md) | 市政管网领域(Gemini)/ 社区情报(Grok)(已执行完毕,评审见 11) |
-| [008](relays/008_glm_constraints_verify_prompt.md)-[011](relays/011_glm_m0_smoke.md) | M0 实施:constraints 核实 / render_loop 接线 / 装配层 / M0 冒烟(已执行完毕,报告 `relay_workspace/m0_smoke/report.md`) |
-| [012](relays/012_glm_m0_tail_resmoke.md) | M0 收尾:4 项修复验证 + 回归测试 + 中断实演/六维收敛补跑(待执行) |
+| [RESEARCH_PROTOCOL.md](relays/RESEARCH_PROTOCOL.md) | 调研五段式、中间工作区约定、报告模板、回执 |
+
+001–018 的阶段任务均已执行并收口到源码、架构文档和 `docs/research/` 正式报告；对应一次性提示词已于 2026-08-01 清理，必要时可从 Git 历史恢复。
 
 ## 中间产物
 
-接力调研的脚本/日志/原始摘录落 `relay_workspace/<NNN_task_slug>/`(gitignored);只有 `docs/research/` 正式报告入库。约定详见 RESEARCH_PROTOCOL §2。
+接力脚本、日志、克隆源码和原始摘录只在 gitignored 的临时工作区中存在，任务收口后删除；正式结论必须进入 `docs/research/`、架构文档或验收报告。约定详见 RESEARCH_PROTOCOL §2。
 
 ## 维护约定
 
@@ -62,9 +60,10 @@
 - 2026-07-21:调研面放宽——新增 RESEARCH_PROTOCOL + 003/004/005 三条战线;补 GenCAD 审计(04)。
 - 2026-07-21:决议 v1 拍板;ARCHITECTURE/COMPONENTS 改写 v0.2;新增 domain_packs/ 三包 + src/ M0 代码骨架。
 - 2026-07-21:006/007 入库;主会话评审(11);ARCHITECTURE v0.3(评分分层/防放水五件套/HITL 基座/预览双线/模板族/并行路径);DECISIONS 附录 A(v1.1);`domain_packs/_base/` 创作指南;models.toml 同步调研值。
-- 2026-07-22~27:M0 实施(relay 008-011):constraints.yaml 二轮核实(25 条规则);核心链路(session/providers/schema_gate/clarify/loop);blender-mcp fork 八项改造(真实 Blender 10/10);双环(scad_loop/rubric/html_report/VLMCritic);装配层(pipeline/batch_executor/builder/cli);M0 冒烟收官(附条件通过,报告见 `relay_workspace/m0_smoke/report.md`,结论回填 M0_PLAN.md)。测试基线 229 passed。
+- 2026-07-22~27:M0 实施(relay 008-011):constraints.yaml 二轮核实(25 条规则);核心链路(session/providers/schema_gate/clarify/loop);blender-mcp fork 八项改造(真实 Blender 10/10);双环(scad_loop/rubric/html_report/VLMCritic);装配层(pipeline/batch_executor/builder/cli);M0 冒烟附条件收官，最终结论已回填 M0_PLAN.md。测试基线 229 passed。
 - 2026-08-01:Subagent Runtime v1 完成 P1d 只读 Control Plane、P1e loopback Runtime IPC 与 P1f 本地 Operator Console；浏览器读持久化投影、写控制由服务端代理到唯一 Runtime lease owner，IPC token 不进入浏览器。ARCHITECTURE/COMPONENTS 更新至 v0.6。
 - 2026-07-31:市政主线新增 `municipal-straight-gravity-solver v0.1.0`：Solver v0 输出 compiled utility IR v1、坡度/管径/覆土/井距 RuleEvidence，并接入 Domain Gate；碰撞/水力保持 UNKNOWN 阻断。ARCHITECTURE/COMPONENTS 更新至 v0.8。
 - 2026-08-01:市政 Solver 升级至 v0.2.0：版本化 `collision_context` 支持 AABB 与既有直圆管三维实体净距，完整上下文将 `clash_free` 产出为可审计 PASS/FAIL；上下文缺失仍 UNKNOWN。ARCHITECTURE/COMPONENTS 更新至 v0.8.2。
 - 2026-08-01:市政 Solver 升级至 v0.3.0：新增 `MunicipalRuleSet v1.0`，从 Domain Pack 受信任 `constraints.yaml` 编译净距规则；Solver 输入移除调用方 `ClearanceRule`。仅高置信建筑物 2.5m 规则可生产 PASS/FAIL，中置信给水/燃气/电力/通信规则失败关闭为 UNKNOWN。ARCHITECTURE/COMPONENTS 更新至 v0.8.3。
 - 2026-08-01:市政 Solver 升级至 v0.4.0 / Input v0.4、`MunicipalRuleSet v1.1` / compiler v0.2.0：核验 `GB 50289-2016` 第 4.1.9 条/表 4.1.9 的政府公开扫描副本并用第二 PDF 版面交叉复核，新增结构化 `RuleVerification` 与不可绕过 production 晋级门禁；纠正通信和燃气旧值，编译建筑物/给水/燃气/电力/通信共 12 条 production 规则。净距算法修正为 XY 平面实体表面水平距离，Evidence 可回溯规范副本 SHA-256 和原表定位；安全措施减距仍失败关闭。ARCHITECTURE/COMPONENTS 更新至 v0.8.4。
+- 2026-08-01:完成文档分层清理：Subagent Runtime P0–P1f 的 8 份阶段报告合并为 `outputs/Subagent Runtime v1完整实施与验收报告.md`；删除已执行的 relay 001–018 一次性提示词和临时工作区，保留接力工作流、调研协议、正式研究、架构决策及规范核验证据。

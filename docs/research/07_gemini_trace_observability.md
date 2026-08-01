@@ -104,7 +104,7 @@ VLM-as-judge 不稳定，`temperature=0` 不足以防飘。我们 Critic 评分�
 *架构影响*：完善 `ARCHITECTURE.md` §6 trace 评测导出。
 
 ## 入库检查单
-- [x] 产出 `relay_workspace/004_trace/notes.md`
+- [x] 调研中间笔记已完成并在正式报告入库后清理
 - [x] 产出 `docs/research/07_gemini_trace_observability.md`
 - [x] 覆盖了 OTel 映射、Langfuse/AgentOps 对比、Pi Session 拆解、评测格式与 VLM 留痕五大目标。
 - [ ] 等待主会话评审并更新 Wiki。建议下一步：开发 `session.py` 实现基于 JSONL 的读写与分支操作。

@@ -145,7 +145,7 @@
 
 ## 入库检查单
 
-- [x] 产出文件：`relay_workspace/003_3d_cad/notes.md` (调研中间产物)
+- [x] 调研中间笔记已完成并在正式报告入库后清理
 - [x] 产出文件：`docs/research/06_gemini_3d_cad_ecosystem.md` (本正式报告)
 - [ ] 未完成项：无。所有要求的必查项目及专题均已覆盖并评估价值与传染性。
 - [ ] 建议下一步：主会话审阅本报告，并将基于预置 Geometry Nodes 实现破损、Infinigen 材质提取等动作写入后续的实现 TODO 中。用户回复「NNN 完成」即可。

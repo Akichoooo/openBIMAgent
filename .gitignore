@@ -5,6 +5,8 @@ relay_workspace/
 __pycache__/
 *.pyc
 .venv/
+.pytest_cache/
+.pytest-*/
 
 # 环境
 .env

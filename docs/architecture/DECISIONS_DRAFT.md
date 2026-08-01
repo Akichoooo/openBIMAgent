@@ -153,4 +153,4 @@ domain_packs/
 7. constraints.yaml 值类型契约(008 入库):value ∈ {scalar, range-string, ordered_list, table(list of dict)};domain_gate 按 category 配类型化求值器,M1.5 实现时照此。
 8. SCAD 环消费的是「编译 IR」(solver 出坐标后,assets 带 primitive/size/position),与 planner 产出的「语义 IR」(C2 禁坐标)严格区分;补 `scad_scene_ir.schema.json` 列入阶段 3b。
 9. agentrouter 实测(2026-07-22):按 User-Agent 过滤客户端,必须带 `claude-cli/x.x.x` UA 否则 401「unauthorized client detected」;glm-5.2 在该通道是 reasoning 模型(content 可能为空、reasoning_tokens 计费),方言层需兼容 reasoning_content。
-10. gpt-5.5 vision 复测(2026-07-22):1×1 红点答错为退化输入;真实 512² 渲染图(立方体+光照)两个模型均准确描述(物体/颜色/光照方向)——critic 通道维持 gpt-5.5,opus-4-8 备选。vision_retest.json 存 relay_workspace/m0_spikes/。
+10. gpt-5.5 vision 复测(2026-07-22):1×1 红点答错为退化输入;真实 512² 渲染图(立方体+光照)两个模型均准确描述(物体/颜色/光照方向)——critic 通道维持 gpt-5.5,opus-4-8 备选。vision_retest.json 曾存于 gitignored 临时工作区，复测结论已固化于本条，临时文件已清理。

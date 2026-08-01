@@ -50,7 +50,7 @@ mcp_servers/blender_mcp/
 ```bash
 # 起 headless Blender 服务(测试用 9887 端口,正式默认 9876)
 "D:/devloop/blender/blender.exe" --background --factory-startup --python mcp_servers/blender_mcp/addon.py
-# 验收(自动起 Blender、跑 T1–T10、写 relay_workspace/m0_spikes/fork_test_report.md)
+# 验收（自动起 Blender、跑 T1–T10；历史临时报告已清理，结论见本文件“状态”）
 uv run python mcp_servers/blender_mcp/tests/run_fork_tests.py
 # 无需 Blender 的两项快检
 uv run python mcp_servers/blender_mcp/tests/test_telemetry_off.py
@@ -76,6 +76,6 @@ uv run python mcp_servers/blender_mcp/tests/smoke_server_import.py
 
 - [x] fork 落仓 + vendor 基线(M0)
 - [x] 八项改造 a–h(M0,逐项落点见上表)
-- [x] 脚本化验收:`relay_workspace/m0_spikes/fork_test_report.md`(结果见该文件;纯 Python 校验 18+9 项全过)
+- [x] 脚本化验收完成：纯 Python 校验 18+9 项全过；一次性临时报告已在结果固化后清理
 - [ ] 预置材质库 / Damage GeoNodes 挂载(M1)
 - [ ] MCP stdio 端对端(经真实 MCP client 握手)联调(M1,随 Agent Core 接入)

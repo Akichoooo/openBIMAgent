@@ -122,7 +122,7 @@ openBIMForge 的前端之所以崩溃，是因为其自定义 SSE 事件与 Verc
   3. **生态现成**: `ai-elements` 弥补了复杂的交互态（如 AI 思考流、工具加载状态），减少 60% 的基础搬砖量，且风格统一。
 
 ### 入库检查单
-- [x] 产出 `relay_workspace/005_agent_ui/notes.md` 笔记
+- [x] 调研中间笔记已完成并在正式报告入库后清理
 - [x] 产出 `docs/research/08_gemini_agent_ui_protocols.md` 正式报告
 - [x] 回答 SSE Schema 设计
 - [x] 回答工具双视图落实

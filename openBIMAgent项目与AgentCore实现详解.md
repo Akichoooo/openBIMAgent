@@ -1,7 +1,7 @@
 # openBIMAgent 项目与 Agent Core 实现详解
 
 > 更新日期：2026-08-01
-> 当前判断：**M0 已附条件收官；M1 模块级能力已大体实现并完成首轮产品级接线；Subagent Runtime v1 已推进至 P1f 本地 Operator Console；M1.5 已落地 compiled utility IR v1 和市政 Solver v0 最小切片，但完整规则执行器、真实 BIM 构件生成和端到端交付仍未完成。**
+> 当前判断：**M0 已附条件收官；Subagent Runtime v1 已完成到 P1f，接近本地产品级；MunicipalRuleSet v1.1 与市政 Solver v0.4 已形成可审计工程 Alpha 切片；生产级 VectorworksBuilder、IFC/IDS 和真实双宿主端到端交付仍未完成。整体处于工程 Alpha / 受控内测前期。**
 
 ## 1. 项目是什么
 
@@ -56,7 +56,7 @@
 | `mcp_servers/vectorworks_mcp/` | Vectorworks MCP、文件 IPC runner、API 索引与门禁 |
 | `tests/` | 离线单测、集成测试与契约测试 |
 | `docs/` | 架构、决策、运行与研究材料 |
-| `relay_workspace/` | 历史并行研发任务、报告和验证产物 |
+| `outputs/` | 当前有效的专题设计、实施与验收报告；Runtime P0–P1f 已合并为一份总报告 |
 
 ## 3. Agent Core 已实现什么
 
@@ -519,7 +519,7 @@ P1c 针对性 ruff / compileall / git diff --check：通过
 
 全仓 `ruff check .` 仍报告 41 项历史问题，全部位于 `mcp_servers/blender_mcp` 的 fork/vendor 文件；P1c 修改范围的 ruff 为全绿，本阶段未批量改写上游 vendor 代码。
 
-P1e 单机 Runtime IPC 的最终验收结果：P1e + CLI + Schema Gate + Runtime 专项 `75 passed`，Vectorworks 文件 IPC 原子归档专项 `8 passed`，全仓 `420 passed, 3 skipped, 1 warning`；Ruff、56 个 Python 文件 AST 语法解析和 `git diff --check` 通过。3 个 skip 为显式真实 Blender 1 项和 freetokenfaucet 2 项；本轮环境没有真实模型 key，因此没有把跳过冒充在线通过。完整证据见 `outputs/Subagent Runtime v1 P1e单机IPC实施与验收报告.md`。
+Runtime P0–P1f 的阶段协议、测试演进和最终边界已合并到 `outputs/Subagent Runtime v1完整实施与验收报告.md`。P1e 当时的验收结果为：P1e + CLI + Schema Gate + Runtime 专项 `75 passed`，Vectorworks 文件 IPC 原子归档专项 `8 passed`，全仓 `420 passed, 3 skipped, 1 warning`；P1f 收口时全仓为 `427 passed, 3 skipped, 1 warning`。这些数字是阶段审计记录，当前基线以最新全仓回归为准。
 
 ## 10. 实现状态矩阵
 

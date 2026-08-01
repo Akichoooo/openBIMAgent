@@ -21,7 +21,8 @@ M1 持续实现中。已具备确定性 Pipeline、Blender/Vectorworks MCP 客�
 - `docs/architecture/ARCHITECTURE.md` — 总体架构(先读这个)
 - `docs/architecture/COMPONENTS.md` — 组件/agent/模型配置/上下文管理详设
 - `docs/research/` — 调研报告(openBIMForge 审计、开源对标、GenCAD 盘点、Gemini 接力产出)
-- `docs/relays/` — 接力工作流 + 待执行的 GLM/Gemini 提示词
+- `docs/relays/` — 接力工作流与调研协议；已执行任务提示词已清理，可由 Git 历史恢复
+- `outputs/Subagent Runtime v1完整实施与验收报告.md` — Runtime P0–P1f 合并实施与验收报告
 
 ## 快速开始
 

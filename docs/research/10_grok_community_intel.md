@@ -3,7 +3,7 @@
 **调研范围**：X/Twitter、Reddit、Blender Artists、Vectorworks 官方论坛、GitHub Issues/PR、学术/从业社区文章、中文 BIM 实务讨论  
 **调研日期**：2026-07-21  
 **角色**：只读联网社区情报子代理（Grok 4.5）  
-**提示词**：`docs/relays/007_grok_community_intel_prompt.md`
+**任务来源**：Relay 007（一次性提示词已在正式报告入库后清理，可由 Git 历史恢复）
 
 ---
 

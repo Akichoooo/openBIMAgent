@@ -132,8 +132,7 @@
 ### 产出文件清单
 - [x] `domain_packs/municipal_utility/knowledge/constraints.yaml` — 改写后 25 条规则(YAML 已通过 `yaml.safe_load` 解析校验)
 - [x] `docs/research/12_glm_constraints_verify.md` — 本核实报告
-- [x] `relay_workspace/008_constraints/raw/citations.md` — 规范原文逐条摘录(中间产物,不进 git)
-- [x] `relay_workspace/008_constraints/notes.md` — 过程笔记(中间产物,不进 git)
+- [x] 规范原文逐条摘录与过程笔记已完成，并在规则与正式报告入库后清理（未进入 Git）
 
 ### 规则统计
 - 总规则数:25 条(任务要求 15-25,达标)
