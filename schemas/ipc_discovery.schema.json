@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/ipc_discovery.schema.json",
+  "title": "RuntimeIpcDiscoveryV1",
+  "type": "object",
+  "required": ["protocol_version", "runtime_instance_id", "host", "port", "token_sha256", "pid", "started_at"],
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": {"type": "string", "pattern": "^1(?:\\.\\d+)?$"},
+    "runtime_instance_id": {"type": "string", "minLength": 1},
+    "host": {"const": "127.0.0.1"},
+    "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+    "token_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "pid": {"type": "integer", "minimum": 1},
+    "started_at": {"type": "string", "format": "date-time"}
+  }
+}

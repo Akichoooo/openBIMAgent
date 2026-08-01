@@ -163,10 +163,11 @@ def test_job_file_cleanup(tmp_path: Path) -> None:
     client.send_command("execute_code", {"code": "1+1"})
     t.join(timeout=1.0)
 
-    # job 文件应已清理
+    # 活跃目录应清空；已消费 job/result 原子移入 _archive，保留审计事实。
     assert not list(jobs_dir.glob("*.json"))
-    # result 文件也应已清理(客户端读后删除)
     assert not list(results_dir.glob("*.json"))
+    assert len(list((jobs_dir / "_archive").glob("*.json"))) == 1
+    assert len(list((results_dir / "_archive").glob("*.json"))) == 1
 
 
 def test_concurrent_jobs(tmp_path: Path) -> None:
@@ -274,7 +275,7 @@ def test_running_marker_cleanup(tmp_path: Path) -> None:
 
     runner.poll_jobs_once(jobs_dir, results_dir)
 
-    # .running 标记应被清理
+    # .running 标记应从活跃目录移入归档，成功结果仍等待客户端消费。
     assert not list(results_dir.glob("*.running"))
-    # 成功结果存在
+    assert len(list((results_dir / "_archive").glob("*.running"))) == 1
     assert len(list(results_dir.glob("*.json"))) == 1

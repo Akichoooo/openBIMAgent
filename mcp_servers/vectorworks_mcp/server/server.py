@@ -63,6 +63,19 @@ DEFAULT_TOOLSET = os.getenv("VW_TOOLSET", "minimal")
 ApprovalFn = Callable[[str, str], bool]
 
 
+def _archive_active_file(path: Path) -> Path | None:
+    """将已消费文件原子移出活跃目录；避免删除失败影响 IPC，同时保留审计事实。"""
+    if not path.exists():
+        return None
+    archive_dir = path.parent / "_archive"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    target = archive_dir / path.name
+    if target.exists():
+        target = archive_dir / f"{path.stem}.{uuid.uuid4().hex}{path.suffix}"
+    os.replace(path, target)
+    return target
+
+
 class FileIPCClient:
     """文件 IPC 客户端:写 jobs/<job_id>.json,轮询 results/<job_id>.json/.failed。
 
@@ -400,25 +413,29 @@ class FileIPCClient:
             f"handoff={gate_result['handoff'][:40]})"
         )
 
-        # 轮询结果
+        # 轮询结果。结果文件可能刚变为可见但尚未完整写入；JSONDecodeError 时继续短轮询。
         start_time = time.time()
         while time.time() - start_time < self.timeout:
             if result_path.exists():
-                result = json.loads(result_path.read_text(encoding="utf-8"))
-                result_path.unlink(missing_ok=True)
-                job_path.unlink(missing_ok=True)
+                try:
+                    result = json.loads(result_path.read_text(encoding="utf-8"))
+                except json.JSONDecodeError:
+                    time.sleep(self.poll_interval)
+                    continue
+                _archive_active_file(result_path)
+                _archive_active_file(job_path)
                 return result
 
             if failed_path.exists():
                 error = failed_path.read_text(encoding="utf-8")
-                failed_path.unlink(missing_ok=True)
-                job_path.unlink(missing_ok=True)
+                _archive_active_file(failed_path)
+                _archive_active_file(job_path)
                 raise RuntimeError(f"Command failed: {error}")
 
             time.sleep(self.poll_interval)
 
-        # 超时:清理 job 文件
-        job_path.unlink(missing_ok=True)
+        # 超时:从活跃队列原子移入归档，避免删除策略干扰业务语义。
+        _archive_active_file(job_path)
         raise TimeoutError(f"Command timed out after {self.timeout}s (command={command})")
 
 

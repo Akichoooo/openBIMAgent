@@ -12,6 +12,7 @@ from __future__ import annotations
 import io
 import json
 import math
+import os
 import sys
 import time
 import traceback
@@ -122,6 +123,19 @@ def execute_command(command: str, params: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"Unknown command: {command}")
 
 
+def _archive_active_file(path: Path) -> Path | None:
+    """将已消费文件原子移出活跃目录，保留可审计记录且不依赖 unlink。"""
+    if not path.exists():
+        return None
+    archive_dir = path.parent / "_archive"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    target = archive_dir / path.name
+    if target.exists():
+        target = archive_dir / f"{path.stem}.{time.time_ns()}{path.suffix}"
+    os.replace(path, target)
+    return target
+
+
 def poll_jobs_once(jobs_dir: Path, results_dir: Path) -> list[str]:
     """处理一轮 job(测试友好:不死循环,处理完当前所有 job 即返回)。
 
@@ -157,8 +171,8 @@ def poll_jobs_once(jobs_dir: Path, results_dir: Path) -> list[str]:
         except Exception as e:
             failed_path.write_text(str(e), encoding="utf-8")
         finally:
-            job_path.unlink(missing_ok=True)
-            running_path.unlink(missing_ok=True)
+            _archive_active_file(job_path)
+            _archive_active_file(running_path)
             processed.append(job_id)
 
     return processed

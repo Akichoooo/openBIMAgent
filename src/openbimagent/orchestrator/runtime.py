@@ -56,6 +56,7 @@ from openbimagent.session.store import SessionStore
 
 if TYPE_CHECKING:
     from openbimagent.core.loop import ApprovalCallback, ChatFn
+    from openbimagent.orchestrator.ipc import IpcDiscovery, RuntimeIpcServer
 
 AGENTS_DIR = Path(__file__).resolve().parents[3] / "agents"
 MAX_FORK_CONTEXT_CHARS = 50_000
@@ -129,6 +130,8 @@ class LocalSubagentRuntime:
         workdir: Path | None = None,
         max_background_workers: int = MAX_BACKGROUND_SUBAGENTS,
         rehydrate: bool = True,
+        enable_ipc: bool = False,
+        ipc_timeout_s: float = 5.0,
     ) -> None:
         if not 1 <= max_background_workers <= MAX_BACKGROUND_SUBAGENTS:
             raise ValueError(f"max_background_workers 必须在 1..{MAX_BACKGROUND_SUBAGENTS}")
@@ -151,6 +154,7 @@ class LocalSubagentRuntime:
         self._background: dict[str, _BackgroundRun] = {}
         self._background_lock = threading.RLock()
         self._cancel_local = threading.local()
+        self._ipc_server: RuntimeIpcServer | None = None
         try:
             self._executor = ThreadPoolExecutor(
                 max_workers=max_background_workers,
@@ -158,6 +162,8 @@ class LocalSubagentRuntime:
             )
             if rehydrate:
                 self._rehydrate()
+            if enable_ipc:
+                self.start_ipc(timeout_s=ipc_timeout_s)
         except Exception:
             if self._executor is not None:
                 self._executor.shutdown(wait=False, cancel_futures=True)
@@ -370,8 +376,28 @@ class LocalSubagentRuntime:
             raise TimeoutError(f"等待子代理超时: request_id={request_id}") from exc
         return result
 
+    def start_ipc(self, *, timeout_s: float = 5.0) -> IpcDiscovery:
+        """启动绑定当前 lease owner 的 loopback-only IPC 写控制服务。"""
+        from openbimagent.orchestrator.ipc import RuntimeIpcServer
+
+        with self._shutdown_lock:
+            if self._executor is None:
+                raise SubagentRuntimeError("Runtime 已关闭，不能启动 IPC")
+            if self._ipc_server is None:
+                self._ipc_server = RuntimeIpcServer(self, timeout_s=timeout_s)
+            return self._ipc_server.start()
+
+    def stop_ipc(self) -> None:
+        """停止 IPC 并移除 discovery/token 文件；可重复调用。"""
+        with self._shutdown_lock:
+            service = self._ipc_server
+            self._ipc_server = None
+        if service is not None:
+            service.stop()
+
     def shutdown(self, *, wait: bool = True, cancel_pending: bool = False) -> None:
-        """释放后台线程池和 Runtime lease；可重复调用。"""
+        """释放 IPC、后台线程池和 Runtime lease；可重复调用。"""
+        self.stop_ipc()
         with self._shutdown_lock:
             executor = self._executor
             if executor is None:

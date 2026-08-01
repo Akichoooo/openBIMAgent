@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/ipc_response.schema.json",
+  "title": "RuntimeIpcResponseV1",
+  "type": "object",
+  "required": ["protocol_version", "message_id", "ok", "result", "error_code", "error_message"],
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": {"type": "string", "pattern": "^1(?:\\.\\d+)?$"},
+    "message_id": {"type": "string", "minLength": 1},
+    "ok": {"type": "boolean"},
+    "result": {"type": ["object", "null"]},
+    "error_code": {"type": ["string", "null"]},
+    "error_message": {"type": ["string", "null"]}
+  }
+}

@@ -22,9 +22,9 @@ INVALID_PLAN = {
 
 
 def test_loads_all_schemas() -> None:
-    """schemas/ 目录 15 个 JSON Schema 全部加载，包含 P1d actor/control 契约。"""
+    """schemas/ 目录 18 个 JSON Schema 全部加载，包含 P1e IPC 契约。"""
     names = gate.SchemaGate().schema_names()
-    assert len(names) == 15
+    assert len(names) == 18
     assert "plan.schema.json" in names
     assert "scad_scene_ir.schema.json" in names  # 阶段3b 新增:SCAD 环编译 IR
     assert "subagent_request.schema.json" in names
@@ -37,6 +37,9 @@ def test_loads_all_schemas() -> None:
     assert "resume_receipt.schema.json" in names
     assert "steer_directive.schema.json" in names
     assert "steer_receipt.schema.json" in names
+    assert "ipc_request.schema.json" in names
+    assert "ipc_response.schema.json" in names
+    assert "ipc_discovery.schema.json" in names
 
 
 def test_valid_plan_passes() -> None:

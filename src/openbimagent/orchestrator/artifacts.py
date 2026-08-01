@@ -118,6 +118,7 @@ def _atomic_create(path: Path, content: bytes) -> None:
     if path.exists():
         raise ImmutableArtifactError(f"不可变工件已存在，拒绝覆盖: {path}")
     temp = path.with_name(f".{path.name}.{uuid7()}.tmp")
+    published = False
     try:
         with temp.open("xb") as handle:
             handle.write(content)
@@ -125,13 +126,20 @@ def _atomic_create(path: Path, content: bytes) -> None:
             os.fsync(handle.fileno())
         try:
             os.link(temp, path)
+            published = True
         except FileExistsError as exc:
             raise ImmutableArtifactError(f"不可变工件已存在，拒绝覆盖: {path}") from exc
         except OSError as exc:
             raise ImmutableArtifactError(f"不可变工件原子发布失败: {path}: {exc}") from exc
     finally:
         if temp.exists():
-            temp.unlink()
+            try:
+                temp.unlink()
+            except OSError:
+                # 目标已通过 hard-link 原子发布后，Windows 沙箱/安全软件可能暂时拒绝清理临时链接。
+                # 清理失败不能把已经成功、可校验的不可变工件改判为提交失败。
+                if not published:
+                    raise
 
 
 __all__ = ["ArtifactStore", "ImmutableArtifactError"]

@@ -22,6 +22,7 @@ import argparse
 import atexit
 import json
 import os
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -72,6 +73,10 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_export(args)
     if args.cmd == "control":
         return _cmd_control(args)
+    if args.cmd == "control-write":
+        return _cmd_control_write(args)
+    if args.cmd == "runtime-serve":
+        return _cmd_runtime_serve(args)
     parser.print_help()
     return 2
 
@@ -126,6 +131,37 @@ def _build_parser() -> argparse.ArgumentParser:
     control_p.add_argument("--request-id", default=None, help="approvals/steers 按 request_id 过滤")
     control_p.add_argument("--pending-only", action="store_true", help="approvals 只显示未决请求")
     control_p.add_argument("--json", action="store_true", dest="as_json", help="输出 JSON 数组/对象")
+
+    write_p = sub.add_parser("control-write", help="通过活跃 Runtime IPC 执行受控写操作")
+    write_p.add_argument(
+        "operation",
+        choices=["ping", "approve", "reject", "resume", "steer", "cancel"],
+        help="写控制操作",
+    )
+    write_p.add_argument("resource_id", nargs="?", default=None, help="approval_id 或 attempt request_id")
+    write_p.add_argument("--sessions-dir", default=DEFAULT_SESSIONS_DIR, type=Path)
+    write_p.add_argument("--actor-id", required=True, help="稳定 ActorRef actor_id")
+    write_p.add_argument(
+        "--actor-type",
+        choices=["human", "agent", "service"],
+        default="human",
+        help="调用方 actor 类型",
+    )
+    write_p.add_argument("--display-name", default=None, help="可选显示名称，不参与授权身份")
+    write_p.add_argument("--idempotency-key", required=True, help="调用方生成的稳定幂等键")
+    write_p.add_argument("--instruction", default=None, help="resume/steer 指令")
+    write_p.add_argument("--reason", default="", help="approve/reject 决策理由")
+    write_p.add_argument("--timeout", type=float, default=5.0, help="IPC 连接和响应超时秒数")
+    write_p.add_argument("--json", action="store_true", dest="as_json", help="输出 JSON 对象")
+
+    serve_p = sub.add_parser("runtime-serve", help="前台运行持有 lease 的单机 Runtime IPC 服务")
+    serve_p.add_argument("--sessions-dir", default=DEFAULT_SESSIONS_DIR, type=Path)
+    serve_p.add_argument("--artifacts-dir", default=DEFAULT_OUT / "subagents", type=Path)
+    serve_p.add_argument("--agents-dir", default=None, type=Path, help="受信任 agents 目录")
+    serve_p.add_argument("--workdir", default=Path.cwd(), type=Path)
+    serve_p.add_argument("--profile", default=None, help="child AgentLoop 使用的 providers profile")
+    serve_p.add_argument("--approval-timeout", type=float, default=300.0)
+    serve_p.add_argument("--ipc-timeout", type=float, default=5.0)
 
     return parser
 
@@ -475,6 +511,98 @@ def _control_payload(value: Any) -> Any:
     if isinstance(value, tuple):
         return [item.model_dump(mode="json") for item in value]
     return value.model_dump(mode="json")
+
+
+def _cmd_control_write(args: argparse.Namespace) -> int:
+    """经 loopback IPC 向当前 Runtime lease owner 提交写控制。"""
+    from openbimagent.orchestrator.actor import ActorRef, ActorType
+    from openbimagent.orchestrator.ipc import IpcError, RuntimeIpcClient
+
+    try:
+        actor = ActorRef(
+            actor_id=args.actor_id,
+            actor_type=ActorType(args.actor_type),
+            display_name=args.display_name,
+        )
+        operation_map = {
+            "ping": "ping",
+            "approve": "approval.decide",
+            "reject": "approval.decide",
+            "resume": "attempt.resume",
+            "steer": "attempt.steer",
+            "cancel": "attempt.cancel",
+        }
+        if args.operation != "ping" and not args.resource_id:
+            raise IpcError(f"control-write {args.operation} 需要 resource_id")
+        if args.operation in {"resume", "steer"} and not (args.instruction or "").strip():
+            raise IpcError(f"control-write {args.operation} 需要 --instruction")
+        payload: dict[str, Any]
+        if args.operation in {"approve", "reject"}:
+            payload = {
+                "approval_id": args.resource_id,
+                "approved": args.operation == "approve",
+                "reason": args.reason,
+            }
+        elif args.operation == "resume":
+            payload = {"source_request_id": args.resource_id, "instruction": args.instruction}
+        elif args.operation == "steer":
+            payload = {"request_id": args.resource_id, "instruction": args.instruction}
+        elif args.operation == "cancel":
+            payload = {"request_id": args.resource_id}
+        else:
+            payload = {}
+        result = RuntimeIpcClient(args.sessions_dir, timeout_s=args.timeout).call(
+            operation_map[args.operation],
+            actor=actor,
+            idempotency_key=args.idempotency_key,
+            payload=payload,
+        )
+    except (IpcError, ValueError) as exc:
+        print(f"[control-write error] {exc}")
+        return 1
+    if args.as_json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
+    return 0
+
+
+def _cmd_runtime_serve(args: argparse.Namespace) -> int:
+    """前台运行唯一 lease owner；Ctrl+C 后有序停止 IPC 与后台线程池。"""
+    from openbimagent.orchestrator.runtime import AGENTS_DIR, LocalSubagentRuntime
+
+    registry = _load_registry(args.profile)
+    chat_fn = registry.chat if registry is not None else None
+    runtime = None
+    try:
+        runtime = LocalSubagentRuntime(
+            sessions_dir=args.sessions_dir,
+            artifacts_dir=args.artifacts_dir,
+            agents_dir=args.agents_dir or AGENTS_DIR,
+            chat_fn=chat_fn,
+            approval_timeout_s=args.approval_timeout,
+            workdir=args.workdir,
+            enable_ipc=True,
+            ipc_timeout_s=args.ipc_timeout,
+        )
+        discovery = runtime.start_ipc()
+        print(
+            "[runtime] IPC ready "
+            f"instance={discovery.runtime_instance_id} endpoint={discovery.host}:{discovery.port} "
+            f"sessions={Path(args.sessions_dir).resolve()}"
+        )
+        stop = threading.Event()
+        while not stop.wait(0.5):
+            pass
+    except KeyboardInterrupt:
+        print("\n[runtime] stopping")
+    except Exception as exc:
+        print(f"[runtime error] {exc}")
+        return 1
+    finally:
+        if runtime is not None:
+            runtime.shutdown(wait=True, cancel_pending=False)
+    return 0
 
 
 def _open_session(sessions_dir: Path, session_id: str) -> SessionStore | None:

@@ -1,6 +1,6 @@
 # openBIMAgent 组件与运行配置详设
 
-版本:v0.4(P1d Actor/Resume 幂等/只读 Control Plane)· 2026-08-01 · 姊妹篇:[ARCHITECTURE.md](ARCHITECTURE.md)
+版本:v0.5(P1e Runtime IPC 写控制)· 2026-08-01 · 姊妹篇:[ARCHITECTURE.md](ARCHITECTURE.md)
 
 本文档回答四个问题:**每个组件干什么、每个 agent 怎么配、多厂家模型怎么统管、上下文怎么扛住。**
 
@@ -62,7 +62,8 @@
 - **P1c Resume/Steer**：`control.py` 定义 `ResumeRequest/ResumeReceipt/SteerDirective/SteerReceipt`。每次 `resume` 创建新 `request_id/agent_id/child_session_id`，共享 `lineage_id` 并递增 `attempt_number`；旧 Artifact 只按路径和 SHA-256 引用，任务前缀禁止假设或重放旧副作用。`steer` 同时绑定 request/agent/child/lineage/attempt，只在 `AgentLoop` 下一轮 Provider 调用前消费，不插入 Provider 请求或同一工具批次中间；取消、终态、身份不匹配或 Runtime 重启签发失败回执，历史 accepted 指令不重新入队。
 - **P1c 恢复与审计**：RuntimeState 持久化 resume request/receipt 并在重启时幂等补齐父、source child、new child 三方事件；steer 请求/回执对账父子 Session，单边缺失自动补齐、冲突事实严格失败。遗留非终态 attempt 仍按 P1b-A 失败关闭，绝不自动重新提交模型或工具。
 - **P1d Actor 与 Resume 幂等**：`actor.py` 定义版本化 `ActorRef`；Approval、Resume、Steer 新事实使用稳定 `actor_id/actor_type`，历史字符串兼容读取为 `legacy`。Resume 强制调用方 `idempotency_key` 和 `instruction_sha256`；相同 actor/key/语义返回原 Handle/Receipt，不同语义失败，RuntimeState 使重启后仍可复用。
-- **P1d Control Plane**：`control_plane.py` 从 RuntimeState 和父/子 Session 构建只读投影，查询 attempts、lineage、approvals、resumes、steers，去重重复事实并对冲突/损坏失败关闭；默认视图不返回 task/instruction 原文。CLI `control` 子命令支持文本/JSON。查询不获取 Runtime lease；无 IPC 服务前不提供跨进程写控制。
+- **P1d Control Plane**：`control_plane.py` 从 RuntimeState 和父/子 Session 构建只读投影，查询 attempts、lineage、approvals、resumes、steers，去重重复事实并对冲突/损坏失败关闭；默认视图不返回 task/instruction 原文。CLI `control` 子命令支持文本/JSON，查询不获取 Runtime lease。
+- **P1e Runtime IPC**：`ipc.py` 定义版本化 `IpcRequest/IpcResponse/IpcDiscovery`，以及 loopback-only `RuntimeIpcServer/RuntimeIpcClient`。`runtime-serve` 持有 Runtime lease 并启动 IPC，`control-write` 只经 discovery/token 调用该实例。服务路由 `approval.decide/attempt.resume/attempt.steer/attempt.cancel`，按稳定 ActorRef 与调用方幂等键拒绝重放冲突；协议限制消息大小、socket 超时和 payload 白名单，认证错误不回显输入或 token。
 - `AgentLoop.subagent` 支持 `dispatch/status/cancel/join/resume/steer`;resume 必须带稳定 `idempotency_key`；dispatch 对模型只暴露 `role/task/context_mode/execution_mode/artifact_contract`,所有 child AgentLoop 都移除 `subagent` 工具以维持禁嵌套。
 
 ### 2.5 vision(双环自检 + 评分分层)

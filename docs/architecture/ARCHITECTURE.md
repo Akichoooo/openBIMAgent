@@ -1,6 +1,6 @@
 # openBIMAgent 总体架构
 
-版本:v0.4.0(Subagent Runtime v1 P1d 控制面收口)· 2026-08-01
+版本:v0.5.0(Subagent Runtime v1 P1e 单机 IPC)· 2026-08-01
 依据:`docs/research/01-11` 全部调研与评审 · 决议:`docs/architecture/DECISIONS_DRAFT.md`
 姊妹篇:[COMPONENTS.md](COMPONENTS.md)(组件/agent/模型配置/上下文管理详设)
 
@@ -146,7 +146,8 @@ domain_packs/<name>/
 - P1c 将单次运行明确为 attempt：`request_id` 只代表一个 attempt，逻辑任务由 `lineage_id` 关联，`attempt_number` 单调递增。`resume` 新建 request/agent/child，不复制旧 child tool-call 事件，不自动重跑旧工具；旧结果只以终态摘要、不可变 Artifact 路径与 SHA-256 作为只读上下文，并要求新 attempt 先检查当前外部状态。
 - `steer` 仅接受 queued/running attempt，并绑定 request/agent/child/lineage/attempt 五重身份；内存队列只服务当前 Runtime，在 `AgentLoop` 下一轮 Provider 调用前的安全边界消费。它不打断正在进行的 Provider 请求，不插入同一工具批次，也不能绕过 Approval Broker。终态、取消、身份不匹配或 Runtime 重启均签发明确回执，历史 accepted steer 不重入队、不串入 resume attempt。
 - P1d 将 `requested_by/decided_by` 升级为版本化 `ActorRef(actor_id, actor_type, display_name)`；历史字符串 actor 在读取时规范化为 `legacy`，新写入使用稳定身份。Resume 增加 `instruction_sha256 + idempotency_key`，幂等域是 `actor_id + idempotency_key`：同语义重试复用原 Handle/Receipt，不同 source 或指令哈希严格冲突，重启后从 RuntimeState 恢复同一事实。
-- P1d `ReadOnlyControlPlane` 只投影 `sessions/_runtime/*.json` 与父/子 Session 审计事实，提供 attempts/lineage/approvals/resumes/steers 查询；默认不暴露 task/instruction 原文。`control` CLI 支持文本和 JSON 输出，可与活跃 Runtime 并行读取且不获取 lease。仓库尚无 IPC 服务，因此 CLI 不提供伪跨进程写控制；Resume/Steer/Approval 写入仍只允许持有 lease 的 Runtime 进程执行。
+- P1d `ReadOnlyControlPlane` 只投影 `sessions/_runtime/*.json` 与父/子 Session 审计事实，提供 attempts/lineage/approvals/resumes/steers 查询；默认不暴露 task/instruction 原文。`control` CLI 支持文本和 JSON 输出，可与活跃 Runtime 并行读取且不获取 lease。
+- P1e 增加 `RuntimeIpcServer/RuntimeIpcClient` 和 `runtime-serve/control-write` CLI。服务绑定唯一 Runtime lease owner，仅监听 `127.0.0.1`，使用 `sessions/_runtime/control-ipc.json` discovery 与独立 token 文件；请求/响应为版本化单行 JSON，消息大小、超时、ActorType、payload 字段和 message_id 均严格校验。Approval/Resume/Steer/Cancel 由服务路由到内存 Runtime，客户端不能自行重建 Runtime；IPC 写操作按 `actor_id + idempotency_key` 幂等，冲突失败，bearer token 不进入 Session/RuntimeState/日志。
 - v1 生命周期用 custom 事件记录 `subagent_created/started/completed/failed/cancelled`、`artifact_committed`、`delivery_receipt`、`approval_requested/approval_decided`、`resume_requested/resume_receipt`、`steer_requested/steer_receipt`;父子关系及 attempt lineage 写入 `sessions/index.json.child_of`。Resume/Steer 控制事件支持幂等补写和父子/三方对账，冲突事实严格失败。
 - trace = pi JSONL 树 + OTel `gen_ai.*` 对齐 + custom 事件(screenshot/score/patch/snapshot/subagent lifecycle/artifact/receipt)+ VLM 留痕(reasoning/anchor_ref/actionable_feedback);纯文件,不接 Langfuse。
 - SSE(M0 定 schema,M2 实现):全走 `data-*` parts;双视图(tool-result 给 LLM 文本,data 流给 UI 素材)。

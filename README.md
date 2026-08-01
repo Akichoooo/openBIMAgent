@@ -12,7 +12,7 @@
 
 ## 状态
 
-M1 持续实现中。已具备确定性 Pipeline、Blender/Vectorworks MCP 客户端、Domain Gate，以及 Subagent Runtime v1 的 child Session、不可变 Artifact、background/status/cancel/join、跨进程 Session 索引锁、重启 rehydrate、Approval Broker、P1c `resume/steer` 和 P1d 控制面基础。`resume` 永远创建新的 request/agent/child attempt，以 `lineage_id + attempt_number` 保持谱系；P1d 增加稳定 `ActorRef`、`instruction_sha256` 和调用方 `idempotency_key`，同键同语义重试返回原 attempt，同键不同语义严格冲突，重启后仍从持久化 Resume 事实复用。旧结果只作为不可变只读上下文，禁止静默重放旧工具副作用；`steer` 仅绑定当前 queued/running attempt，在下一轮 Provider 调用前的安全边界应用，终态、取消或 Runtime 重启时失败关闭且不会串入后续 attempt。新增只读 `ReadOnlyControlPlane` 与 `control` CLI，可查询 attempts、lineage、approvals、resumes、steers，不获取 Runtime lease、不执行控制副作用。通用 Loop 的 MCP/vision/deliver 接线和双宿主 E2E 仍在推进。
+M1 持续实现中。已具备确定性 Pipeline、Blender/Vectorworks MCP 客户端、Domain Gate，以及 Subagent Runtime v1 的 child Session、不可变 Artifact、background/status/cancel/join、跨进程 Session 索引锁、重启 rehydrate、Approval Broker、P1c `resume/steer`、P1d 控制面基础和 P1e 单机 Runtime IPC。`resume` 永远创建新的 request/agent/child attempt，以 `lineage_id + attempt_number` 保持谱系；稳定 `ActorRef`、`instruction_sha256` 和调用方 `idempotency_key` 保证同键同语义重试复用、同键不同语义严格冲突。旧结果只作为不可变只读上下文，禁止静默重放旧工具副作用；`steer` 仅绑定当前 queued/running attempt，在下一轮 Provider 调用前的安全边界应用。只读 `ReadOnlyControlPlane` 与 `control` CLI 不获取 Runtime lease；P1e `runtime-serve` 由唯一 lease owner 启动 loopback-only IPC，`control-write` 经 bearer token 和 ActorRef 提交 Approval/Resume/Steer/Cancel，客户端不能直接重建 Runtime 或绕过审批。通用 Loop 的 MCP/vision/deliver 接线和双宿主 E2E 仍在推进。
 
 ## 文档地图
 
@@ -72,7 +72,21 @@ uv run python -m openbimagent control resumes --sessions-dir out/sessions --json
 uv run python -m openbimagent control steers --request-id <request_id> --sessions-dir out/sessions --json
 ```
 
-> CLI 目前故意只读。`resume/steer/approval` 写控制必须在持有 Runtime lease 的进程内调用，仓库尚无 IPC 服务时不伪装成跨进程可写控制面。
+P1e 单机 Runtime IPC 写控制示例：
+
+```bash
+# 终端 1：启动唯一 Runtime lease owner 与 loopback IPC
+uv run python -m openbimagent runtime-serve --sessions-dir out/sessions --artifacts-dir out/subagents
+
+# 终端 2：健康检查、审批、恢复、导向和取消
+uv run python -m openbimagent control-write ping --actor-id human:operator --idempotency-key ping-001
+uv run python -m openbimagent control-write approve <approval_id> --actor-id human:operator --idempotency-key approval-001 --reason reviewed
+uv run python -m openbimagent control-write resume <request_id> --actor-id human:operator --idempotency-key resume-001 --instruction "检查当前状态后继续"
+uv run python -m openbimagent control-write steer <request_id> --actor-id human:operator --idempotency-key steer-001 --instruction "下一轮先核对外部状态"
+uv run python -m openbimagent control-write cancel <request_id> --actor-id human:operator --idempotency-key cancel-001
+```
+
+> IPC v1 仅绑定 `127.0.0.1`，discovery 和 token 位于 `sessions/_runtime`；原始 token 不进入 Session、RuntimeState 或 CLI 参数。IPC 不是远程 API，不应暴露端口或共享 sessions 目录。调用方必须为每个逻辑写操作稳定复用 `actor_id + idempotency_key`。
 
 常用参数:
 

@@ -187,6 +187,29 @@ def test_control_attempts_invalid_status_returns_1(tmp_path, capsys) -> None:
     assert "control error" in capsys.readouterr().out
 
 
+def test_control_write_requires_active_runtime(tmp_path, capsys) -> None:
+    code = main([
+        "control-write", "ping",
+        "--sessions-dir", str(tmp_path / "sessions"),
+        "--actor-id", "human:operator",
+        "--idempotency-key", "ping-1",
+    ])
+    assert code == 1
+    assert "control-write error" in capsys.readouterr().out
+
+
+def test_control_write_requires_resource_and_instruction(tmp_path, capsys) -> None:
+    common = [
+        "--sessions-dir", str(tmp_path / "sessions"),
+        "--actor-id", "human:operator",
+        "--idempotency-key", "control-1",
+    ]
+    assert main(["control-write", "cancel", *common]) == 1
+    assert "需要 resource_id" in capsys.readouterr().out
+    assert main(["control-write", "resume", "request-1", *common]) == 1
+    assert "需要 --instruction" in capsys.readouterr().out
+
+
 # ---------- HITL 斜杠命令(_handle_slash) ----------
 
 
