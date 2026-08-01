@@ -65,3 +65,4 @@
 - 2026-07-22~27:M0 实施(relay 008-011):constraints.yaml 二轮核实(25 条规则);核心链路(session/providers/schema_gate/clarify/loop);blender-mcp fork 八项改造(真实 Blender 10/10);双环(scad_loop/rubric/html_report/VLMCritic);装配层(pipeline/batch_executor/builder/cli);M0 冒烟收官(附条件通过,报告见 `relay_workspace/m0_smoke/report.md`,结论回填 M0_PLAN.md)。测试基线 229 passed。
 - 2026-08-01:Subagent Runtime v1 完成 P1d 只读 Control Plane、P1e loopback Runtime IPC 与 P1f 本地 Operator Console；浏览器读持久化投影、写控制由服务端代理到唯一 Runtime lease owner，IPC token 不进入浏览器。ARCHITECTURE/COMPONENTS 更新至 v0.6。
 - 2026-07-31:市政主线新增 `municipal-straight-gravity-solver v0.1.0`：Solver v0 输出 compiled utility IR v1、坡度/管径/覆土/井距 RuleEvidence，并接入 Domain Gate；碰撞/水力保持 UNKNOWN 阻断。ARCHITECTURE/COMPONENTS 更新至 v0.8。
+- 2026-08-01:市政 Solver 升级至 v0.2.0：版本化 `collision_context` 支持 AABB 与既有直圆管三维实体净距，完整上下文将 `clash_free` 产出为可审计 PASS/FAIL；上下文缺失仍 UNKNOWN。ARCHITECTURE/COMPONENTS 更新至 v0.8.2。

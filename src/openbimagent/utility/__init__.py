@@ -19,6 +19,11 @@ from openbimagent.utility.contracts import (
     UtilitySystemType,
 )
 from openbimagent.utility.solver import (
+    AxisAlignedBoxObstacle,
+    CLASH_TOLERANCE_M,
+    ClearanceRule,
+    CollisionContext,
+    ExistingPipeObstacle,
     MIN_COVER_BY_SURFACE_M,
     MIN_DN300_CONCRETE_SLOPE,
     MIN_SEWAGE_DIAMETER_MM,
@@ -33,7 +38,11 @@ from openbimagent.utility.solver import (
 )
 
 __all__ = [
+    "AxisAlignedBoxObstacle",
+    "CLASH_TOLERANCE_M",
     "COMPILED_UTILITY_IR_VERSION",
+    "ClearanceRule",
+    "CollisionContext",
     "CompiledUtilityIR",
     "Coordinate3D",
     "CoordinateReference",
@@ -42,6 +51,7 @@ __all__ = [
     "MIN_SEWAGE_DIAMETER_MM",
     "EvidenceStatus",
     "EvidenceSubjectType",
+    "ExistingPipeObstacle",
     "FlowRegime",
     "NodeType",
     "PipeSegment",

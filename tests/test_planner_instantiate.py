@@ -98,7 +98,7 @@ def test_load_playbook_municipal_solver_metadata_enters_plan() -> None:
     pb = load_playbook(MUNICIPAL)
     route = next(phase for phase in pb["plan"]["phases"] if phase["id"] == "route_planning")
     assert route["solver"] == "municipal-straight-gravity-solver"
-    assert route["solver_version"] == "0.1.0"
+    assert route["solver_version"] == "0.2.0"
     assert route["input_schema"] == "utility_solver_input.schema.json"
     assert route["output"] == "compiled_utility_ir.json"
     assert route["acceptance"] == [

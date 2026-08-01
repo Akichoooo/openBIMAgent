@@ -14,7 +14,7 @@ from openbimagent.utility import UtilitySolverError, solve_straight_gravity_util
 
 def solver_payload() -> dict:
     return {
-        "protocol_version": "0.1",
+        "protocol_version": "0.2",
         "request_id": "case-001",
         "source_ir_sha256": "b" * 64,
         "coordinate_reference": {
@@ -31,6 +31,7 @@ def solver_payload() -> dict:
         "design_slope": 0.003,
         "surface_context": "driveway",
         "start_invert_m": None,
+        "collision_context": None,
     }
 
 
@@ -76,6 +77,153 @@ def test_default_domain_gate_is_unknown_until_clash_evidence_exists() -> None:
         "slope_in_spec",
     }
     assert any(item.startswith("clash_free:") for item in result.domain_gate.unknown)
+
+
+
+def test_complete_empty_collision_context_proves_clash_free() -> None:
+    payload = solver_payload()
+    payload["collision_context"] = {"coverage": "complete", "obstacles": []}
+    result = solve_straight_gravity_utility(payload)
+    assert result.compiled_ir.domain_evidence()["clash_free"]["ok"] is True
+    assert result.domain_gate.status is GateStatus.PASS
+    clash = [item for item in result.compiled_ir.evidence if item.check_name == "clash_free"]
+    assert len(clash) == 1
+    assert clash[0].measured_value == 0.0
+    assert "清单为空" in clash[0].detail
+
+
+
+def _aabb_obstacle(*, obstacle_id: str = "foundation-001", y_min: float = 0.65) -> dict:
+    return {
+        "obstacle_id": obstacle_id,
+        "kind": "aabb",
+        "category": "building_foundation",
+        "min_corner": {"x_m": 4.0, "y_m": y_min, "z_m": 9.0},
+        "max_corner": {"x_m": 6.0, "y_m": y_min + 0.2, "z_m": 11.0},
+        "clearance_rule": {
+            "rule_id": "MU-CLEAR-001",
+            "required_clearance_m": 0.5,
+            "source_clause": "project clash fixture",
+        },
+    }
+
+
+
+def test_aabb_surface_clearance_equal_to_limit_passes() -> None:
+    payload = solver_payload()
+    payload["collision_context"] = {
+        "coverage": "complete",
+        "obstacles": [_aabb_obstacle(y_min=0.65)],
+    }
+    result = solve_straight_gravity_utility(payload)
+    clash = next(item for item in result.compiled_ir.evidence if item.check_name == "clash_free")
+    assert clash.status.value == "pass"
+    assert clash.measured_value == pytest.approx(0.5)
+    assert clash.limit_value == pytest.approx(0.5)
+    assert result.domain_gate.status is GateStatus.PASS
+
+
+
+def test_aabb_clearance_shortfall_and_intersection_fail() -> None:
+    shortfall = solver_payload()
+    shortfall["collision_context"] = {
+        "coverage": "complete",
+        "obstacles": [_aabb_obstacle(y_min=0.64)],
+    }
+    shortfall_result = solve_straight_gravity_utility(shortfall)
+    shortfall_evidence = next(
+        item for item in shortfall_result.compiled_ir.evidence if item.check_name == "clash_free"
+    )
+    assert shortfall_evidence.status.value == "fail"
+    assert shortfall_evidence.measured_value == pytest.approx(0.49)
+    assert shortfall_result.domain_gate.status is GateStatus.FAIL
+
+    intersection = solver_payload()
+    intersection["collision_context"] = {
+        "coverage": "complete",
+        "obstacles": [_aabb_obstacle(y_min=-0.1)],
+    }
+    intersection["collision_context"]["obstacles"][0]["max_corner"]["y_m"] = 0.1
+    intersection_result = solve_straight_gravity_utility(intersection)
+    intersection_evidence = next(
+        item for item in intersection_result.compiled_ir.evidence if item.check_name == "clash_free"
+    )
+    assert intersection_evidence.status.value == "fail"
+    assert intersection_evidence.measured_value == pytest.approx(-0.15)
+
+
+
+def test_existing_pipe_capsule_clearance_is_deterministic() -> None:
+    payload = solver_payload()
+    payload["collision_context"] = {
+        "coverage": "complete",
+        "obstacles": [
+            {
+                "obstacle_id": "water-001",
+                "kind": "existing_pipe",
+                "category": "water",
+                "start_center": {"x_m": 0.0, "y_m": 0.75, "z_m": 10.15},
+                "end_center": {"x_m": 10.0, "y_m": 0.75, "z_m": 10.12},
+                "outer_diameter_mm": 200.0,
+                "clearance_rule": {
+                    "rule_id": "MU-CLEAR-005",
+                    "required_clearance_m": 0.5,
+                    "source_clause": "project clash fixture",
+                },
+            }
+        ],
+    }
+    result = solve_straight_gravity_utility(payload)
+    clash = next(item for item in result.compiled_ir.evidence if item.check_name == "clash_free")
+    assert clash.status.value == "pass"
+    assert clash.measured_value == pytest.approx(0.5)
+
+
+
+def test_multiple_obstacles_fail_dominates_and_input_order_is_canonical() -> None:
+    pass_obstacle = _aabb_obstacle(obstacle_id="z-pass", y_min=0.65)
+    fail_obstacle = _aabb_obstacle(obstacle_id="a-fail", y_min=0.64)
+    first_payload = solver_payload()
+    first_payload["collision_context"] = {
+        "coverage": "complete",
+        "obstacles": [pass_obstacle, fail_obstacle],
+    }
+    second_payload = solver_payload()
+    second_payload["collision_context"] = {
+        "coverage": "complete",
+        "obstacles": [fail_obstacle, pass_obstacle],
+    }
+    first = solve_straight_gravity_utility(first_payload)
+    second = solve_straight_gravity_utility(second_payload)
+    assert first.compiled_ir.domain_evidence()["clash_free"]["ok"] is False
+    assert first.domain_gate.status is GateStatus.FAIL
+    assert first.compiled_ir.canonical_json() == second.compiled_ir.canonical_json()
+    assert first.compiled_ir.canonical_sha256() == second.compiled_ir.canonical_sha256()
+
+
+
+def test_collision_context_rejects_invalid_geometry_rules_and_duplicate_ids() -> None:
+    invalid_box = solver_payload()
+    obstacle = _aabb_obstacle()
+    obstacle["max_corner"]["x_m"] = obstacle["min_corner"]["x_m"]
+    invalid_box["collision_context"] = {"coverage": "complete", "obstacles": [obstacle]}
+    with pytest.raises(UtilitySolverError, match="min < max"):
+        solve_straight_gravity_utility(invalid_box)
+
+    negative_rule = solver_payload()
+    obstacle = _aabb_obstacle()
+    obstacle["clearance_rule"]["required_clearance_m"] = -0.1
+    negative_rule["collision_context"] = {"coverage": "complete", "obstacles": [obstacle]}
+    with pytest.raises(UtilitySolverError, match="greater than or equal to 0"):
+        solve_straight_gravity_utility(negative_rule)
+
+    duplicate = solver_payload()
+    duplicate["collision_context"] = {
+        "coverage": "complete",
+        "obstacles": [_aabb_obstacle(), _aabb_obstacle()],
+    }
+    with pytest.raises(UtilitySolverError, match="obstacle_id 不能重复"):
+        solve_straight_gravity_utility(duplicate)
 
 
 

@@ -1,9 +1,13 @@
-"""市政管网 Solver v0：两井一直管重力污水的确定性竖向求解。
+"""市政管网 Solver v0.2：两井一直管重力污水的确定性竖向与碰撞求解。
 
 该切片只解决已知起终点平面坐标和地面标高的一段直管。正 slope 表示沿
 start -> end 流向下降。若未指定 start_invert_m，Solver 选择同时满足两端
 最小覆土的最浅起点内底标高；若指定，则保留设计输入并用 RuleEvidence
-明确报告合规或失败。碰撞和水力能力不在 v0 内，始终产生 UNKNOWN 证据。
+明确报告合规或失败。
+
+碰撞上下文缺失时 ``clash_free`` 失败关闭为 UNKNOWN；调用方显式声明完整上下文后，
+Solver 对三维 AABB 和既有圆管胶囊体执行实体表面最短净距检查，逐障碍物生成
+PASS/FAIL RuleEvidence。v0.2 不做路线寻优或自动避让。水力能力仍为 UNKNOWN。
 """
 
 from __future__ import annotations
@@ -11,7 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import Field, ValidationError, model_validator
 
@@ -20,17 +24,19 @@ from openbimagent.schema_gate.gate import SchemaGate, SchemaGateError
 from openbimagent.utility.compiler import compile_solved_utility_ir
 from openbimagent.utility.contracts import (
     CompiledUtilityIR,
+    Coordinate3D,
     CoordinateReference,
     StrictFrozenModel,
 )
 
-UTILITY_SOLVER_INPUT_VERSION = "0.1"
+UTILITY_SOLVER_INPUT_VERSION = "0.2"
 UTILITY_SOLVER_NAME = "municipal-straight-gravity-solver"
-UTILITY_SOLVER_VERSION = "0.1.0"
+UTILITY_SOLVER_VERSION = "0.2.0"
 MIN_SEWAGE_DIAMETER_MM = 300.0
 MIN_DN300_CONCRETE_SLOPE = 0.003
 MAX_DN300_TO_DN600_MANHOLE_SPACING_M = 75.0
 MIN_COVER_BY_SURFACE_M = {"driveway": 0.7, "sidewalk": 0.6}
+CLASH_TOLERANCE_M = 1e-6
 
 
 class UtilitySolverError(ValueError):
@@ -44,10 +50,80 @@ class SolverEndpoint(StrictFrozenModel):
     ground_elevation_m: float
 
 
-class StraightGravitySolverInput(StrictFrozenModel):
-    """Solver v0 的版本化输入；仅支持单一 DN300 混凝土重力污水直管。"""
+class ClearanceRule(StrictFrozenModel):
+    """调用方已选择的净距规则；Solver 只执行，不猜测规范适用性。"""
 
-    protocol_version: str = Field(default=UTILITY_SOLVER_INPUT_VERSION, pattern=r"^0\.1$")
+    rule_id: str = Field(min_length=1, max_length=256)
+    required_clearance_m: float = Field(ge=0)
+    source_clause: str = Field(min_length=1, max_length=1024)
+
+
+class AxisAlignedBoxObstacle(StrictFrozenModel):
+    """坐标系内闭合三维轴对齐包围盒。"""
+
+    obstacle_id: str = Field(min_length=1, max_length=256)
+    kind: Literal["aabb"] = "aabb"
+    category: str = Field(min_length=1, max_length=128)
+    min_corner: Coordinate3D
+    max_corner: Coordinate3D
+    clearance_rule: ClearanceRule
+
+    @model_validator(mode="after")
+    def _validate_box(self) -> "AxisAlignedBoxObstacle":
+        if not all(
+            low < high
+            for low, high in (
+                (self.min_corner.x_m, self.max_corner.x_m),
+                (self.min_corner.y_m, self.max_corner.y_m),
+                (self.min_corner.z_m, self.max_corner.z_m),
+            )
+        ):
+            raise ValueError(f"AABB {self.obstacle_id!r} 每个轴必须满足 min < max")
+        return self
+
+
+class ExistingPipeObstacle(StrictFrozenModel):
+    """既有直圆管的三维中心线和外径，几何视为胶囊体。"""
+
+    obstacle_id: str = Field(min_length=1, max_length=256)
+    kind: Literal["existing_pipe"] = "existing_pipe"
+    category: str = Field(min_length=1, max_length=128)
+    start_center: Coordinate3D
+    end_center: Coordinate3D
+    outer_diameter_mm: float = Field(gt=0)
+    clearance_rule: ClearanceRule
+
+    @model_validator(mode="after")
+    def _validate_centerline(self) -> "ExistingPipeObstacle":
+        if _point_distance(self.start_center, self.end_center) <= CLASH_TOLERANCE_M:
+            raise ValueError(f"既有管线 {self.obstacle_id!r} 中心线起终点不能重合")
+        return self
+
+
+CollisionObstacle = Annotated[
+    AxisAlignedBoxObstacle | ExistingPipeObstacle,
+    Field(discriminator="kind"),
+]
+
+
+class CollisionContext(StrictFrozenModel):
+    """本次碰撞检查的环境上下文；complete 表示清单覆盖声明范围。"""
+
+    coverage: Literal["complete"] = "complete"
+    obstacles: tuple[CollisionObstacle, ...] = ()
+
+    @model_validator(mode="after")
+    def _validate_unique_ids(self) -> "CollisionContext":
+        ids = [item.obstacle_id for item in self.obstacles]
+        if len(ids) != len(set(ids)):
+            raise ValueError("碰撞上下文 obstacle_id 不能重复")
+        return self
+
+
+class StraightGravitySolverInput(StrictFrozenModel):
+    """Solver v0.2 的版本化输入；仅支持单一 DN300 混凝土重力污水直管。"""
+
+    protocol_version: str = Field(default=UTILITY_SOLVER_INPUT_VERSION, pattern=r"^0\.2$")
     request_id: str = Field(min_length=1, max_length=256)
     source_ir_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     coordinate_reference: CoordinateReference
@@ -58,6 +134,7 @@ class StraightGravitySolverInput(StrictFrozenModel):
     design_slope: float = Field(default=MIN_DN300_CONCRETE_SLOPE, ge=0)
     surface_context: Literal["driveway", "sidewalk"] = "driveway"
     start_invert_m: float | None = None
+    collision_context: CollisionContext | None = None
 
     @model_validator(mode="after")
     def _validate_supported_slice(self) -> "StraightGravitySolverInput":
@@ -195,13 +272,12 @@ def solve_straight_gravity_utility(
             unit="m",
             source_clause="GB 50014-2021 §5.4.4 表 5.4.4",
         ),
-        _unknown_evidence(
-            evidence_id=f"{request.request_id}-clash",
-            rule_id="MU-AVOID-001",
-            check_name="clash_free",
-            subject_id=ir_id,
-            detail="Solver v0 未接收其他管线、基础或障碍物几何，不能执行碰撞检查",
-            source_clause="GB 50289-2016 §3.0.4",
+        *_clash_evidence(
+            request,
+            ir_id=ir_id,
+            segment_id=segment_id,
+            start_invert_m=start_invert_m,
+            end_invert_m=end_invert_m,
         ),
         _unknown_evidence(
             evidence_id=f"{request.request_id}-hydraulics",
@@ -279,6 +355,252 @@ def solve_straight_gravity_utility(
     }
     report = evaluate_domain_gate(requirements, compiled.domain_evidence())
     return UtilitySolverResult(compiled_ir=compiled, domain_gate=report)
+
+
+
+def _clash_evidence(
+    request: StraightGravitySolverInput,
+    *,
+    ir_id: str,
+    segment_id: str,
+    start_invert_m: float,
+    end_invert_m: float,
+) -> list[dict[str, Any]]:
+    """对设计管段实体执行逐障碍物净距检查；上下文缺失时返回 UNKNOWN。"""
+    context = request.collision_context
+    if context is None:
+        return [
+            _unknown_evidence(
+                evidence_id=f"{request.request_id}-clash-context",
+                rule_id="MU-AVOID-001",
+                check_name="clash_free",
+                subject_id=ir_id,
+                detail="未提供完整 collision_context，不能证明检查范围内无碰撞或净距不足",
+                source_clause="GB 50289-2016 §3.0.4",
+            )
+        ]
+
+    if not context.obstacles:
+        return [
+            _evidence(
+                evidence_id=f"{request.request_id}-clash-empty",
+                rule_id="MU-AVOID-001",
+                check_name="clash_free",
+                passed=True,
+                subject_type="segment",
+                subject_id=segment_id,
+                detail="collision_context 声明覆盖完整，检查范围内障碍物清单为空",
+                measured_value=0.0,
+                limit_value=0.0,
+                unit="count",
+                source_clause="GB 50289-2016 §3.0.4",
+            )
+        ]
+
+    pipe_radius_m = request.diameter_mm / 2000.0
+    design_start = Coordinate3D(
+        x_m=request.start.x_m,
+        y_m=request.start.y_m,
+        z_m=start_invert_m + pipe_radius_m,
+    )
+    design_end = Coordinate3D(
+        x_m=request.end.x_m,
+        y_m=request.end.y_m,
+        z_m=end_invert_m + pipe_radius_m,
+    )
+    evidence: list[dict[str, Any]] = []
+    for obstacle in sorted(context.obstacles, key=lambda item: item.obstacle_id):
+        if isinstance(obstacle, AxisAlignedBoxObstacle):
+            axis_distance_m = _segment_aabb_distance(
+                design_start,
+                design_end,
+                obstacle.min_corner,
+                obstacle.max_corner,
+            )
+            actual_clearance_m = axis_distance_m - pipe_radius_m
+            geometry_label = "AABB"
+        else:
+            axis_distance_m = _segment_segment_distance(
+                design_start,
+                design_end,
+                obstacle.start_center,
+                obstacle.end_center,
+            )
+            actual_clearance_m = (
+                axis_distance_m
+                - pipe_radius_m
+                - obstacle.outer_diameter_mm / 2000.0
+            )
+            geometry_label = "existing_pipe"
+        required_m = obstacle.clearance_rule.required_clearance_m
+        passed = actual_clearance_m + CLASH_TOLERANCE_M >= required_m
+        evidence.append(
+            _evidence(
+                evidence_id=f"{request.request_id}-clash-{obstacle.obstacle_id}",
+                rule_id=obstacle.clearance_rule.rule_id,
+                check_name="clash_free",
+                passed=passed,
+                subject_type="segment",
+                subject_id=segment_id,
+                detail=(
+                    f"设计管段与 {geometry_label} 障碍物 {obstacle.obstacle_id!r} 的实体表面最短净距 "
+                    f"{actual_clearance_m:.6f} m，要求不少于 {required_m:.6f} m；"
+                    f"数值容差 {CLASH_TOLERANCE_M:g} m"
+                ),
+                measured_value=actual_clearance_m,
+                limit_value=required_m,
+                unit="m",
+                source_clause=obstacle.clearance_rule.source_clause,
+            )
+        )
+    return evidence
+
+
+
+def _segment_aabb_distance(
+    start: Coordinate3D,
+    end: Coordinate3D,
+    minimum: Coordinate3D,
+    maximum: Coordinate3D,
+) -> float:
+    """返回三维线段到闭合 AABB 的精确欧氏距离。"""
+    p0 = _point_tuple(start)
+    p1 = _point_tuple(end)
+    low = _point_tuple(minimum)
+    high = _point_tuple(maximum)
+    direction = tuple(right - left for left, right in zip(p0, p1, strict=True))
+    breaks = {0.0, 1.0}
+    for origin, delta, axis_low, axis_high in zip(p0, direction, low, high, strict=True):
+        if abs(delta) <= 1e-15:
+            continue
+        for boundary in (axis_low, axis_high):
+            crossing = (boundary - origin) / delta
+            if 0.0 < crossing < 1.0:
+                breaks.add(crossing)
+    ordered = sorted(breaks)
+
+    candidates = set(ordered)
+    for left, right in zip(ordered, ordered[1:], strict=False):
+        midpoint = (left + right) / 2.0
+        numerator = 0.0
+        denominator = 0.0
+        for origin, delta, axis_low, axis_high in zip(p0, direction, low, high, strict=True):
+            coordinate = origin + delta * midpoint
+            if coordinate < axis_low:
+                boundary = axis_low
+            elif coordinate > axis_high:
+                boundary = axis_high
+            else:
+                continue
+            numerator += delta * (origin - boundary)
+            denominator += delta * delta
+        if denominator > 0.0:
+            stationary = -numerator / denominator
+            if left <= stationary <= right:
+                candidates.add(stationary)
+
+    minimum_squared = min(
+        _point_aabb_distance_squared(
+            tuple(origin + delta * parameter for origin, delta in zip(p0, direction, strict=True)),
+            low,
+            high,
+        )
+        for parameter in candidates
+    )
+    return math.sqrt(max(0.0, minimum_squared))
+
+
+
+def _point_aabb_distance_squared(
+    point: tuple[float, float, float],
+    minimum: tuple[float, float, float],
+    maximum: tuple[float, float, float],
+) -> float:
+    total = 0.0
+    for value, low, high in zip(point, minimum, maximum, strict=True):
+        if value < low:
+            total += (low - value) ** 2
+        elif value > high:
+            total += (value - high) ** 2
+    return total
+
+
+
+def _segment_segment_distance(
+    first_start: Coordinate3D,
+    first_end: Coordinate3D,
+    second_start: Coordinate3D,
+    second_end: Coordinate3D,
+) -> float:
+    """返回两条非退化三维闭线段的精确最短距离。"""
+    p1 = _point_tuple(first_start)
+    q1 = _point_tuple(first_end)
+    p2 = _point_tuple(second_start)
+    q2 = _point_tuple(second_end)
+    d1 = _subtract(q1, p1)
+    d2 = _subtract(q2, p2)
+    offset = _subtract(p1, p2)
+    a = _dot(d1, d1)
+    e = _dot(d2, d2)
+    b = _dot(d1, d2)
+    c = _dot(d1, offset)
+    f = _dot(d2, offset)
+    denominator = a * e - b * b
+    if denominator > 1e-15:
+        first_parameter = _clamp((b * f - c * e) / denominator)
+    else:
+        first_parameter = 0.0
+    second_parameter = (b * first_parameter + f) / e
+    if second_parameter < 0.0:
+        second_parameter = 0.0
+        first_parameter = _clamp(-c / a)
+    elif second_parameter > 1.0:
+        second_parameter = 1.0
+        first_parameter = _clamp((b - c) / a)
+    closest_first = _add_scaled(p1, d1, first_parameter)
+    closest_second = _add_scaled(p2, d2, second_parameter)
+    return math.sqrt(max(0.0, _dot(_subtract(closest_first, closest_second), _subtract(closest_first, closest_second))))
+
+
+
+def _point_distance(left: Coordinate3D, right: Coordinate3D) -> float:
+    delta = _subtract(_point_tuple(left), _point_tuple(right))
+    return math.sqrt(_dot(delta, delta))
+
+
+
+def _point_tuple(point: Coordinate3D) -> tuple[float, float, float]:
+    return point.x_m, point.y_m, point.z_m
+
+
+
+def _subtract(
+    left: tuple[float, float, float],
+    right: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    return tuple(a - b for a, b in zip(left, right, strict=True))  # type: ignore[return-value]
+
+
+
+def _dot(left: tuple[float, float, float], right: tuple[float, float, float]) -> float:
+    return sum(a * b for a, b in zip(left, right, strict=True))
+
+
+
+def _add_scaled(
+    origin: tuple[float, float, float],
+    direction: tuple[float, float, float],
+    parameter: float,
+) -> tuple[float, float, float]:
+    return tuple(
+        value + parameter * delta
+        for value, delta in zip(origin, direction, strict=True)
+    )  # type: ignore[return-value]
+
+
+
+def _clamp(value: float) -> float:
+    return max(0.0, min(1.0, value))
 
 
 
@@ -365,6 +687,11 @@ def _unknown_evidence(
 
 
 __all__ = [
+    "AxisAlignedBoxObstacle",
+    "CLASH_TOLERANCE_M",
+    "ClearanceRule",
+    "CollisionContext",
+    "ExistingPipeObstacle",
     "MIN_COVER_BY_SURFACE_M",
     "MIN_DN300_CONCRETE_SLOPE",
     "MIN_SEWAGE_DIAMETER_MM",

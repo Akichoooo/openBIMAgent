@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://openbimagent.local/schemas/utility_solver_input.schema.json",
   "title": "StraightGravitySolverInput",
-  "description": "市政 Solver v0 输入：两井一直管、DN300 混凝土、重力污水。正坡度表示沿 start 到 end 流向下降。",
+  "description": "市政 Solver v0.2 输入：两井一直管、DN300 混凝土、重力污水；支持完整碰撞上下文中的 AABB 与既有直圆管净距检查。正坡度表示沿 start 到 end 流向下降。",
   "type": "object",
   "required": [
     "protocol_version",
@@ -15,11 +15,12 @@
     "material",
     "design_slope",
     "surface_context",
-    "start_invert_m"
+    "start_invert_m",
+    "collision_context"
   ],
   "additionalProperties": false,
   "properties": {
-    "protocol_version": {"const": "0.1"},
+    "protocol_version": {"const": "0.2"},
     "request_id": {"type": "string", "minLength": 1, "maxLength": 256},
     "source_ir_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "coordinate_reference": {"$ref": "#/$defs/coordinate_reference"},
@@ -29,7 +30,13 @@
     "material": {"const": "concrete"},
     "design_slope": {"type": "number", "minimum": 0},
     "surface_context": {"enum": ["driveway", "sidewalk"]},
-    "start_invert_m": {"type": ["number", "null"]}
+    "start_invert_m": {"type": ["number", "null"]},
+    "collision_context": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/collision_context"}
+      ]
+    }
   },
   "$defs": {
     "coordinate": {
@@ -63,6 +70,60 @@
         "x_m": {"type": "number"},
         "y_m": {"type": "number"},
         "ground_elevation_m": {"type": "number"}
+      }
+    },
+    "clearance_rule": {
+      "type": "object",
+      "required": ["rule_id", "required_clearance_m", "source_clause"],
+      "additionalProperties": false,
+      "properties": {
+        "rule_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "required_clearance_m": {"type": "number", "minimum": 0},
+        "source_clause": {"type": "string", "minLength": 1, "maxLength": 1024}
+      }
+    },
+    "aabb_obstacle": {
+      "type": "object",
+      "required": ["obstacle_id", "kind", "category", "min_corner", "max_corner", "clearance_rule"],
+      "additionalProperties": false,
+      "properties": {
+        "obstacle_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "kind": {"const": "aabb"},
+        "category": {"type": "string", "minLength": 1, "maxLength": 128},
+        "min_corner": {"$ref": "#/$defs/coordinate"},
+        "max_corner": {"$ref": "#/$defs/coordinate"},
+        "clearance_rule": {"$ref": "#/$defs/clearance_rule"}
+      }
+    },
+    "existing_pipe_obstacle": {
+      "type": "object",
+      "required": ["obstacle_id", "kind", "category", "start_center", "end_center", "outer_diameter_mm", "clearance_rule"],
+      "additionalProperties": false,
+      "properties": {
+        "obstacle_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "kind": {"const": "existing_pipe"},
+        "category": {"type": "string", "minLength": 1, "maxLength": 128},
+        "start_center": {"$ref": "#/$defs/coordinate"},
+        "end_center": {"$ref": "#/$defs/coordinate"},
+        "outer_diameter_mm": {"type": "number", "exclusiveMinimum": 0},
+        "clearance_rule": {"$ref": "#/$defs/clearance_rule"}
+      }
+    },
+    "collision_context": {
+      "type": "object",
+      "required": ["coverage", "obstacles"],
+      "additionalProperties": false,
+      "properties": {
+        "coverage": {"const": "complete"},
+        "obstacles": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {"$ref": "#/$defs/aabb_obstacle"},
+              {"$ref": "#/$defs/existing_pipe_obstacle"}
+            ]
+          }
+        }
       }
     }
   }

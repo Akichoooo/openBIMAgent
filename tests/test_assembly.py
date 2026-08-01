@@ -593,10 +593,15 @@ def test_pipeline_no_blender_escalates_and_deliver_missing(tmp_path) -> None:
     assert "deliver" in phase_names
 
 
-def _municipal_solver_input(*, slope: float = 0.003, end_x: float = 10.0) -> dict[str, Any]:
+def _municipal_solver_input(
+    *,
+    slope: float = 0.003,
+    end_x: float = 10.0,
+    collision_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """构造 Pipeline 接线用的最小市政 Solver v0 输入。"""
     return {
-        "protocol_version": "0.1",
+        "protocol_version": "0.2",
         "request_id": "pipeline-case-001",
         "source_ir_sha256": "c" * 64,
         "coordinate_reference": {
@@ -613,6 +618,7 @@ def _municipal_solver_input(*, slope: float = 0.003, end_x: float = 10.0) -> dic
         "design_slope": slope,
         "surface_context": "driveway",
         "start_invert_m": None,
+        "collision_context": collision_context,
     }
 
 
@@ -656,6 +662,62 @@ def test_pipeline_solver_writes_ir_and_blocks_unknown_clash(tmp_path) -> None:
     assert result.domain_gate is not None and result.domain_gate.status.value == "UNKNOWN"
     assert "clash_free" in " ".join(result.domain_gate.unknown)
     assert "orchestrate" not in [name for name, _ in result.phases_log]
+
+
+def test_pipeline_complete_collision_context_passes_production_gate_and_dispatches(tmp_path) -> None:
+    """完整碰撞上下文由 Solver 自己判定 PASS，生产 Gate 不再依赖外部布尔证据。"""
+    result = run_pipeline(
+        playbook_path=Path(__file__).resolve().parents[1]
+        / "domain_packs" / "municipal_utility" / "playbook.md",
+        out_dir=tmp_path / "out",
+        utility_solver_input=_municipal_solver_input(
+            collision_context={"coverage": "complete", "obstacles": []}
+        ),
+        blender_client=None,
+        vectorworks_client=None,
+        input_func=lambda p: "",
+        sessions_dir=tmp_path / "sessions",
+        yes=True,
+    )
+    assert result.domain_gate is not None and result.domain_gate.status.value == "PASS"
+    assert "orchestrate" in [name for name, _ in result.phases_log]
+    assert "target_dispatch" in [name for name, _ in result.phases_log]
+
+
+
+def test_pipeline_clash_fail_blocks_before_targets(tmp_path) -> None:
+    """Solver 的实体净距 FAIL 在后端分发前阻断，外部 PASS 也不能覆盖。"""
+    obstacle = {
+        "obstacle_id": "foundation-001",
+        "kind": "aabb",
+        "category": "building_foundation",
+        "min_corner": {"x_m": 4.0, "y_m": -0.1, "z_m": 9.0},
+        "max_corner": {"x_m": 6.0, "y_m": 0.1, "z_m": 11.0},
+        "clearance_rule": {
+            "rule_id": "MU-CLEAR-001",
+            "required_clearance_m": 0.5,
+            "source_clause": "project clash fixture",
+        },
+    }
+    result = run_pipeline(
+        playbook_path=Path(__file__).resolve().parents[1]
+        / "domain_packs" / "municipal_utility" / "playbook.md",
+        out_dir=tmp_path / "out",
+        utility_solver_input=_municipal_solver_input(
+            collision_context={"coverage": "complete", "obstacles": [obstacle]}
+        ),
+        domain_evidence={"clash_free": {"ok": True}},
+        blender_client=None,
+        vectorworks_client=None,
+        input_func=lambda p: "",
+        sessions_dir=tmp_path / "sessions",
+        yes=True,
+    )
+    assert result.domain_gate is not None and result.domain_gate.status.value == "FAIL"
+    assert any("clash_free" in item for item in result.domain_gate.failed)
+    assert "target_dispatch" not in [name for name, _ in result.phases_log]
+    assert "orchestrate" not in [name for name, _ in result.phases_log]
+
 
 
 def test_pipeline_solver_supplemental_unknown_evidence_can_pass_v0_gate(tmp_path) -> None:
@@ -703,7 +765,7 @@ def test_solver_declaration_rejects_version_and_schema_drift() -> None:
     """Playbook 声明必须与 Runtime Solver 版本和输入 Schema 精确一致。"""
     base = {
         "solver": "municipal-straight-gravity-solver",
-        "solver_version": "0.1.0",
+        "solver_version": "0.2.0",
         "input_schema": "utility_solver_input.schema.json",
     }
     _validate_solver_declaration(base)

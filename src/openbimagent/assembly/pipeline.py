@@ -106,7 +106,9 @@ def run_pipeline(
       时对应批次明确 ESCALATE，不静默跳过。
     - 声明 ``municipal-straight-gravity-solver`` 的 playbook 可通过 utility_solver_input
       执行确定性求解并落 compiled IR；输入缺失或证据不足均为 UNKNOWN，构建前阻断。
-    - domain_evidence 可补充 Solver 尚未判定的碰撞等证据，但不能覆盖 Solver 已明确
+    - v0.2 在 collision_context 完整时确定性计算 AABB/既有直圆管净距并产出
+      clash_free PASS/FAIL；上下文缺失不等于无障碍物，保持 UNKNOWN。
+    - domain_evidence 可补充 Solver 尚未判定的证据，但不能覆盖 Solver 已明确
       判定的 PASS/FAIL，避免外部布尔值绕过确定性工程门禁。
     - approval_fn 为空 且 yes=False:不审批(测试默认);yes=True 跳过所有审批门。
     - Ctrl+C 中断:落 checkpoint 事件到 session,返回 interrupted=True。
@@ -427,7 +429,7 @@ def _validate_solver_declaration(phase: dict[str, Any]) -> None:
         raise ValueError(
             f"Solver 输入 Schema 不匹配: playbook={declared_schema!r}, expected={expected_schema!r}"
         )
-    if UTILITY_SOLVER_INPUT_VERSION != "0.1":
+    if UTILITY_SOLVER_INPUT_VERSION != "0.2":
         raise ValueError(f"Runtime Solver 输入协议版本未受支持: {UTILITY_SOLVER_INPUT_VERSION!r}")
 
 
