@@ -36,6 +36,8 @@
           "solver": { "type": "string", "minLength": 1, "description": "确定性领域 Solver 标识。" },
           "solver_version": { "type": "string", "minLength": 1, "description": "Solver 协议/实现版本。" },
           "input_schema": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+\\.schema\\.json$", "description": "Solver 输入 JSON Schema 文件名。" },
+          "rule_source": { "type": "string", "pattern": "^(?![/\\\\])(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$)).+\\.ya?ml$", "description": "相对 playbook 目录的受信任领域规则源；禁止绝对路径与 .. 越界。" },
+          "rule_set_schema": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+\\.schema\\.json$", "description": "编译后领域规则集 JSON Schema 文件名。" },
           "acceptance": {
             "type": "array",
             "uniqueItems": true,

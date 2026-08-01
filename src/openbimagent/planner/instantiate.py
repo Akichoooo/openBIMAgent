@@ -142,7 +142,18 @@ def normalize_plan(playbook: dict[str, Any], slots_filled: dict[str, Any]) -> di
     phases: list[dict[str, Any]] = []
     for p in playbook.get("phases") or []:
         phase: dict[str, Any] = {"id": str(p.get("id") or "")}
-        for key in ("agent", "tools", "output", "solver", "solver_version", "input_schema", "input", "acceptance"):
+        for key in (
+            "agent",
+            "tools",
+            "output",
+            "solver",
+            "solver_version",
+            "input_schema",
+            "rule_source",
+            "rule_set_schema",
+            "input",
+            "acceptance",
+        ):
             if key in p:
                 phase[key] = p[key]
         phase["status"] = str(p.get("status") or "pending")

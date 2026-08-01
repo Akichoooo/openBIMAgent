@@ -1,6 +1,6 @@
 # openBIMAgent 组件与运行配置详设
 
-版本:v0.8.2(municipal clash-free v0)· 2026-08-01 · 姊妹篇:[ARCHITECTURE.md](ARCHITECTURE.md)
+版本:v0.8.3(municipal executable rule set v0)· 2026-08-01 · 姊妹篇:[ARCHITECTURE.md](ARCHITECTURE.md)
 
 本文档回答四个问题:**每个组件干什么、每个 agent 怎么配、多厂家模型怎么统管、上下文怎么扛住。**
 
@@ -59,11 +59,12 @@
 - `canonical_json()/canonical_sha256()` 对系统、节点、端口、管段和证据按稳定 ID 排序，确保相同网络不因输入数组顺序产生不同摘要。
 - `domain_evidence()` 按 `check_name` 聚合逐对象证据，FAIL 优先、UNKNOWN 次之、全 PASS 才通过，可直接交给现有 `evaluate_domain_gate()`。
 - `compile_solved_utility_ir()` 是最小编译门禁，不负责路线求解，不推断工程属性，不生成占位坐标。
-- `solver.py` 定义 `StraightGravitySolverInput v0.2` 与 `municipal-straight-gravity-solver v0.2.0`：限定两井一直管 DN300 混凝土污水，根据两端平面坐标、地面标高、设计坡度和地表类型计算最浅合规内底标高；若给定起点内底则保留输入并以 Evidence 报告结果。
-- v0.2 增加 `collision_context`、`AxisAlignedBoxObstacle`、`ExistingPipeObstacle` 和显式 `ClearanceRule`。上下文缺失时 `clash_free=UNKNOWN`；`coverage=complete` 时对设计管道圆柱包络与 AABB/既有直圆管胶囊体计算三维实体表面最短净距。每个障碍物生成一条 RuleEvidence，任一 FAIL 即聚合失败；显式完整空清单可判定 PASS。净距等于限值按 `CLASH_TOLERANCE_M=1e-6` 通过。
-- 障碍物保持为 Solver Context，不进入 `CompiledUtilityIR` 的交付实体集合；Evidence 保存障碍物 ID、实测净距、限值和调用方已选择的规则条款。Solver 不从类别或自然语言推断适用净距。
-- Solver v0.2 生成管径、坡度、覆土、井距和碰撞 PASS/FAIL Evidence；缺少水力参数时水力 Evidence 仍为 UNKNOWN。默认生产 Domain Gate 要求 `clash_free`，因此碰撞上下文缺失不会被误报为可交付。
-- Pipeline 执行边界已落地：`run_pipeline(..., utility_solver_input=...)` 只在 Playbook 声明 Solver 时执行；CLI 使用 `--utility-solver-input` 显式传入 JSON。结果落盘 `compiled_utility_ir.json` 与 `domain_gate_report.json`；输入缺失保持 UNKNOWN，Solver 已判定的 PASS/FAIL 不允许被外部 evidence 覆盖，外部检查器只能补齐 UNKNOWN。
+- `rules.py` 定义 `MunicipalRuleSet v1.0`、`CompiledClearanceRule` 与选择结果四态。编译器读取受信任 `constraints.yaml`，严格核对必需 rule ID、category、parameter、unit 与数值形态，保存源 SHA-256、编译器版本和 canonical SHA-256；规则按稳定 `rule_key` 排序。
+- 置信度门禁：`high -> production`；`medium/low -> review_required`。属性缺失、无适用规则或多条同时适用分别为 `review_required/unsupported/ambiguous`，均不能产生生产 PASS/FAIL。当前 6 个候选中只有 `MU-CLEAR-001:building` 可生产执行；给水直径分档、低压燃气、直埋电力和直埋通信均保留为中置信人工复核规则。
+- `solver.py` 定义 `StraightGravitySolverInput v0.3` 与 `municipal-straight-gravity-solver v0.3.0`：限定两井一直管 DN300 混凝土污水，根据两端平面坐标、地面标高、设计坡度和地表类型计算最浅合规内底标高。障碍物只携带类别、几何及 `outer_diameter_mm/pressure_class/burial_method/voltage_kv` 等工程事实，不能携带 `ClearanceRule`。
+- `collision_context` 缺失时 `clash_free=UNKNOWN`；`coverage=complete` 时对设计管道实体与 AABB/既有直圆管胶囊体计算三维表面最短净距。规则选择为 production 时逐障碍物生成 PASS/FAIL RuleEvidence；中低置信或选择不完整时生成 UNKNOWN。显式完整空清单可 PASS，等于限值按 `CLASH_TOLERANCE_M=1e-6` 通过。
+- 障碍物保持为 Solver Context，不进入 `CompiledUtilityIR` 交付实体集合；Evidence 保存障碍物 ID、实测净距、受信任规则集 hash、规则键和条款。水力参数仍缺失，`hydraulics_in_spec=UNKNOWN`。
+- Pipeline 只在 Playbook 声明 Solver 时执行，并把 `rule_source` 限制在当前 Domain Pack 内，拒绝绝对路径、`..` 越界、缺文件、Rule Set Schema/版本漂移。结果落盘 `municipal_rule_set.json`、`compiled_utility_ir.json` 与 `domain_gate_report.json`；Solver 已判定的 PASS/FAIL 不允许被外部 evidence 覆盖，外部检查器只能补齐 UNKNOWN。
 
 ### 2.5 orchestrator(子代理调度)
 

@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/municipal_rule_set.schema.json",
+  "title": "MunicipalRuleSet",
+  "description": "由受信任 constraints.yaml 确定性编译的市政 DN300 污水管水平净距规则集；高置信规则可生产执行，中低置信规则必须人工复核并失败关闭。",
+  "type": "object",
+  "required": [
+    "protocol_version",
+    "rule_set_id",
+    "source_path",
+    "source_sha256",
+    "compiler_name",
+    "compiler_version",
+    "rules",
+    "canonical_sha256"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": {"const": "1.0"},
+    "rule_set_id": {"const": "municipal-utility-dn300-wastewater-clearance"},
+    "source_path": {"type": "string", "minLength": 1, "maxLength": 1024},
+    "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "compiler_name": {"const": "municipal-constraints-compiler"},
+    "compiler_version": {"const": "0.1.0"},
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/clearance_rule"}
+    },
+    "canonical_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "$defs": {
+    "condition": {
+      "type": "object",
+      "required": ["field", "operator", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "field": {"enum": ["outer_diameter_mm", "pressure_class", "burial_method", "voltage_kv"]},
+        "operator": {"enum": ["eq", "le", "gt"]},
+        "value": {"type": ["string", "number"]}
+      }
+    },
+    "clearance_rule": {
+      "type": "object",
+      "required": [
+        "rule_key",
+        "source_rule_id",
+        "design_system",
+        "design_diameter_mm",
+        "obstacle_kind",
+        "obstacle_category",
+        "required_clearance_m",
+        "unit",
+        "source_clause",
+        "verified_by",
+        "confidence",
+        "enforcement",
+        "required_attributes",
+        "conditions"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "rule_key": {"type": "string", "minLength": 1, "maxLength": 256},
+        "source_rule_id": {"type": "string", "pattern": "^MU-CLEAR-[0-9]{3}$"},
+        "design_system": {"const": "wastewater"},
+        "design_diameter_mm": {"const": 300.0},
+        "obstacle_kind": {"enum": ["aabb", "existing_pipe"]},
+        "obstacle_category": {"enum": ["building", "water", "gas", "power", "telecom"]},
+        "required_clearance_m": {"type": "number", "exclusiveMinimum": 0},
+        "unit": {"const": "m"},
+        "source_clause": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "verified_by": {"type": "string", "minLength": 1, "maxLength": 128},
+        "confidence": {"enum": ["high", "medium", "low"]},
+        "enforcement": {"enum": ["production", "review_required"]},
+        "required_attributes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"enum": ["outer_diameter_mm", "pressure_class", "burial_method", "voltage_kv"]}
+        },
+        "conditions": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/condition"}
+        }
+      }
+    }
+  }
+}

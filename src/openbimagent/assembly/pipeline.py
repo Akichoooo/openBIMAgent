@@ -39,11 +39,14 @@ from openbimagent.planner.instantiate import PlanArtifacts, instantiate, load_pl
 from openbimagent.session.schema import EventType
 from openbimagent.session.store import SessionStore
 from openbimagent.utility import (
+    MUNICIPAL_RULE_SET_VERSION,
     UTILITY_SOLVER_INPUT_VERSION,
     UTILITY_SOLVER_NAME,
     UTILITY_SOLVER_VERSION,
+    MunicipalRuleError,
     UtilitySolverError,
     UtilitySolverResult,
+    compile_municipal_rule_set,
     solve_straight_gravity_utility,
 )
 
@@ -51,6 +54,7 @@ OnPhase = Callable[[str, dict[str, Any]], None]
 """阶段进度回调:(phase_name, payload) → None;CLI 用来打印阶段标题。"""
 
 COMPILED_UTILITY_IR_FILENAME = "compiled_utility_ir.json"
+MUNICIPAL_RULE_SET_FILENAME = "municipal_rule_set.json"
 DOMAIN_GATE_REPORT_FILENAME = "domain_gate_report.json"
 
 
@@ -69,6 +73,7 @@ class PipelineResult:
     domain_gate: DomainGateReport | None = None
     utility_solver: UtilitySolverResult | None = None
     compiled_utility_ir: Path | None = None
+    municipal_rule_set: Path | None = None
     domain_gate_report: Path | None = None
     phases_log: tuple[tuple[str, str], ...] = ()  # (phase_name, outcome_note) 序列
 
@@ -106,8 +111,8 @@ def run_pipeline(
       时对应批次明确 ESCALATE，不静默跳过。
     - 声明 ``municipal-straight-gravity-solver`` 的 playbook 可通过 utility_solver_input
       执行确定性求解并落 compiled IR；输入缺失或证据不足均为 UNKNOWN，构建前阻断。
-    - v0.2 在 collision_context 完整时确定性计算 AABB/既有直圆管净距并产出
-      clash_free PASS/FAIL；上下文缺失不等于无障碍物，保持 UNKNOWN。
+    - v0.3 从 playbook 声明的受信任 rule_source 编译 MunicipalRuleSet；障碍物只提交
+      工程事实。高置信规则产生 PASS/FAIL，中低置信或条件不足产生 UNKNOWN。
     - domain_evidence 可补充 Solver 尚未判定的证据，但不能覆盖 Solver 已明确
       判定的 PASS/FAIL，避免外部布尔值绕过确定性工程门禁。
     - approval_fn 为空 且 yes=False:不审批(测试默认);yes=True 跳过所有审批门。
@@ -183,6 +188,7 @@ def run_pipeline(
     # ---------- 4. domain_solver + domain_gate(确定性 evidence；UNKNOWN 不得放行) ----------
     utility_solver: UtilitySolverResult | None = None
     compiled_utility_ir_path: Path | None = None
+    municipal_rule_set_path: Path | None = None
     domain_gate_report_path: Path | None = None
     domain_requirements = playbook["acceptance"].get("domain_gate")
     try:
@@ -217,11 +223,32 @@ def run_pipeline(
         else:
             try:
                 solver_payload = _load_solver_input(utility_solver_input)
+                rule_source = _resolve_domain_pack_resource(
+                    Path(playbook["path"]).parent,
+                    str(solver_phase.get("rule_source") or ""),
+                )
+                municipal_rule_set = compile_municipal_rule_set(
+                    rule_source,
+                    logical_source_path=str(solver_phase["rule_source"]),
+                )
                 utility_solver = solve_straight_gravity_utility(
                     solver_payload,
                     domain_requirements=domain_requirements,
+                    municipal_rule_set=municipal_rule_set,
                 )
-            except (OSError, json.JSONDecodeError, TypeError, UtilitySolverError) as exc:
+                municipal_rule_set_path = out / MUNICIPAL_RULE_SET_FILENAME
+                _write_json_artifact(
+                    municipal_rule_set_path,
+                    municipal_rule_set.model_dump(mode="json"),
+                )
+            except (
+                OSError,
+                json.JSONDecodeError,
+                TypeError,
+                MunicipalRuleError,
+                UtilitySolverError,
+                ValueError,
+            ) as exc:
                 error = f"领域 Solver 执行失败: {exc}"
                 _phase("domain_solver", f"失败: {exc}")
                 return PipelineResult(
@@ -277,6 +304,7 @@ def run_pipeline(
             domain_gate=domain_report,
             utility_solver=utility_solver,
             compiled_utility_ir=compiled_utility_ir_path,
+            municipal_rule_set=municipal_rule_set_path,
             domain_gate_report=domain_gate_report_path,
             phases_log=tuple(phases_log),
         )
@@ -365,6 +393,7 @@ def run_pipeline(
             domain_gate=domain_report,
             utility_solver=utility_solver,
             compiled_utility_ir=compiled_utility_ir_path,
+            municipal_rule_set=municipal_rule_set_path,
             domain_gate_report=domain_gate_report_path,
             phases_log=tuple(phases_log),
         )
@@ -399,6 +428,7 @@ def run_pipeline(
         domain_gate=domain_report,
         utility_solver=utility_solver,
         compiled_utility_ir=compiled_utility_ir_path,
+        municipal_rule_set=municipal_rule_set_path,
         domain_gate_report=domain_gate_report_path,
         phases_log=tuple(phases_log),
     )
@@ -429,8 +459,40 @@ def _validate_solver_declaration(phase: dict[str, Any]) -> None:
         raise ValueError(
             f"Solver 输入 Schema 不匹配: playbook={declared_schema!r}, expected={expected_schema!r}"
         )
-    if UTILITY_SOLVER_INPUT_VERSION != "0.2":
-        raise ValueError(f"Runtime Solver 输入协议版本未受支持: {UTILITY_SOLVER_INPUT_VERSION!r}")
+    declared_rule_source = str(phase.get("rule_source") or "")
+    if not declared_rule_source:
+        raise ValueError("Solver 必须声明受信任 rule_source")
+    declared_rule_set_schema = str(phase.get("rule_set_schema") or "")
+    expected_rule_set_schema = "municipal_rule_set.schema.json"
+    if declared_rule_set_schema != expected_rule_set_schema:
+        raise ValueError(
+            "Solver Rule Set Schema 不匹配: "
+            f"playbook={declared_rule_set_schema!r}, expected={expected_rule_set_schema!r}"
+        )
+    if UTILITY_SOLVER_INPUT_VERSION != "0.3" or MUNICIPAL_RULE_SET_VERSION != "1.0":
+        raise ValueError(
+            "Runtime Solver/Rule Set 协议版本未受支持: "
+            f"input={UTILITY_SOLVER_INPUT_VERSION!r}, rules={MUNICIPAL_RULE_SET_VERSION!r}"
+        )
+
+
+def _resolve_domain_pack_resource(pack_dir: Path, declared_path: str) -> Path:
+    """把规则源限制在当前 Domain Pack 内，拒绝空值、绝对路径和 ``..`` 越界。"""
+    if not declared_path:
+        raise ValueError("Solver rule_source 不能为空")
+    relative = Path(declared_path)
+    if relative.is_absolute():
+        raise ValueError(f"Solver rule_source 必须是 Domain Pack 内相对路径: {declared_path!r}")
+    root = Path(pack_dir).resolve()
+    target = (root / relative).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"Solver rule_source 路径越界 Domain Pack: {declared_path!r}") from exc
+    if not target.is_file():
+        raise ValueError(f"Solver rule_source 不存在或不是文件: {declared_path!r}")
+    return target
+
 
 
 def _resolve_output_artifact(out_dir: Path, declared_path: str) -> Path:

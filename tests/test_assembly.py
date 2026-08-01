@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import base64
+import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
@@ -21,7 +22,12 @@ import pytest
 
 from openbimagent.assembly.batch_executor import make_batch_executor
 from openbimagent.assembly.builder import make_builder_fn
-from openbimagent.assembly.pipeline import _resolve_output_artifact, _validate_solver_declaration, run_pipeline
+from openbimagent.assembly.pipeline import (
+    _resolve_domain_pack_resource,
+    _resolve_output_artifact,
+    _validate_solver_declaration,
+    run_pipeline,
+)
 from openbimagent.orchestrator.dispatch import Verdict
 from openbimagent.session.schema import EventType
 from openbimagent.session.store import SessionStore
@@ -601,7 +607,7 @@ def _municipal_solver_input(
 ) -> dict[str, Any]:
     """构造 Pipeline 接线用的最小市政 Solver v0 输入。"""
     return {
-        "protocol_version": "0.2",
+        "protocol_version": "0.3",
         "request_id": "pipeline-case-001",
         "source_ir_sha256": "c" * 64,
         "coordinate_reference": {
@@ -659,6 +665,10 @@ def test_pipeline_solver_writes_ir_and_blocks_unknown_clash(tmp_path) -> None:
     assert result.ok is False
     assert result.utility_solver is not None
     assert result.compiled_utility_ir is not None and result.compiled_utility_ir.is_file()
+    assert result.municipal_rule_set is not None and result.municipal_rule_set.is_file()
+    rule_set_payload = json.loads(result.municipal_rule_set.read_text(encoding="utf-8"))
+    assert rule_set_payload["source_sha256"]
+    assert rule_set_payload["canonical_sha256"]
     assert result.domain_gate is not None and result.domain_gate.status.value == "UNKNOWN"
     assert "clash_free" in " ".join(result.domain_gate.unknown)
     assert "orchestrate" not in [name for name, _ in result.phases_log]
@@ -690,14 +700,9 @@ def test_pipeline_clash_fail_blocks_before_targets(tmp_path) -> None:
     obstacle = {
         "obstacle_id": "foundation-001",
         "kind": "aabb",
-        "category": "building_foundation",
+        "category": "building",
         "min_corner": {"x_m": 4.0, "y_m": -0.1, "z_m": 9.0},
         "max_corner": {"x_m": 6.0, "y_m": 0.1, "z_m": 11.0},
-        "clearance_rule": {
-            "rule_id": "MU-CLEAR-001",
-            "required_clearance_m": 0.5,
-            "source_clause": "project clash fixture",
-        },
     }
     result = run_pipeline(
         playbook_path=Path(__file__).resolve().parents[1]
@@ -722,12 +727,18 @@ def test_pipeline_clash_fail_blocks_before_targets(tmp_path) -> None:
 
 def test_pipeline_solver_supplemental_unknown_evidence_can_pass_v0_gate(tmp_path) -> None:
     """外部检查器可补齐 Solver UNKNOWN；缩减到 v0 已实现规则时进入后端。"""
-    pb = tmp_path / "municipal_v0.md"
-    source = (Path(__file__).resolve().parents[1] / "domain_packs" / "municipal_utility" / "playbook.md").read_text(encoding="utf-8")
+    source_pack = Path(__file__).resolve().parents[1] / "domain_packs" / "municipal_utility"
+    temp_pack = tmp_path / "municipal_v0"
+    (temp_pack / "knowledge").mkdir(parents=True)
+    pb = temp_pack / "playbook.md"
+    source = (source_pack / "playbook.md").read_text(encoding="utf-8")
     pb.write_text(source.replace(
         "manhole_spacing_in_spec: true, clash_free: true",
         "manhole_spacing_in_spec: true",
     ), encoding="utf-8")
+    (temp_pack / "knowledge" / "constraints.yaml").write_bytes(
+        (source_pack / "knowledge" / "constraints.yaml").read_bytes()
+    )
     result = run_pipeline(
         playbook_path=pb,
         out_dir=tmp_path / "out",
@@ -765,14 +776,38 @@ def test_solver_declaration_rejects_version_and_schema_drift() -> None:
     """Playbook 声明必须与 Runtime Solver 版本和输入 Schema 精确一致。"""
     base = {
         "solver": "municipal-straight-gravity-solver",
-        "solver_version": "0.2.0",
+        "solver_version": "0.3.0",
         "input_schema": "utility_solver_input.schema.json",
+        "rule_source": "knowledge/constraints.yaml",
+        "rule_set_schema": "municipal_rule_set.schema.json",
     }
     _validate_solver_declaration(base)
     with pytest.raises(ValueError, match="版本不匹配"):
         _validate_solver_declaration({**base, "solver_version": "9.9.9"})
     with pytest.raises(ValueError, match="Schema 不匹配"):
         _validate_solver_declaration({**base, "input_schema": "wrong.schema.json"})
+    with pytest.raises(ValueError, match="Rule Set Schema 不匹配"):
+        _validate_solver_declaration({**base, "rule_set_schema": "wrong.schema.json"})
+    with pytest.raises(ValueError, match="rule_source"):
+        _validate_solver_declaration({**base, "rule_source": ""})
+
+
+
+def test_solver_rule_source_cannot_escape_domain_pack(tmp_path) -> None:
+    """受信任规则源只允许当前 Domain Pack 内相对文件。"""
+    pack = tmp_path / "pack"
+    knowledge = pack / "knowledge"
+    knowledge.mkdir(parents=True)
+    constraints = knowledge / "constraints.yaml"
+    constraints.write_text("constraints: []\n", encoding="utf-8")
+    assert _resolve_domain_pack_resource(pack, "knowledge/constraints.yaml") == constraints.resolve()
+    with pytest.raises(ValueError, match="越界"):
+        _resolve_domain_pack_resource(pack, "../constraints.yaml")
+    with pytest.raises(ValueError, match="相对路径"):
+        _resolve_domain_pack_resource(pack, str(constraints.resolve()))
+    with pytest.raises(ValueError, match="不存在"):
+        _resolve_domain_pack_resource(pack, "knowledge/missing.yaml")
+
 
 
 def test_solver_output_path_cannot_escape_out_dir(tmp_path) -> None:

@@ -1,6 +1,6 @@
 # openBIMAgent 总体架构
 
-版本:v0.8.2(municipal clash-free v0)· 2026-08-01
+版本:v0.8.3(municipal executable rule set v0)· 2026-08-01
 依据:`docs/research/01-11` 全部调研与评审 · 决议:`docs/architecture/DECISIONS_DRAFT.md`
 姊妹篇:[COMPONENTS.md](COMPONENTS.md)(组件/agent/模型配置/上下文管理详设)
 
@@ -58,7 +58,7 @@ flowchart TB
 2. **Plan**:实例化 `PLAN.md` + `TODO.md` + **Scene Graph IR**(只出语义,C2)。
 3. **Schema 门禁**:工件过 JSON Schema,漂移即 FIX。
 4. **Research**:产出 `references.md`;资产进 `asset_cache`(hash + 429 退避)。
-5. **市政编译边界**：市政 Solver 将语义输入编译为 `compiled utility IR v1`；当前 `municipal-straight-gravity-solver v0.2.0` 限定两井一直管 DN300 混凝土污水切片，输出坐标参考、系统、节点/端口、管段、标高/坡度/管径、IFC 映射和逐对象规则证据。`StraightGravitySolverInput v0.2` 可携带 `collision_context`：缺失时 `clash_free=UNKNOWN`；显式声明完整覆盖后，对三维 AABB 与既有直圆管胶囊体执行实体表面最短净距检查，逐障碍物产出 PASS/FAIL Evidence，等于净距限值按 `1e-6m` 容差通过。障碍物是 Solver Context，不混入待交付管网实体。Pydantic 校验跨引用与工程数值一致性，JSON Schema 阻断协议漂移；编译入口禁止生成占位坐标。Playbook 声明 Solver 后，`assembly.run_pipeline()` 在 Planner 后执行它，落盘 `compiled_utility_ir.json` 和 `domain_gate_report.json`；输入缺失保持 UNKNOWN，外部 evidence 只能补齐 Solver UNKNOWN，不能覆盖已判定 PASS/FAIL。
+5. **市政规则编译与求解边界**：Playbook 声明包内 `rule_source`，Pipeline 将受信任 `knowledge/constraints.yaml` 确定性编译为 `MunicipalRuleSet v1.0`，保存 source SHA-256、编译器身份和 canonical SHA-256，再交给 `municipal-straight-gravity-solver v0.3.0`。Solver 输入 v0.3 的障碍物只描述类别、几何和工程属性，Schema 禁止调用方提交 `rule_id`、净距限值或条款。当前 DN300 污水直管切片中，仅高置信 `MU-CLEAR-001`（建筑物 2.5m）可执行并产生 PASS/FAIL；给水、燃气、电力、通信的中置信规则、属性缺失、无适用规则或歧义统一生成 UNKNOWN 并阻断。`collision_context` 缺失同样为 UNKNOWN；显式完整空清单可 PASS。几何仍按 AABB/既有直圆管胶囊体实体表面最短净距和 `1e-6m` 容差计算。障碍物是 Solver Context，不混入待交付实体；Pipeline 同时落盘本次实际使用的 `municipal_rule_set.json`；结果经 `compiled utility IR v1`、RuleEvidence 与 Domain Gate 放行或阻断，外部 evidence 不能覆盖 Solver 已判定的 PASS/FAIL。
 6. **逐资产建模**:SCAD 快检挡结构错误 → MCP 精建(只调预置库/包内 tools)→ 精检环渲染评分 → 不通过给可执行返工指令 → 回滚点 = 该批前快照。**每批产出 HTML 验收页给人看**。
 7. **灯光渲染**:统一色调、氛围、英雄机位、相机轨迹。
 8. **domain_gate + Deliver**:compiled IR 的规则证据确定性聚合为 `domain_evidence` → 领域硬门禁 → 交付清单(C5)→ **人审签**。缺失或 UNKNOWN 证据不能当作通过。

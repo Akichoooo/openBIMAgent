@@ -1,4 +1,4 @@
-"""市政管网 Solver v0.2：两井一直管重力污水的确定性竖向与碰撞求解。
+"""市政管网 Solver v0.3：两井一直管重力污水的确定性竖向与碰撞求解。
 
 该切片只解决已知起终点平面坐标和地面标高的一段直管。正 slope 表示沿
 start -> end 流向下降。若未指定 start_invert_m，Solver 选择同时满足两端
@@ -6,8 +6,9 @@ start -> end 流向下降。若未指定 start_invert_m，Solver 选择同时满
 明确报告合规或失败。
 
 碰撞上下文缺失时 ``clash_free`` 失败关闭为 UNKNOWN；调用方显式声明完整上下文后，
-Solver 对三维 AABB 和既有圆管胶囊体执行实体表面最短净距检查，逐障碍物生成
-PASS/FAIL RuleEvidence。v0.2 不做路线寻优或自动避让。水力能力仍为 UNKNOWN。
+Solver 对三维 AABB 和既有圆管胶囊体执行实体表面最短净距检查。净距限值只能来自
+受信任 MunicipalRuleSet：高置信规则生成 PASS/FAIL，中低置信或属性不足生成 UNKNOWN。
+v0.3 不做路线寻优或自动避让。水力能力仍为 UNKNOWN。
 """
 
 from __future__ import annotations
@@ -28,10 +29,16 @@ from openbimagent.utility.contracts import (
     CoordinateReference,
     StrictFrozenModel,
 )
+from openbimagent.utility.rules import (
+    MunicipalRuleSet,
+    RuleSelectionStatus,
+    compile_municipal_rule_set,
+    select_clearance_rule,
+)
 
-UTILITY_SOLVER_INPUT_VERSION = "0.2"
+UTILITY_SOLVER_INPUT_VERSION = "0.3"
 UTILITY_SOLVER_NAME = "municipal-straight-gravity-solver"
-UTILITY_SOLVER_VERSION = "0.2.0"
+UTILITY_SOLVER_VERSION = "0.3.0"
 MIN_SEWAGE_DIAMETER_MM = 300.0
 MIN_DN300_CONCRETE_SLOPE = 0.003
 MAX_DN300_TO_DN600_MANHOLE_SPACING_M = 75.0
@@ -50,23 +57,14 @@ class SolverEndpoint(StrictFrozenModel):
     ground_elevation_m: float
 
 
-class ClearanceRule(StrictFrozenModel):
-    """调用方已选择的净距规则；Solver 只执行，不猜测规范适用性。"""
-
-    rule_id: str = Field(min_length=1, max_length=256)
-    required_clearance_m: float = Field(ge=0)
-    source_clause: str = Field(min_length=1, max_length=1024)
-
-
 class AxisAlignedBoxObstacle(StrictFrozenModel):
     """坐标系内闭合三维轴对齐包围盒。"""
 
     obstacle_id: str = Field(min_length=1, max_length=256)
     kind: Literal["aabb"] = "aabb"
-    category: str = Field(min_length=1, max_length=128)
+    category: Literal["building"]
     min_corner: Coordinate3D
     max_corner: Coordinate3D
-    clearance_rule: ClearanceRule
 
     @model_validator(mode="after")
     def _validate_box(self) -> "AxisAlignedBoxObstacle":
@@ -87,11 +85,13 @@ class ExistingPipeObstacle(StrictFrozenModel):
 
     obstacle_id: str = Field(min_length=1, max_length=256)
     kind: Literal["existing_pipe"] = "existing_pipe"
-    category: str = Field(min_length=1, max_length=128)
+    category: Literal["water", "gas", "power", "telecom"]
     start_center: Coordinate3D
     end_center: Coordinate3D
     outer_diameter_mm: float = Field(gt=0)
-    clearance_rule: ClearanceRule
+    pressure_class: Literal["low", "medium", "high"] | None = None
+    burial_method: Literal["direct_buried", "duct", "tunnel"] | None = None
+    voltage_kv: float | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def _validate_centerline(self) -> "ExistingPipeObstacle":
@@ -121,9 +121,9 @@ class CollisionContext(StrictFrozenModel):
 
 
 class StraightGravitySolverInput(StrictFrozenModel):
-    """Solver v0.2 的版本化输入；仅支持单一 DN300 混凝土重力污水直管。"""
+    """Solver v0.3 的版本化输入；仅支持单一 DN300 混凝土重力污水直管。"""
 
-    protocol_version: str = Field(default=UTILITY_SOLVER_INPUT_VERSION, pattern=r"^0\.2$")
+    protocol_version: str = Field(default=UTILITY_SOLVER_INPUT_VERSION, pattern=r"^0\.3$")
     request_id: str = Field(min_length=1, max_length=256)
     source_ir_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     coordinate_reference: CoordinateReference
@@ -171,11 +171,18 @@ def solve_straight_gravity_utility(
     solver_input: StraightGravitySolverInput | dict[str, Any],
     *,
     domain_requirements: dict[str, Any] | None = None,
+    municipal_rule_set: MunicipalRuleSet | None = None,
     schema_gate: SchemaGate | None = None,
 ) -> UtilitySolverResult:
     """求解两井一直管并生成 compiled IR、规则证据和 Domain Gate 报告。"""
     gate = schema_gate or SchemaGate()
     try:
+        trusted_rule_set = (
+            compile_municipal_rule_set(schema_gate=gate)
+            if municipal_rule_set is None
+            else MunicipalRuleSet.model_validate(municipal_rule_set.model_dump(mode="json"))
+        )
+        gate.gate_or_fix("municipal_rule_set", trusted_rule_set.model_dump(mode="json"))
         request = (
             solver_input
             if isinstance(solver_input, StraightGravitySolverInput)
@@ -183,7 +190,7 @@ def solve_straight_gravity_utility(
         )
         gate.gate_or_fix("utility_solver_input", request.model_dump(mode="json"))
     except (ValidationError, SchemaGateError) as exc:
-        raise UtilitySolverError(f"Solver v0 输入未通过门禁: {exc}") from exc
+        raise UtilitySolverError(f"Solver v0 输入或 MunicipalRuleSet 未通过门禁: {exc}") from exc
 
     length_m = math.hypot(request.end.x_m - request.start.x_m, request.end.y_m - request.start.y_m)
     diameter_m = request.diameter_mm / 1000.0
@@ -274,6 +281,7 @@ def solve_straight_gravity_utility(
         ),
         *_clash_evidence(
             request,
+            rule_set=trusted_rule_set,
             ir_id=ir_id,
             segment_id=segment_id,
             start_invert_m=start_invert_m,
@@ -361,6 +369,7 @@ def solve_straight_gravity_utility(
 def _clash_evidence(
     request: StraightGravitySolverInput,
     *,
+    rule_set: MunicipalRuleSet,
     ir_id: str,
     segment_id: str,
     start_invert_m: float,
@@ -410,6 +419,7 @@ def _clash_evidence(
     )
     evidence: list[dict[str, Any]] = []
     for obstacle in sorted(context.obstacles, key=lambda item: item.obstacle_id):
+        attributes: dict[str, Any] = {}
         if isinstance(obstacle, AxisAlignedBoxObstacle):
             axis_distance_m = _segment_aabb_distance(
                 design_start,
@@ -432,12 +442,50 @@ def _clash_evidence(
                 - obstacle.outer_diameter_mm / 2000.0
             )
             geometry_label = "existing_pipe"
-        required_m = obstacle.clearance_rule.required_clearance_m
+            attributes = {
+                "outer_diameter_mm": obstacle.outer_diameter_mm,
+                "pressure_class": obstacle.pressure_class,
+                "burial_method": obstacle.burial_method,
+                "voltage_kv": obstacle.voltage_kv,
+            }
+        selection = select_clearance_rule(
+            rule_set,
+            obstacle_kind=obstacle.kind,
+            obstacle_category=obstacle.category,
+            attributes=attributes,
+        )
+        if selection.status is not RuleSelectionStatus.SELECTED or selection.rule is None:
+            evidence.append(
+                _unknown_evidence(
+                    evidence_id=f"{request.request_id}-clash-{obstacle.obstacle_id}",
+                    rule_id=(
+                        selection.rule.source_rule_id
+                        if selection.rule is not None
+                        else "MU-CLEAR-UNRESOLVED"
+                    ),
+                    check_name="clash_free",
+                    subject_id=segment_id,
+                    detail=(
+                        f"障碍物 {obstacle.obstacle_id!r} 净距规则未获生产执行资格: "
+                        f"status={selection.status.value}; {selection.detail}; "
+                        f"rule_set_sha256={rule_set.canonical_sha256}"
+                    ),
+                    source_clause=(
+                        selection.rule.source_clause
+                        if selection.rule is not None
+                        else "municipal rule selection unresolved"
+                    ),
+                    subject_type="segment",
+                )
+            )
+            continue
+        rule = selection.rule
+        required_m = rule.required_clearance_m
         passed = actual_clearance_m + CLASH_TOLERANCE_M >= required_m
         evidence.append(
             _evidence(
                 evidence_id=f"{request.request_id}-clash-{obstacle.obstacle_id}",
-                rule_id=obstacle.clearance_rule.rule_id,
+                rule_id=rule.source_rule_id,
                 check_name="clash_free",
                 passed=passed,
                 subject_type="segment",
@@ -445,12 +493,13 @@ def _clash_evidence(
                 detail=(
                     f"设计管段与 {geometry_label} 障碍物 {obstacle.obstacle_id!r} 的实体表面最短净距 "
                     f"{actual_clearance_m:.6f} m，要求不少于 {required_m:.6f} m；"
+                    f"规则 {rule.rule_key} 来自受信任规则集 {rule_set.rule_set_id}@{rule_set.canonical_sha256}；"
                     f"数值容差 {CLASH_TOLERANCE_M:g} m"
                 ),
                 measured_value=actual_clearance_m,
                 limit_value=required_m,
                 unit="m",
-                source_clause=obstacle.clearance_rule.source_clause,
+                source_clause=rule.source_clause,
             )
         )
     return evidence
@@ -670,13 +719,14 @@ def _unknown_evidence(
     subject_id: str,
     detail: str,
     source_clause: str,
+    subject_type: str = "network",
 ) -> dict[str, Any]:
     return {
         "evidence_id": evidence_id,
         "rule_id": rule_id,
         "check_name": check_name,
         "status": "unknown",
-        "subject_type": "network",
+        "subject_type": subject_type,
         "subject_id": subject_id,
         "detail": detail,
         "measured_value": None,
@@ -689,7 +739,6 @@ def _unknown_evidence(
 __all__ = [
     "AxisAlignedBoxObstacle",
     "CLASH_TOLERANCE_M",
-    "ClearanceRule",
     "CollisionContext",
     "ExistingPipeObstacle",
     "MIN_COVER_BY_SURFACE_M",

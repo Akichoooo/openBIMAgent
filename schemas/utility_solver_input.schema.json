@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://openbimagent.local/schemas/utility_solver_input.schema.json",
   "title": "StraightGravitySolverInput",
-  "description": "市政 Solver v0.2 输入：两井一直管、DN300 混凝土、重力污水；支持完整碰撞上下文中的 AABB 与既有直圆管净距检查。正坡度表示沿 start 到 end 流向下降。",
+  "description": "市政 Solver v0.3 输入：两井一直管、DN300 混凝土、重力污水。障碍物只提交工程事实，禁止调用方提交 rule_id、净距限值或规范条款；规则由受信任 MunicipalRuleSet 选择。",
   "type": "object",
   "required": [
     "protocol_version",
@@ -20,7 +20,7 @@
   ],
   "additionalProperties": false,
   "properties": {
-    "protocol_version": {"const": "0.2"},
+    "protocol_version": {"const": "0.3"},
     "request_id": {"type": "string", "minLength": 1, "maxLength": 256},
     "source_ir_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "coordinate_reference": {"$ref": "#/$defs/coordinate_reference"},
@@ -72,41 +72,42 @@
         "ground_elevation_m": {"type": "number"}
       }
     },
-    "clearance_rule": {
-      "type": "object",
-      "required": ["rule_id", "required_clearance_m", "source_clause"],
-      "additionalProperties": false,
-      "properties": {
-        "rule_id": {"type": "string", "minLength": 1, "maxLength": 256},
-        "required_clearance_m": {"type": "number", "minimum": 0},
-        "source_clause": {"type": "string", "minLength": 1, "maxLength": 1024}
-      }
-    },
     "aabb_obstacle": {
       "type": "object",
-      "required": ["obstacle_id", "kind", "category", "min_corner", "max_corner", "clearance_rule"],
+      "required": ["obstacle_id", "kind", "category", "min_corner", "max_corner"],
       "additionalProperties": false,
       "properties": {
         "obstacle_id": {"type": "string", "minLength": 1, "maxLength": 256},
         "kind": {"const": "aabb"},
-        "category": {"type": "string", "minLength": 1, "maxLength": 128},
+        "category": {"const": "building"},
         "min_corner": {"$ref": "#/$defs/coordinate"},
-        "max_corner": {"$ref": "#/$defs/coordinate"},
-        "clearance_rule": {"$ref": "#/$defs/clearance_rule"}
+        "max_corner": {"$ref": "#/$defs/coordinate"}
       }
     },
     "existing_pipe_obstacle": {
       "type": "object",
-      "required": ["obstacle_id", "kind", "category", "start_center", "end_center", "outer_diameter_mm", "clearance_rule"],
+      "required": [
+        "obstacle_id",
+        "kind",
+        "category",
+        "start_center",
+        "end_center",
+        "outer_diameter_mm",
+        "pressure_class",
+        "burial_method",
+        "voltage_kv"
+      ],
       "additionalProperties": false,
       "properties": {
         "obstacle_id": {"type": "string", "minLength": 1, "maxLength": 256},
         "kind": {"const": "existing_pipe"},
-        "category": {"type": "string", "minLength": 1, "maxLength": 128},
+        "category": {"enum": ["water", "gas", "power", "telecom"]},
         "start_center": {"$ref": "#/$defs/coordinate"},
         "end_center": {"$ref": "#/$defs/coordinate"},
         "outer_diameter_mm": {"type": "number", "exclusiveMinimum": 0},
-        "clearance_rule": {"$ref": "#/$defs/clearance_rule"}
+        "pressure_class": {"type": ["string", "null"], "enum": ["low", "medium", "high", null]},
+        "burial_method": {"type": ["string", "null"], "enum": ["direct_buried", "duct", "tunnel", null]},
+        "voltage_kv": {"type": ["number", "null"], "exclusiveMinimum": 0}
       }
     },
     "collision_context": {

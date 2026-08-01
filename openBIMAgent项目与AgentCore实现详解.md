@@ -1,6 +1,6 @@
 # openBIMAgent 项目与 Agent Core 实现详解
 
-> 更新日期：2026-07-31
+> 更新日期：2026-08-01
 > 当前判断：**M0 已附条件收官；M1 模块级能力已大体实现并完成首轮产品级接线；Subagent Runtime v1 已推进至 P1f 本地 Operator Console；M1.5 已落地 compiled utility IR v1 和市政 Solver v0 最小切片，但完整规则执行器、真实 BIM 构件生成和端到端交付仍未完成。**
 
 ## 1. 项目是什么
@@ -249,17 +249,16 @@ Pipeline 接线状态：Playbook 的 `solver/solver_version/input_schema/output/
 
 `src/openbimagent/utility/solver.py` 已实现第一个确定性市政切片：
 
-- 输入协议为 `StraightGravitySolverInput v0.2`，并由 `utility_solver_input.schema.json` 双重门禁；Runtime/Playbook Solver 版本为 `0.2.0`。
-- 仅支持单一重力污水系统、两井一直管、DN300 混凝土管。
-- 已知两端平面坐标和地面标高；正坡度表示沿 start 到 end 下降。
-- 未指定起点内底时，计算同时满足两端覆土的最浅剖面；指定后保留输入并报告 PASS/FAIL。
-- `collision_context=null` 表示碰撞范围事实缺失，`clash_free=UNKNOWN`；`coverage=complete` 表示调用方明确声明本次范围内清单完整，空清单可判定 PASS。
-- 当前障碍物支持三维 AABB 与既有直圆管；设计管按直径 0.3m 的实体包络，既有管按中心线加外半径的胶囊体，计算实体表面三维最短净距。
-- 每个障碍物携带显式 `ClearanceRule`，保存 rule ID、要求净距和条款；Solver 不按类别猜测规范适用性。实测净距加 `1e-6m` 容差不小于限值即 PASS，任一 FAIL 由现有 Evidence 聚合规则阻断。
-- 生成管径、坡度、覆土、井距和碰撞 PASS/FAIL RuleEvidence；水力因缺少输入保持 UNKNOWN。
-- 障碍物作为 Solver Context，不混入 `CompiledUtilityIR` 的交付管网实体；输出再次经过 compiled utility IR 的拓扑、端口、centerline、标高和坡度一致性校验。
+- 输入协议为 `StraightGravitySolverInput v0.3`，由 `utility_solver_input.schema.json` 双重门禁；Runtime/Playbook Solver 版本为 `0.3.0`。
+- `src/openbimagent/utility/rules.py` 将 Playbook 包内受信任 `knowledge/constraints.yaml` 编译为 `MunicipalRuleSet v1.0`，保存 source SHA-256、编译器身份、版本和 canonical SHA-256，并由 `municipal_rule_set.schema.json` 校验。
+- 障碍物输入只描述类别、几何和工程属性；Schema 明确禁止调用方填写 `rule_id`、`required_clearance_m` 或条款，从信任边界上消除自降限值。
+- 置信度策略为高置信 `production`、中低置信 `review_required`。当前仅 `MU-CLEAR-001:building`（建筑物↔DN300 污水管 2.5m）可形成生产 PASS/FAIL；给水直径分档、低压燃气、直埋电力和直埋通信虽已编译，但均为中置信，Solver 生成 UNKNOWN 并阻断。
+- 仅支持单一重力污水系统、两井一直管、DN300 混凝土管；已知两端平面坐标和地面标高，正坡度表示沿 start 到 end 下降。未指定起点内底时计算同时满足两端覆土的最浅剖面。
+- `collision_context=null` 表示碰撞范围事实缺失，`clash_free=UNKNOWN`；`coverage=complete` 表示清单完整，空清单可 PASS。三维 AABB 与既有直圆管按实体表面最短净距检查，`1e-6m` 容差用于边界判定。
+- 规则属性缺失、无适用规则或选择歧义同样失败关闭为 UNKNOWN；只有受信任 Rule Set 明确选出 production 规则时才计算 PASS/FAIL。
+- 生成管径、坡度、覆土、井距和碰撞 RuleEvidence；水力因缺少输入保持 UNKNOWN。障碍物不混入 `CompiledUtilityIR` 的交付实体。
 
-v0.2 不是路线寻优、自动避让或水力引擎；它把 `Solver → compiled IR → Evidence → Domain Gate` 从竖向规则扩展到第一条可审计三维碰撞闭环。
+v0.3 不是路线寻优、自动避让或水力引擎；它在三维碰撞闭环上补齐了“规范知识源 → 可执行规则集 → 确定性选择 → Evidence”的受信任规则链。
 
 ### 3.12 SCAD 与 Blender 双环
 
@@ -404,7 +403,7 @@ evaluate_domain_gate(
 仍缺：
 
 - 路线寻优、多井自动布置、复杂标高协调和水力 Solver（两井一直管 Solver v0 已实现）。
-- 全部约束的确定性执行器。
+- 全部约束的确定性执行器（当前只编译净距候选，且仅建筑物高置信条目可生产执行）。
 - 生产级 Vectorworks `vs.*`/IFC Builder。
 - IFC/IDS 真实验证。
 - 双宿主端到端冒烟与交付证据。
@@ -543,7 +542,7 @@ P1e 单机 Runtime IPC 的最终验收结果：P1e + CLI + Schema Gate + Runtime
 | targets 分发 | 已接通 | Python API 可双端；CLI 参数尚未产品化 |
 | domain_gate 裁决 | 最小可用 | 显式 evidence 四态；不是完整规则计算器 |
 | compiled utility IR v1 | 已实现 | 严格契约、Schema Gate、拓扑/坡度数值门禁、canonical hash、evidence 投影 |
-| 市政 Solver | v0.2 最小切片已实现 | 两井一直管 DN300 混凝土污水；生成 compiled IR、管径/坡度/覆土/井距 Evidence；完整上下文下 AABB/既有直圆管碰撞净距 PASS/FAIL，水力 UNKNOWN |
+| 市政 Solver | v0.3 最小切片已实现 | 两井一直管 DN300 混凝土污水；MunicipalRuleSet v1.0 从受信任 constraints 编译；障碍物禁自填限值；建筑物高置信规则可 PASS/FAIL，中置信管线规则 UNKNOWN，水力 UNKNOWN |
 | 市政 Vectorworks Builder | 未实现 | 需 compiled IR + IFC 映射 |
 | Deliver Gate | 已实现 | 文件 + 分数 + 审批 |
 | 通用 AgentLoop 内 MCP/vision/deliver tools | 未接通 | pipeline 已有独立生产链；subagent 已接 Runtime v1 |

@@ -14,8 +14,8 @@
 
 | 文档 | 内容 | 状态 |
 |---|---|---|
-| [ARCHITECTURE.md](architecture/ARCHITECTURE.md) | 设计原则、架构图、任务生命周期、双环+评分分层、Domain Pack、compiled utility IR、两个 MCP、Subagent Runtime P1f、HITL 与 Operator Console | v0.7 当前有效 |
-| [COMPONENTS.md](architecture/COMPONENTS.md) | 组件总表、core/utility 模块规格、Subagent Runtime/Operator Console、角色-模型绑定、多厂家模型配置、上下文管理与安全权限 | v0.7 当前有效 |
+| [ARCHITECTURE.md](architecture/ARCHITECTURE.md) | 设计原则、任务生命周期、Domain Pack、MunicipalRuleSet、compiled utility IR、两个 MCP、Subagent Runtime P1f、HITL 与 Operator Console | v0.8.3 当前有效 |
+| [COMPONENTS.md](architecture/COMPONENTS.md) | 组件总表、core/utility/Rule Set 模块规格、Subagent Runtime/Operator Console、模型配置、上下文管理与安全权限 | v0.8.3 当前有效 |
 | [DECISIONS_DRAFT.md](architecture/DECISIONS_DRAFT.md) | 全局架构决策决议:Domain Pack、12 条 P0、选型表 + 附录 A(v1.1 对齐 V1-V7) | v1.1 当前有效 |
 | [M0_PLAN.md](architecture/M0_PLAN.md) | M0 实施计划:六道验收、阶段 0-4、主会话/GLM/Flash 分工、风险 | v1 待开工 |
 
@@ -66,3 +66,4 @@
 - 2026-08-01:Subagent Runtime v1 完成 P1d 只读 Control Plane、P1e loopback Runtime IPC 与 P1f 本地 Operator Console；浏览器读持久化投影、写控制由服务端代理到唯一 Runtime lease owner，IPC token 不进入浏览器。ARCHITECTURE/COMPONENTS 更新至 v0.6。
 - 2026-07-31:市政主线新增 `municipal-straight-gravity-solver v0.1.0`：Solver v0 输出 compiled utility IR v1、坡度/管径/覆土/井距 RuleEvidence，并接入 Domain Gate；碰撞/水力保持 UNKNOWN 阻断。ARCHITECTURE/COMPONENTS 更新至 v0.8。
 - 2026-08-01:市政 Solver 升级至 v0.2.0：版本化 `collision_context` 支持 AABB 与既有直圆管三维实体净距，完整上下文将 `clash_free` 产出为可审计 PASS/FAIL；上下文缺失仍 UNKNOWN。ARCHITECTURE/COMPONENTS 更新至 v0.8.2。
+- 2026-08-01:市政 Solver 升级至 v0.3.0：新增 `MunicipalRuleSet v1.0`，从 Domain Pack 受信任 `constraints.yaml` 编译净距规则；Solver 输入移除调用方 `ClearanceRule`。仅高置信建筑物 2.5m 规则可生产 PASS/FAIL，中置信给水/燃气/电力/通信规则失败关闭为 UNKNOWN。ARCHITECTURE/COMPONENTS 更新至 v0.8.3。
