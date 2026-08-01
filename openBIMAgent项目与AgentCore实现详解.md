@@ -1,7 +1,7 @@
 # openBIMAgent 项目与 Agent Core 实现详解
 
-> 更新日期：2026-08-01
-> 当前判断：**M0 已附条件收官；M1 模块级能力已大体实现并完成首轮产品级接线；Subagent Runtime v1 已推进至 P1f 本地 Operator Console；M1.5 已落地 compiled utility IR v1 协议边界，但市政 Solver、完整规则执行器、真实 BIM 构件生成和端到端交付仍未完成。**
+> 更新日期：2026-07-31
+> 当前判断：**M0 已附条件收官；M1 模块级能力已大体实现并完成首轮产品级接线；Subagent Runtime v1 已推进至 P1f 本地 Operator Console；M1.5 已落地 compiled utility IR v1 和市政 Solver v0 最小切片，但完整规则执行器、真实 BIM 构件生成和端到端交付仍未完成。**
 
 ## 1. 项目是什么
 
@@ -14,7 +14,8 @@
 → Clarify 槽位澄清
 → Planner / Scene Graph IR
 → Schema Gate
-→ Domain Gate
+→ Domain Solver / Compiled Domain IR（Playbook 声明时）
+→ RuleEvidence / Domain Gate
 → Orchestrator
 → SCAD 快检（有几何 IR 时）
 → Blender 精检
@@ -240,9 +241,25 @@ P0 已新增真实 Subagent Runtime v1：
 - `domain_evidence()` 将逐对象 PASS/FAIL/UNKNOWN 按 `check_name` 确定性聚合，直接供现有 Domain Gate 使用。
 - `compile_solved_utility_ir()` 只校验 Solver 已完成的输出，不做路线求解、不猜测工程事实、不生成占位坐标。
 
-因此“编译 IR 契约”已经实现；路线、标高、井位、水力和避让 Solver 仍未实现，不能把当前入口误称为完整市政计算引擎。
+因此“编译 IR 契约”和两井一直管的最小竖向 Solver 已实现；路线寻优、多井布置、水力和避让 Solver 仍未实现，不能把当前切片误称为完整市政计算引擎。
 
-### 3.11 SCAD 与 Blender 双环
+### 3.11 市政 Solver v0
+
+Pipeline 接线状态：Playbook 的 `solver/solver_version/input_schema/output/acceptance` 已纳入正式 Plan 协议；`assembly.run_pipeline()` 在 Planner 后、Domain Gate 前执行 Solver。CLI 通过 `--utility-solver-input <json>` 显式提供版本化输入，流水线落盘 `compiled_utility_ir.json` 与 `domain_gate_report.json`。输入缺失不猜测工程事实而保持 UNKNOWN；Solver 已明确的 PASS/FAIL 不能被外部 evidence 覆盖，外部检查器只能补齐 UNKNOWN 项。
+
+`src/openbimagent/utility/solver.py` 已实现第一个确定性市政切片：
+
+- 输入协议为 `StraightGravitySolverInput v0.1`，并由 `utility_solver_input.schema.json` 双重门禁。
+- 仅支持单一重力污水系统、两井一直管、DN300 混凝土管。
+- 已知两端平面坐标和地面标高；正坡度表示沿 start 到 end 下降。
+- 未指定起点内底时，计算同时满足两端覆土的最浅剖面；指定后保留输入并报告 PASS/FAIL。
+- 生成管径、坡度、覆土、井距、碰撞和水力 RuleEvidence。
+- 碰撞与水力因缺少输入保持 UNKNOWN；默认生产 Domain Gate 继续阻断。
+- 输出再次经过 compiled utility IR 的拓扑、端口、centerline、标高和坡度一致性校验。
+
+v0 不是路线、水力或碰撞引擎；其目标是证明 `Solver → compiled IR → Evidence → Domain Gate` 的第一条可测试闭环。
+
+### 3.12 SCAD 与 Blender 双环
 
 SCAD 环：
 
@@ -260,7 +277,7 @@ Blender 环：
 - perfect score 通过，hard limit/convergence delta 返工，divergence fallback 升级。
 - 输出 HTML 验收页并保留 best-so-far。
 
-### 3.12 Blender MCP
+### 3.13 Blender MCP
 
 Agent Core 的 `BlenderMCPClient` 已实现 stdio 生命周期与工具调用，服务端/addon 侧已具备：
 
@@ -274,7 +291,7 @@ Agent Core 的 `BlenderMCPClient` 已实现 stdio 生命周期与工具调用，
 
 真实稳定性仍取决于 Blender 宿主、addon 版本和运行环境。
 
-### 3.13 Vectorworks MCP
+### 3.14 Vectorworks MCP
 
 链路：
 
@@ -384,7 +401,7 @@ evaluate_domain_gate(
 
 仍缺：
 
-- 路线、标高、井位和水力 Solver（compiled utility IR v1 契约已实现，Solver 尚未实现）。
+- 路线寻优、多井自动布置、复杂标高协调和水力 Solver（两井一直管 Solver v0 已实现）。
 - 全部约束的确定性执行器。
 - 生产级 Vectorworks `vs.*`/IFC Builder。
 - IFC/IDS 真实验证。
@@ -524,7 +541,7 @@ P1e 单机 Runtime IPC 的最终验收结果：P1e + CLI + Schema Gate + Runtime
 | targets 分发 | 已接通 | Python API 可双端；CLI 参数尚未产品化 |
 | domain_gate 裁决 | 最小可用 | 显式 evidence 四态；不是完整规则计算器 |
 | compiled utility IR v1 | 已实现 | 严格契约、Schema Gate、拓扑/坡度数值门禁、canonical hash、evidence 投影 |
-| 市政 Solver | 未实现 | M1.5 核心缺口；必须生成合法 compiled utility IR |
+| 市政 Solver | v0 最小切片已实现 | 两井一直管 DN300 混凝土污水；生成 compiled IR、四项确定性 Evidence，碰撞/水力 UNKNOWN |
 | 市政 Vectorworks Builder | 未实现 | 需 compiled IR + IFC 映射 |
 | Deliver Gate | 已实现 | 文件 + 分数 + 审批 |
 | 通用 AgentLoop 内 MCP/vision/deliver tools | 未接通 | pipeline 已有独立生产链；subagent 已接 Runtime v1 |

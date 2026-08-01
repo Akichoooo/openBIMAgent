@@ -17,9 +17,11 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
 
+import pytest
+
 from openbimagent.assembly.batch_executor import make_batch_executor
 from openbimagent.assembly.builder import make_builder_fn
-from openbimagent.assembly.pipeline import run_pipeline
+from openbimagent.assembly.pipeline import _resolve_output_artifact, _validate_solver_declaration, run_pipeline
 from openbimagent.orchestrator.dispatch import Verdict
 from openbimagent.session.schema import EventType
 from openbimagent.session.store import SessionStore
@@ -591,8 +593,31 @@ def test_pipeline_no_blender_escalates_and_deliver_missing(tmp_path) -> None:
     assert "deliver" in phase_names
 
 
+def _municipal_solver_input(*, slope: float = 0.003, end_x: float = 10.0) -> dict[str, Any]:
+    """构造 Pipeline 接线用的最小市政 Solver v0 输入。"""
+    return {
+        "protocol_version": "0.1",
+        "request_id": "pipeline-case-001",
+        "source_ir_sha256": "c" * 64,
+        "coordinate_reference": {
+            "crs_id": "LOCAL:PROJECT-M",
+            "origin": {"x_m": 0.0, "y_m": 0.0, "z_m": 0.0},
+            "horizontal_unit": "m",
+            "vertical_unit": "m",
+            "vertical_datum": "project datum",
+        },
+        "start": {"node_id": "mh-001", "x_m": 0.0, "y_m": 0.0, "ground_elevation_m": 11.0},
+        "end": {"node_id": "mh-002", "x_m": end_x, "y_m": 0.0, "ground_elevation_m": 11.0},
+        "diameter_mm": 300.0,
+        "material": "concrete",
+        "design_slope": slope,
+        "surface_context": "driveway",
+        "start_invert_m": None,
+    }
+
+
 def test_pipeline_domain_gate_unknown_blocks_before_targets(tmp_path) -> None:
-    """市政硬约束缺 evidence 时 UNKNOWN，必须在后端构建前阻断。"""
+    """市政 Solver 输入缺失时不猜测，Domain Gate UNKNOWN 且构建前阻断。"""
     result = run_pipeline(
         playbook_path=Path(__file__).resolve().parents[1]
         / "domain_packs" / "municipal_utility" / "playbook.md",
@@ -608,6 +633,116 @@ def test_pipeline_domain_gate_unknown_blocks_before_targets(tmp_path) -> None:
     assert result.domain_gate.status.value == "UNKNOWN"
     assert "Solver" in (result.error or "")
     assert "orchestrate" not in [name for name, _ in result.phases_log]
+    assert (tmp_path / "out" / "domain_gate_report.json").is_file()
+    assert not (tmp_path / "out" / "compiled_utility_ir.json").exists()
+
+
+def test_pipeline_solver_writes_ir_and_blocks_unknown_clash(tmp_path) -> None:
+    """显式 Solver 输入会执行并落盘 IR；v0 未知碰撞仍在构建前阻断。"""
+    result = run_pipeline(
+        playbook_path=Path(__file__).resolve().parents[1]
+        / "domain_packs" / "municipal_utility" / "playbook.md",
+        out_dir=tmp_path / "out",
+        utility_solver_input=_municipal_solver_input(),
+        blender_client=None,
+        vectorworks_client=None,
+        input_func=lambda p: "",
+        sessions_dir=tmp_path / "sessions",
+        yes=True,
+    )
+    assert result.ok is False
+    assert result.utility_solver is not None
+    assert result.compiled_utility_ir is not None and result.compiled_utility_ir.is_file()
+    assert result.domain_gate is not None and result.domain_gate.status.value == "UNKNOWN"
+    assert "clash_free" in " ".join(result.domain_gate.unknown)
+    assert "orchestrate" not in [name for name, _ in result.phases_log]
+
+
+def test_pipeline_solver_supplemental_unknown_evidence_can_pass_v0_gate(tmp_path) -> None:
+    """外部检查器可补齐 Solver UNKNOWN；缩减到 v0 已实现规则时进入后端。"""
+    pb = tmp_path / "municipal_v0.md"
+    source = (Path(__file__).resolve().parents[1] / "domain_packs" / "municipal_utility" / "playbook.md").read_text(encoding="utf-8")
+    pb.write_text(source.replace(
+        "manhole_spacing_in_spec: true, clash_free: true",
+        "manhole_spacing_in_spec: true",
+    ), encoding="utf-8")
+    result = run_pipeline(
+        playbook_path=pb,
+        out_dir=tmp_path / "out",
+        utility_solver_input=_municipal_solver_input(),
+        domain_evidence={"clash_free": {"ok": True, "detail": "offline clash fixture"}},
+        blender_client=None,
+        input_func=lambda p: "",
+        sessions_dir=tmp_path / "sessions",
+        yes=True,
+    )
+    assert result.domain_gate is not None and result.domain_gate.status.value == "PASS"
+    assert result.plan_run is not None and result.plan_run.ok is False
+    assert "orchestrate" in [name for name, _ in result.phases_log]
+
+
+def test_pipeline_solver_fail_blocks_and_does_not_dispatch(tmp_path) -> None:
+    """Solver 明确 FAIL 时不能被外部 PASS 覆盖，且不进入 target dispatch。"""
+    result = run_pipeline(
+        playbook_path=Path(__file__).resolve().parents[1]
+        / "domain_packs" / "municipal_utility" / "playbook.md",
+        out_dir=tmp_path / "out",
+        utility_solver_input=_municipal_solver_input(slope=0.002),
+        domain_evidence={"slope_in_spec": {"ok": True}},
+        blender_client=None,
+        input_func=lambda p: "",
+        sessions_dir=tmp_path / "sessions",
+        yes=True,
+    )
+    assert result.domain_gate is not None and result.domain_gate.status.value == "FAIL"
+    assert any("slope_in_spec" in item for item in result.domain_gate.failed)
+    assert "orchestrate" not in [name for name, _ in result.phases_log]
+
+
+def test_solver_declaration_rejects_version_and_schema_drift() -> None:
+    """Playbook 声明必须与 Runtime Solver 版本和输入 Schema 精确一致。"""
+    base = {
+        "solver": "municipal-straight-gravity-solver",
+        "solver_version": "0.1.0",
+        "input_schema": "utility_solver_input.schema.json",
+    }
+    _validate_solver_declaration(base)
+    with pytest.raises(ValueError, match="版本不匹配"):
+        _validate_solver_declaration({**base, "solver_version": "9.9.9"})
+    with pytest.raises(ValueError, match="Schema 不匹配"):
+        _validate_solver_declaration({**base, "input_schema": "wrong.schema.json"})
+
+
+def test_solver_output_path_cannot_escape_out_dir(tmp_path) -> None:
+    """Solver 输出只允许本次 out_dir 内相对路径。"""
+    out = tmp_path / "out"
+    assert _resolve_output_artifact(out, "nested/compiled.json") == (
+        out / "nested" / "compiled.json"
+    ).resolve()
+    with pytest.raises(ValueError, match="越界"):
+        _resolve_output_artifact(out, "../escaped.json")
+    with pytest.raises(ValueError, match="相对路径"):
+        _resolve_output_artifact(out, str((tmp_path / "absolute.json").resolve()))
+
+
+def test_pipeline_solver_invalid_input_is_explicit_error(tmp_path) -> None:
+    """Solver 输入字段错误时返回配置失败，不静默回退到旧 evidence。"""
+    payload = _municipal_solver_input()
+    payload["unexpected"] = True
+    result = run_pipeline(
+        playbook_path=Path(__file__).resolve().parents[1]
+        / "domain_packs" / "municipal_utility" / "playbook.md",
+        out_dir=tmp_path / "out",
+        utility_solver_input=payload,
+        domain_evidence={"clash_free": True},
+        blender_client=None,
+        input_func=lambda p: "",
+        sessions_dir=tmp_path / "sessions",
+        yes=True,
+    )
+    assert result.ok is False
+    assert "领域 Solver 执行失败" in (result.error or "")
+    assert "domain_gate" not in [name for name, _ in result.phases_log]
 
 
 def test_pipeline_with_mock_blender_full_success(tmp_path) -> None:

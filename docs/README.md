@@ -64,4 +64,4 @@
 - 2026-07-21:006/007 入库;主会话评审(11);ARCHITECTURE v0.3(评分分层/防放水五件套/HITL 基座/预览双线/模板族/并行路径);DECISIONS 附录 A(v1.1);`domain_packs/_base/` 创作指南;models.toml 同步调研值。
 - 2026-07-22~27:M0 实施(relay 008-011):constraints.yaml 二轮核实(25 条规则);核心链路(session/providers/schema_gate/clarify/loop);blender-mcp fork 八项改造(真实 Blender 10/10);双环(scad_loop/rubric/html_report/VLMCritic);装配层(pipeline/batch_executor/builder/cli);M0 冒烟收官(附条件通过,报告见 `relay_workspace/m0_smoke/report.md`,结论回填 M0_PLAN.md)。测试基线 229 passed。
 - 2026-08-01:Subagent Runtime v1 完成 P1d 只读 Control Plane、P1e loopback Runtime IPC 与 P1f 本地 Operator Console；浏览器读持久化投影、写控制由服务端代理到唯一 Runtime lease owner，IPC token 不进入浏览器。ARCHITECTURE/COMPONENTS 更新至 v0.6。
-- 2026-08-01:市政主线新增 `compiled utility IR v1`：严格 Pydantic 契约、JSON Schema、跨引用与坡度/标高/长度门禁、canonical SHA-256 和 Domain Gate evidence 投影。Solver 和规则执行器仍为下一阶段；ARCHITECTURE/COMPONENTS 更新至 v0.7。
+- 2026-07-31:市政主线新增 `municipal-straight-gravity-solver v0.1.0`：Solver v0 输出 compiled utility IR v1、坡度/管径/覆土/井距 RuleEvidence，并接入 Domain Gate；碰撞/水力保持 UNKNOWN 阻断。ARCHITECTURE/COMPONENTS 更新至 v0.8。

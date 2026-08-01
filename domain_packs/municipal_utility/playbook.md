@@ -15,9 +15,14 @@ phases:
     output: references.md        # 规范条文 + 既有管网案例 + 材质板
   - id: route_planning
     agent: utility_planner       # 领域角色(包内 agents/ 覆盖)
-    output: route_ir.json        # 路由 IR:管段/检查井/坡度/覆土,只出语义(C2)
+    solver: municipal-straight-gravity-solver
+    solver_version: 0.1.0
+    input_schema: utility_solver_input.schema.json
+    output: compiled_utility_ir.json # Solver 输出；不再把坐标/坡度留给 LLM 猜测
+    acceptance: [diameter_in_spec, slope_in_spec, cover_depth_in_spec, manhole_spacing_in_spec]
   - id: clash_check
     agent: clash_checker
+    input: compiled_utility_ir.json
     per_batch: [scad_check]      # 管网用 SCAD 环做三维碰撞/坡度快检
   - id: bim_build
     agent: modeler
@@ -29,7 +34,9 @@ phases:
 acceptance:
   scad_loop:    { min_score: 8.0, max_iters: 6 }
   blender_loop: { min_score: 8.5, max_iters: 4 }
-  domain_gate:  { clash_free: true, slope_in_spec: true }   # rubric_overlay 强约束
+  domain_gate:  # FAIL/UNKNOWN 均阻断；Solver v0 的 clash_free 仍为 UNKNOWN，不能直接交付
+    { diameter_in_spec: true, slope_in_spec: true, cover_depth_in_spec: true,
+      manhole_spacing_in_spec: true, clash_free: true }
 deliverables: [IFC 构件库, 纵断/剖切图, 汇报漫游视频]
 ---
 

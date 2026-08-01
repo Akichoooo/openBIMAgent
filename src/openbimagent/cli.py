@@ -105,6 +105,12 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--image-size", type=int, default=512, help="渲染图尺寸")
     run_p.add_argument("--no-hitl", action="store_true", help="run 结束后不进 HITL REPL(脚本场景)")
     run_p.add_argument("--session", default=None, help="续跑已有会话 id(分支会话;/tree fork 后续跑)")
+    run_p.add_argument(
+        "--utility-solver-input",
+        default=None,
+        type=Path,
+        help="市政 Solver v0 输入 JSON；Playbook 声明 Solver 时必须显式提供，不会从自然语言猜测",
+    )
 
     sess_p = sub.add_parser("sessions", help="列出多会话(/sessions 斜杠命令的 CLI 形态)")
     sess_p.add_argument("--sessions-dir", default=DEFAULT_SESSIONS_DIR, type=Path)
@@ -235,6 +241,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
             turntable_frames=args.turntable_frames,
             image_size=args.image_size,
             session_id=args.session,
+            utility_solver_input=args.utility_solver_input,
         )
     except KeyboardInterrupt:
         # pipeline 内部已落 checkpoint;兜底

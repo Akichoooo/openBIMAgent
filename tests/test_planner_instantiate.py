@@ -23,6 +23,7 @@ from openbimagent.schema_gate import gate as schema_gate
 PACKS = Path(__file__).resolve().parents[1] / "domain_packs"
 SINGLE = PACKS / "single_asset_hero" / "playbook.md"
 EDO = PACKS / "edo_cyberpunk_district" / "playbook.md"
+MUNICIPAL = PACKS / "municipal_utility" / "playbook.md"
 
 VALID_IR_REPLY = json.dumps(
     {
@@ -90,6 +91,23 @@ def test_load_playbook_single_asset_hero() -> None:
     assert "任务书" in pb["body"]
     assert schema_gate.validate_artifact("plan", pb["plan"]) == []  # 归一化 plan 必过门禁
     assert pb["plan"]["slots"]["asset"] == "一台日式自动售货机"  # slots 快照 = 默认值
+
+
+def test_load_playbook_municipal_solver_metadata_enters_plan() -> None:
+    """领域执行 metadata 必须进入正式 Plan，不能只停留在 raw Playbook。"""
+    pb = load_playbook(MUNICIPAL)
+    route = next(phase for phase in pb["plan"]["phases"] if phase["id"] == "route_planning")
+    assert route["solver"] == "municipal-straight-gravity-solver"
+    assert route["solver_version"] == "0.1.0"
+    assert route["input_schema"] == "utility_solver_input.schema.json"
+    assert route["output"] == "compiled_utility_ir.json"
+    assert route["acceptance"] == [
+        "diameter_in_spec",
+        "slope_in_spec",
+        "cover_depth_in_spec",
+        "manhole_spacing_in_spec",
+    ]
+    assert schema_gate.validate_artifact("plan", pb["plan"]) == []
 
 
 def test_load_playbook_edo_cyberpunk_district() -> None:

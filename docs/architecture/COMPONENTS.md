@@ -1,6 +1,6 @@
 # openBIMAgent 组件与运行配置详设
 
-版本:v0.7(compiled utility IR v1)· 2026-08-01 · 姊妹篇:[ARCHITECTURE.md](ARCHITECTURE.md)
+版本:v0.8.1(municipal Solver Pipeline)· 2026-08-01 · 姊妹篇:[ARCHITECTURE.md](ARCHITECTURE.md)
 
 本文档回答四个问题:**每个组件干什么、每个 agent 怎么配、多厂家模型怎么统管、上下文怎么扛住。**
 
@@ -12,7 +12,7 @@
 | ├ `clarify` | 追问:槽位检查、一问一答带默认值、放行评分 | 规则 + 小模型 | openBIMForge clarification-loop 思路 | M0 |
 | ├ `planner` | playbook → Scene Graph IR + PLAN.md/TODO.md | 强模型 JSON 输出 | SceneCraft/LayoutGPT | M0 |
 | ├ `schema_gate` | 工件 JSON Schema 校验,漂移即 FIX | jsonschema | 05 报告 | M0 |
-| ├ `utility` | Solver 输出的市政 compiled IR 契约、跨引用/数值门禁、canonical hash、evidence 投影 | Pydantic + JSON Schema | C2 + municipal utility pack | M1.5(v1 契约已实现) |
+| ├ `utility` | 市政 Solver v0、compiled IR 契约、跨引用/数值门禁、canonical hash、evidence 投影 | Pydantic + JSON Schema | C2 + municipal utility pack | M1.5(v0 Solver + v1 契约) |
 | ├ `orchestrator` | 子代理调度、PASS/FIX/ESCALATE、并发 ≤4 | Markdown 定义角色 | Claude Code subagents + orchestrator.py | M1 |
 | ├ `vision` | 双环自检、rubric、收敛 | 移植 + 新写 | forge_core/vision_loop + 03/10 报告 | M0(SCAD)/M1(Blender) |
 | ├ `deliver` | 交付门禁,C5 | 确定性检查 | delivery_gate 思路 | M1 |
@@ -52,13 +52,16 @@
 
 输出三件套:**Scene Graph IR**(JSON,资产+空间约束)、`PLAN.md`、`TODO.md`。只出语义不出坐标(C2);批次粒度 = 一次渲染检查单位。
 
-### 2.4 utility(compiled utility IR v1)
+### 2.4 utility(compiled utility IR v1 + Solver v0)
 
 - `contracts.py` 定义严格、冻结、禁止额外字段的 `CompiledUtilityIR`，包含 source hash、坐标参考、UtilitySystem、Node/Port、PipeSegment 和 RuleEvidence。
 - 运行时失败关闭：ID 唯一；节点、端口、管段、系统和证据引用必须闭合；管段 centerline 必须连接端口；水平长度、起终标高和坡度必须一致；重力流不允许逆坡；NaN/Infinity 不进入协议。
 - `canonical_json()/canonical_sha256()` 对系统、节点、端口、管段和证据按稳定 ID 排序，确保相同网络不因输入数组顺序产生不同摘要。
 - `domain_evidence()` 按 `check_name` 聚合逐对象证据，FAIL 优先、UNKNOWN 次之、全 PASS 才通过，可直接交给现有 `evaluate_domain_gate()`。
-- `compile_solved_utility_ir()` 是最小编译门禁，不负责路线求解，不推断工程属性，不生成占位坐标；Solver/规则执行器仍是下一阶段。
+- `compile_solved_utility_ir()` 是最小编译门禁，不负责路线求解，不推断工程属性，不生成占位坐标。
+- `solver.py` 新增 `StraightGravitySolverInput v0.1` 与 `municipal-straight-gravity-solver v0.1.0`：限定两井一直管 DN300 混凝土污水，根据两端平面坐标、地面标高、设计坡度和地表类型计算最浅合规内底标高；若给定起点内底则保留输入并以 Evidence 报告结果。
+- Solver v0 生成管径、坡度、覆土和井距 PASS/FAIL Evidence；缺少障碍物和水力参数时，碰撞/水力 Evidence 为 UNKNOWN。默认生产 Domain Gate 仍要求 `clash_free`，所以 UNKNOWN 不会被误报为可交付。
+- Pipeline 执行边界已落地：`run_pipeline(..., utility_solver_input=...)` 只在 Playbook 声明 Solver 时执行；CLI 使用 `--utility-solver-input` 显式传入 JSON。结果落盘 `compiled_utility_ir.json` 与 `domain_gate_report.json`；输入缺失保持 UNKNOWN，Solver 已判定的 PASS/FAIL 不允许被外部 evidence 覆盖，外部检查器只能补齐 UNKNOWN。
 
 ### 2.5 orchestrator(子代理调度)
 

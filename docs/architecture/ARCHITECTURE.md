@@ -1,6 +1,6 @@
 # openBIMAgent 总体架构
 
-版本:v0.7.0(compiled utility IR v1)· 2026-08-01
+版本:v0.8.1(municipal Solver Pipeline)· 2026-08-01
 依据:`docs/research/01-11` 全部调研与评审 · 决议:`docs/architecture/DECISIONS_DRAFT.md`
 姊妹篇:[COMPONENTS.md](COMPONENTS.md)(组件/agent/模型配置/上下文管理详设)
 
@@ -15,7 +15,8 @@
 7. **Domain Pack 垂直化**:通用基座 + 领域专家包;江户包是**模板范例**,不是唯一版本(模板族见 §4)。
 8. **工件即协议**:模型间只经工件文件交接,且工件过 **Schema 门禁**。
 9. **人在环上(HITL)**:用户可随时打断、回退、审批;基座能力见 §6.5,不是可选项。
-10. **能机器校验的不交给模型**:确定性规则走 domain_gate,VLM 只评外观/语义/布局。
+10. **能机器校验的不交给模型**：确定性规则走 domain_gate,VLM 只评外观/语义/布局。
+11. **领域执行显式输入**：Playbook 声明 Solver 时，输入必须来自版本化工件/CLI 参数；缺失不猜测，UNKNOWN 阻断。
 
 ## 1. 总体架构图
 
@@ -57,7 +58,7 @@ flowchart TB
 2. **Plan**:实例化 `PLAN.md` + `TODO.md` + **Scene Graph IR**(只出语义,C2)。
 3. **Schema 门禁**:工件过 JSON Schema,漂移即 FIX。
 4. **Research**:产出 `references.md`;资产进 `asset_cache`(hash + 429 退避)。
-5. **市政编译边界**:路线 Solver 将语义 IR 编译为 `compiled utility IR v1`；契约持有坐标参考、系统、节点/端口、管段、标高/坡度/管径、IFC 映射和逐对象规则证据。Pydantic 校验跨引用与工程数值一致性，JSON Schema 阻断协议漂移；编译入口禁止生成占位坐标。
+5. **市政编译边界**：市政 Solver 将语义输入编译为 `compiled utility IR v1`；当前 `municipal-straight-gravity-solver v0.1.0` 限定两井一直管 DN300 混凝土污水切片，输出坐标参考、系统、节点/端口、管段、标高/坡度/管径、IFC 映射和逐对象规则证据。Pydantic 校验跨引用与工程数值一致性，JSON Schema 阻断协议漂移；编译入口禁止生成占位坐标。Playbook 声明 Solver 后，`assembly.run_pipeline()` 在 Planner 后执行它，落盘 `compiled_utility_ir.json` 和 `domain_gate_report.json`；输入缺失保持 UNKNOWN，外部 evidence 只能补齐 Solver UNKNOWN，不能覆盖已判定 PASS/FAIL。
 6. **逐资产建模**:SCAD 快检挡结构错误 → MCP 精建(只调预置库/包内 tools)→ 精检环渲染评分 → 不通过给可执行返工指令 → 回滚点 = 该批前快照。**每批产出 HTML 验收页给人看**。
 7. **灯光渲染**:统一色调、氛围、英雄机位、相机轨迹。
 8. **domain_gate + Deliver**:compiled IR 的规则证据确定性聚合为 `domain_evidence` → 领域硬门禁 → 交付清单(C5)→ **人审签**。缺失或 UNKNOWN 证据不能当作通过。
@@ -111,6 +112,8 @@ domain_packs/<name>/
 ```
 
 **模板族**(`domain_packs/_base/` 有创作指南):五条硬性要求(调研先行/分资产/统一色调+磨损/子代理分工/每批渲染返工)为**通用核心**,所有包继承。三类范例:风格场景类(`edo_cyberpunk_district`)/ BIM 交付类(`municipal_utility`)/ 冒烟类(`single_asset_hero`)。**两 MCP 并行生成路径**:`targets` 按包选用,可单用可并用;Blender 经 Bonsai 出 IFC 列为 M2 评估。远程拉取(Goose 式)P1。
+
+Domain Pack 不是提示词包。提示词和 Playbook 负责语义澄清、角色分工与流程；领域正确性必须由 Semantic Schema、Constraints、Solver、Compiled Domain IR、RuleEvidence、Domain Gate、Host Builder、IFC/IDS Mapping、Deliver Checks 和 Benchmark Cases共同承担。切换到建筑领域时复用 Agent Runtime、Artifact、Approval、Schema/Domain/Deliver Gate 与宿主通道，替换建筑 Semantic/Compiled IR、规范规则、布局/构件/疏散 Solver、建筑 Builder 和交付检查，禁止复制一套 Agent Core。
 
 ## 5. 两个 MCP 的规格(定稿)
 

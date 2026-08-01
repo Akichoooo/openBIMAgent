@@ -31,7 +31,17 @@
           "id": { "type": "string", "minLength": 1 },
           "agent": { "type": "string", "description": "负责角色(对应 agents/*.md 或包内覆盖)。" },
           "tools": { "type": "array", "items": { "type": "string" }, "description": "阶段级工具/权限范围。" },
+          "input": { "type": "string", "minLength": 1, "description": "阶段显式输入工件路径。" },
           "output": { "type": "string", "description": "阶段输出工件路径。" },
+          "solver": { "type": "string", "minLength": 1, "description": "确定性领域 Solver 标识。" },
+          "solver_version": { "type": "string", "minLength": 1, "description": "Solver 协议/实现版本。" },
+          "input_schema": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+\\.schema\\.json$", "description": "Solver 输入 JSON Schema 文件名。" },
+          "acceptance": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1 },
+            "description": "该阶段必须生成的确定性 evidence 名称。"
+          },
           "status": { "enum": ["pending", "in_progress", "done", "blocked"], "default": "pending" }
         }
       }

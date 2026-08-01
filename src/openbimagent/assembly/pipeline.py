@@ -38,9 +38,20 @@ from openbimagent.orchestrator.dispatch import PlanRunResult, run_plan
 from openbimagent.planner.instantiate import PlanArtifacts, instantiate, load_playbook
 from openbimagent.session.schema import EventType
 from openbimagent.session.store import SessionStore
+from openbimagent.utility import (
+    UTILITY_SOLVER_INPUT_VERSION,
+    UTILITY_SOLVER_NAME,
+    UTILITY_SOLVER_VERSION,
+    UtilitySolverError,
+    UtilitySolverResult,
+    solve_straight_gravity_utility,
+)
 
 OnPhase = Callable[[str, dict[str, Any]], None]
 """阶段进度回调:(phase_name, payload) → None;CLI 用来打印阶段标题。"""
+
+COMPILED_UTILITY_IR_FILENAME = "compiled_utility_ir.json"
+DOMAIN_GATE_REPORT_FILENAME = "domain_gate_report.json"
 
 
 @dataclass(frozen=True)
@@ -56,6 +67,9 @@ class PipelineResult:
     error: str | None = None
     plan_artifacts: PlanArtifacts | None = None
     domain_gate: DomainGateReport | None = None
+    utility_solver: UtilitySolverResult | None = None
+    compiled_utility_ir: Path | None = None
+    domain_gate_report: Path | None = None
     phases_log: tuple[tuple[str, str], ...] = ()  # (phase_name, outcome_note) 序列
 
 
@@ -68,6 +82,7 @@ def run_pipeline(
     vectorworks_client: Any = None,
     vectorworks_builder: VectorworksBuilder | None = None,
     domain_evidence: dict[str, Any] | None = None,
+    utility_solver_input: dict[str, Any] | Path | None = None,
     scad_critic: Any = None,
     render_critic: Any = None,
     input_func: Callable[[str], str] = input,
@@ -89,8 +104,10 @@ def run_pipeline(
     - registry 为空:planner + builder 都走确定性模板(可离线跑,测试默认路径)。
     - ``targets`` 控制后端；未声明时向后兼容为 ``[blender]``。声明目标缺少 client/builder
       时对应批次明确 ESCALATE，不静默跳过。
-    - acceptance.domain_gate 启用项必须在 domain_evidence 中有显式 bool 证据；缺失为
-      UNKNOWN 并在构建前阻断，避免语义 IR 被误判为工程合规。
+    - 声明 ``municipal-straight-gravity-solver`` 的 playbook 可通过 utility_solver_input
+      执行确定性求解并落 compiled IR；输入缺失或证据不足均为 UNKNOWN，构建前阻断。
+    - domain_evidence 可补充 Solver 尚未判定的碰撞等证据，但不能覆盖 Solver 已明确
+      判定的 PASS/FAIL，避免外部布尔值绕过确定性工程门禁。
     - approval_fn 为空 且 yes=False:不审批(测试默认);yes=True 跳过所有审批门。
     - Ctrl+C 中断:落 checkpoint 事件到 session,返回 interrupted=True。
     """
@@ -161,11 +178,89 @@ def run_pipeline(
     ir = json.loads(plan_artifacts.scene_graph_ir.read_text(encoding="utf-8"))
     _phase("planner_instantiate", f"ir_assets={len(ir.get('assets', []))} batches={len(ir.get('batches', []))}")
 
-    # ---------- 4. domain_gate(确定性 evidence；UNKNOWN 不得放行) ----------
-    domain_report = evaluate_domain_gate(
-        playbook["acceptance"].get("domain_gate"),
-        domain_evidence,
-    )
+    # ---------- 4. domain_solver + domain_gate(确定性 evidence；UNKNOWN 不得放行) ----------
+    utility_solver: UtilitySolverResult | None = None
+    compiled_utility_ir_path: Path | None = None
+    domain_gate_report_path: Path | None = None
+    domain_requirements = playbook["acceptance"].get("domain_gate")
+    try:
+        solver_phase = _find_solver_phase(playbook)
+    except ValueError as exc:
+        _phase("domain_solver", f"失败: {exc}")
+        return PipelineResult(
+            ok=False,
+            artifacts_dir=out,
+            session=store,
+            error=str(exc),
+            plan_artifacts=plan_artifacts,
+            phases_log=tuple(phases_log),
+        )
+    effective_evidence = dict(domain_evidence or {}) if solver_phase is None else {}
+    if solver_phase is not None:
+        solver_name = str(solver_phase.get("solver") or "")
+        try:
+            _validate_solver_declaration(solver_phase)
+        except ValueError as exc:
+            _phase("domain_solver", f"失败: {exc}")
+            return PipelineResult(
+                ok=False,
+                artifacts_dir=out,
+                session=store,
+                error=str(exc),
+                plan_artifacts=plan_artifacts,
+                phases_log=tuple(phases_log),
+            )
+        if utility_solver_input is None:
+            _phase("domain_solver", f"solver={solver_name} 输入缺失；不猜测坐标、标高或规范参数")
+        else:
+            try:
+                solver_payload = _load_solver_input(utility_solver_input)
+                utility_solver = solve_straight_gravity_utility(
+                    solver_payload,
+                    domain_requirements=domain_requirements,
+                )
+            except (OSError, json.JSONDecodeError, TypeError, UtilitySolverError) as exc:
+                error = f"领域 Solver 执行失败: {exc}"
+                _phase("domain_solver", f"失败: {exc}")
+                return PipelineResult(
+                    ok=False,
+                    artifacts_dir=out,
+                    session=store,
+                    error=error,
+                    plan_artifacts=plan_artifacts,
+                    phases_log=tuple(phases_log),
+                )
+            try:
+                compiled_utility_ir_path = _resolve_output_artifact(
+                    out,
+                    str(solver_phase.get("output") or COMPILED_UTILITY_IR_FILENAME),
+                )
+            except ValueError as exc:
+                _phase("domain_solver", f"失败: {exc}")
+                return PipelineResult(
+                    ok=False,
+                    artifacts_dir=out,
+                    session=store,
+                    error=str(exc),
+                    plan_artifacts=plan_artifacts,
+                    utility_solver=utility_solver,
+                    phases_log=tuple(phases_log),
+                )
+            _write_json_artifact(
+                compiled_utility_ir_path,
+                utility_solver.compiled_ir.model_dump(mode="json"),
+            )
+            solver_evidence = utility_solver.compiled_ir.domain_evidence()
+            effective_evidence = _merge_domain_evidence(solver_evidence, effective_evidence)
+            _phase(
+                "domain_solver",
+                f"solver={solver_name} ir={compiled_utility_ir_path.name} "
+                f"sha256={utility_solver.compiled_ir.canonical_sha256()}",
+            )
+
+    domain_report = evaluate_domain_gate(domain_requirements, effective_evidence)
+    domain_gate_report_path = out / DOMAIN_GATE_REPORT_FILENAME
+    _write_json_artifact(domain_gate_report_path, _domain_gate_payload(domain_report))
     _phase(
         "domain_gate",
         f"status={domain_report.status.value} failed={list(domain_report.failed)} unknown={list(domain_report.unknown)}",
@@ -178,6 +273,9 @@ def run_pipeline(
             error=domain_report.rework_instruction or "domain_gate 未通过",
             plan_artifacts=plan_artifacts,
             domain_gate=domain_report,
+            utility_solver=utility_solver,
+            compiled_utility_ir=compiled_utility_ir_path,
+            domain_gate_report=domain_gate_report_path,
             phases_log=tuple(phases_log),
         )
 
@@ -263,6 +361,9 @@ def run_pipeline(
             interrupted=True,
             error="Ctrl+C",
             domain_gate=domain_report,
+            utility_solver=utility_solver,
+            compiled_utility_ir=compiled_utility_ir_path,
+            domain_gate_report=domain_gate_report_path,
             phases_log=tuple(phases_log),
         )
     escalated = list(plan_run.escalated)
@@ -294,8 +395,109 @@ def run_pipeline(
         session=store,
         plan_artifacts=plan_artifacts,
         domain_gate=domain_report,
+        utility_solver=utility_solver,
+        compiled_utility_ir=compiled_utility_ir_path,
+        domain_gate_report=domain_gate_report_path,
         phases_log=tuple(phases_log),
     )
+
+
+def _find_solver_phase(playbook: dict[str, Any]) -> dict[str, Any] | None:
+    """返回声明 Solver 的阶段；未声明时保持旧 Playbook 的无 Solver 语义。"""
+    phases = playbook.get("phases") or []
+    matches = [p for p in phases if isinstance(p, dict) and p.get("solver")]
+    if len(matches) > 1:
+        raise ValueError(f"一个 Playbook 只能声明一个领域 Solver，实际 {len(matches)} 个")
+    return matches[0] if matches else None
+
+
+def _validate_solver_declaration(phase: dict[str, Any]) -> None:
+    """声明必须与内置 Solver 契约逐项匹配，禁止名称相同但版本/Schema 漂移。"""
+    solver_name = str(phase.get("solver") or "")
+    if solver_name != UTILITY_SOLVER_NAME:
+        raise ValueError(f"不支持的领域 Solver: {solver_name!r}")
+    declared_version = str(phase.get("solver_version") or "")
+    if declared_version != UTILITY_SOLVER_VERSION:
+        raise ValueError(
+            f"Solver 版本不匹配: playbook={declared_version!r}, runtime={UTILITY_SOLVER_VERSION!r}"
+        )
+    expected_schema = "utility_solver_input.schema.json"
+    declared_schema = str(phase.get("input_schema") or "")
+    if declared_schema != expected_schema:
+        raise ValueError(
+            f"Solver 输入 Schema 不匹配: playbook={declared_schema!r}, expected={expected_schema!r}"
+        )
+    if UTILITY_SOLVER_INPUT_VERSION != "0.1":
+        raise ValueError(f"Runtime Solver 输入协议版本未受支持: {UTILITY_SOLVER_INPUT_VERSION!r}")
+
+
+def _resolve_output_artifact(out_dir: Path, declared_path: str) -> Path:
+    """将 Playbook 输出限制在本次 out_dir 内，拒绝绝对路径与 ``..`` 越界。"""
+    relative = Path(declared_path)
+    if relative.is_absolute():
+        raise ValueError(f"Solver 输出必须是 out_dir 内相对路径: {declared_path!r}")
+    root = out_dir.resolve()
+    target = (root / relative).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"Solver 输出路径越界 out_dir: {declared_path!r}") from exc
+    return target
+
+
+def _load_solver_input(value: dict[str, Any] | Path) -> dict[str, Any]:
+    """读取版本化 Solver 输入；只接受 mapping 或 JSON 文件，不从 clarify 猜测工程参数。"""
+    if isinstance(value, Path):
+        payload = json.loads(value.read_text(encoding="utf-8"))
+    elif isinstance(value, dict):
+        payload = value
+    else:
+        raise TypeError(f"utility_solver_input 必须是 dict 或 JSON Path，实际 {type(value).__name__}")
+    if not isinstance(payload, dict):
+        raise TypeError("utility_solver_input JSON 根必须是 object")
+    return payload
+
+
+def _write_json_artifact(path: Path, payload: dict[str, Any]) -> None:
+    """以稳定、可审计的 UTF-8 JSON 落盘领域工件。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _merge_domain_evidence(
+    solver_evidence: dict[str, Any],
+    supplemental_evidence: dict[str, Any],
+) -> dict[str, Any]:
+    """合并领域证据：Solver 的明确 PASS/FAIL 不可覆盖，UNKNOWN 可由后续检查器补齐。"""
+    merged = dict(solver_evidence)
+    for rule, extra in supplemental_evidence.items():
+        current = merged.get(rule)
+        current_state = _evidence_ok(current)
+        if current_state is None:
+            merged[rule] = extra
+    return merged
+
+
+def _evidence_ok(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, dict):
+        state = value.get("ok")
+        return state if isinstance(state, bool) else None
+    return None
+
+
+def _domain_gate_payload(report: DomainGateReport) -> dict[str, Any]:
+    return {
+        "status": report.status.value,
+        "ok": report.ok,
+        "required": list(report.required),
+        "passed": list(report.passed),
+        "failed": list(report.failed),
+        "unknown": list(report.unknown),
+        "details": list(report.details),
+        "rework_instruction": report.rework_instruction,
+    }
 
 
 def _open_or_create_session(sessions_root: Path, session_id: str | None, playbook_path: Path) -> SessionStore:

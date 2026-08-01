@@ -130,8 +130,8 @@ def _load_frontmatter(raw: str, path: Path) -> dict[str, Any]:
 def normalize_plan(playbook: dict[str, Any], slots_filled: dict[str, Any]) -> dict[str, Any]:
     """playbook frontmatter → plan.schema.json 形态的结构化数据(PLAN.md/TODO.md 的同源数据)。
 
-    phases 只保留 schema 允许的 id/agent/tools/output/status(batches/per_batch 是展开规则,
-    不进 plan 数据本体);slots 快照 = 默认值 ← slots_filled 覆盖(Clarify 放行后回填)。
+    phases 保留执行协议字段(id/agent/tools/output/solver metadata/acceptance/status)，
+    batches/per_batch 仍是展开规则不进入 plan；slots 快照 = 默认值 ← slots_filled 覆盖。
     """
     slots: dict[str, Any] = {}
     for s in playbook.get("slot_defs") or []:
@@ -142,7 +142,7 @@ def normalize_plan(playbook: dict[str, Any], slots_filled: dict[str, Any]) -> di
     phases: list[dict[str, Any]] = []
     for p in playbook.get("phases") or []:
         phase: dict[str, Any] = {"id": str(p.get("id") or "")}
-        for key in ("agent", "tools", "output"):
+        for key in ("agent", "tools", "output", "solver", "solver_version", "input_schema", "input", "acceptance"):
             if key in p:
                 phase[key] = p[key]
         phase["status"] = str(p.get("status") or "pending")

@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/utility_solver_input.schema.json",
+  "title": "StraightGravitySolverInput",
+  "description": "市政 Solver v0 输入：两井一直管、DN300 混凝土、重力污水。正坡度表示沿 start 到 end 流向下降。",
+  "type": "object",
+  "required": [
+    "protocol_version",
+    "request_id",
+    "source_ir_sha256",
+    "coordinate_reference",
+    "start",
+    "end",
+    "diameter_mm",
+    "material",
+    "design_slope",
+    "surface_context",
+    "start_invert_m"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": {"const": "0.1"},
+    "request_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "source_ir_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "coordinate_reference": {"$ref": "#/$defs/coordinate_reference"},
+    "start": {"$ref": "#/$defs/endpoint"},
+    "end": {"$ref": "#/$defs/endpoint"},
+    "diameter_mm": {"const": 300.0},
+    "material": {"const": "concrete"},
+    "design_slope": {"type": "number", "minimum": 0},
+    "surface_context": {"enum": ["driveway", "sidewalk"]},
+    "start_invert_m": {"type": ["number", "null"]}
+  },
+  "$defs": {
+    "coordinate": {
+      "type": "object",
+      "required": ["x_m", "y_m", "z_m"],
+      "additionalProperties": false,
+      "properties": {
+        "x_m": {"type": "number"},
+        "y_m": {"type": "number"},
+        "z_m": {"type": "number"}
+      }
+    },
+    "coordinate_reference": {
+      "type": "object",
+      "required": ["crs_id", "origin", "horizontal_unit", "vertical_unit", "vertical_datum"],
+      "additionalProperties": false,
+      "properties": {
+        "crs_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "origin": {"$ref": "#/$defs/coordinate"},
+        "horizontal_unit": {"const": "m"},
+        "vertical_unit": {"const": "m"},
+        "vertical_datum": {"type": ["string", "null"], "maxLength": 256}
+      }
+    },
+    "endpoint": {
+      "type": "object",
+      "required": ["node_id", "x_m", "y_m", "ground_elevation_m"],
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "x_m": {"type": "number"},
+        "y_m": {"type": "number"},
+        "ground_elevation_m": {"type": "number"}
+      }
+    }
+  }
+}
