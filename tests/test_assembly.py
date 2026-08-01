@@ -607,7 +607,7 @@ def _municipal_solver_input(
 ) -> dict[str, Any]:
     """构造 Pipeline 接线用的最小市政 Solver v0 输入。"""
     return {
-        "protocol_version": "0.3",
+        "protocol_version": "0.4",
         "request_id": "pipeline-case-001",
         "source_ir_sha256": "c" * 64,
         "coordinate_reference": {
@@ -776,7 +776,7 @@ def test_solver_declaration_rejects_version_and_schema_drift() -> None:
     """Playbook 声明必须与 Runtime Solver 版本和输入 Schema 精确一致。"""
     base = {
         "solver": "municipal-straight-gravity-solver",
-        "solver_version": "0.3.0",
+        "solver_version": "0.4.0",
         "input_schema": "utility_solver_input.schema.json",
         "rule_source": "knowledge/constraints.yaml",
         "rule_set_schema": "municipal_rule_set.schema.json",

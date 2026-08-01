@@ -8,8 +8,9 @@
 #   value/range    - 数值或区间
 #   unit           - 单位
 #   source_clause  - 准确条文号(含规范编号)
-#   verified_by    - 核实方式(original_text=见规范原文转载 / authoritative_secondary=权威二手 / unverified=未查到)
-#   confidence     - high / medium / low
+#   verified_by    - 旧知识条目的核实方式；可执行净距规则改用 verification 结构化证据
+#   verification   - 标准身份、状态、内容副本、SHA-256、页表定位、核验日期与适用性完整性
+#   confidence     - high / medium / low；high 本身不等于 production，仍须通过 verification 门禁
 # 消费方:domain_gate(确定性规则校验)。数值错一条,生成的管网就错一片,故低置信条目需人工复核后再上线。
 
 constraints:
@@ -213,84 +214,125 @@ constraints:
     confidence: high
     note: "5 条避让原则按优先级排序;用词为'宜'(推荐)。原 yaml MU-AVOID-001 只列第 1 条,现补全 5 条。条款号(§3.0.4)置信度 medium,内容置信度 high。"
 
-  # ============ 六、管线最小水平净距(GB 50289-2016 表 B.0.1)============
-  # 任务 B 第 2 项:给排水/燃气/电力/通信 两两组合至少 6 组
+  # ============ 六、管线最小水平净距(GB 50289-2016 第 4.1.9 条 / 表 4.1.9)============
+  # 内容核验:2026-08-01 直接核对政府域名 PDF 第 13-15 页横向原表,并用独立 PDF 版面交叉复核。
+  # 标准状态与表格数值分别取证；本表 4.1.9 为一般条文，不属于本规范黑体强制性条文。
+  # 4.1.9 允许在受限条件下采取安全措施后减小净距，但当前系统没有例外审批协议，故不允许调用方覆写减距。
   - rule_id: MU-CLEAR-001
     category: horizontal_clearance
     parameter: clearance_building_to_sewage_rain
     value: 2.5
     unit: m
-    source_clause: GB 50289-2016 表(工程管线之间及其与建(构)筑物之间的最小水平净距)
-    verified_by: authoritative_secondary
+    source_clause: GB 50289-2016 §4.1.9 表 4.1.9
+    verified_by: original_table_crosscheck
     confidence: high
-    note: 建筑物 ↔ 污水雨水管线 = 2.5m;多源(toutiao + mayiwenku 表)印证一致。
+    verification: &gb50289_table419_verification
+      status: verified
+      source_tier: official_copy
+      standard_id: GB 50289-2016
+      standard_title: 城市工程管线综合规划规范
+      standard_status: current
+      status_checked_at: "2026-08-01"
+      status_source_url: https://www.gongbiaoku.com/book/tb617154atk
+      clause: 4.1.9
+      table: 4.1.9
+      content_checked_at: "2026-08-01"
+      content_source_url: https://www.yichang.gov.cn/uploadfile/2017/0522/20170522065729162.pdf
+      content_sha256: ddb68a18b81146fba4443962ce94f641abeb3d9914e1aeb0c69cc21bd5e3a426
+      evidence_locator: PDF pages 13-15; row 污水、雨水管线; column 建(构)筑物
+      crosscheck_source: independent_pdf_copy
+      applicability_complete: true
+    note: 建(构)筑物 ↔ 污水、雨水管线 = 2.5m；按水平净距定义测量。
 
   - rule_id: MU-CLEAR-002
     category: horizontal_clearance
     parameter: clearance_building_to_water_large
     value: 3.0
     unit: m
-    source_clause: GB 50289-2016 表(同上)
-    verified_by: authoritative_secondary
+    source_clause: GB 50289-2016 §4.1.9 表 4.1.9
+    verified_by: legacy_not_compiled
     confidence: medium
-    note: 建筑物 ↔ 给水管(d>200mm) = 3.0m;给水管 d≤200mm 时为 1.0m。
+    note: 建筑物 ↔ 给水管(d>200mm)=3.0m；当前 Solver 切片不编译该方向。
 
   - rule_id: MU-CLEAR-003
     category: horizontal_clearance
     parameter: clearance_building_to_gas_high_pressure
     value: 1.5
     unit: m
-    source_clause: GB 50289-2016 表(同上)
-    verified_by: authoritative_secondary
-    confidence: medium
-    note: 建筑物 ↔ 燃气管(高压)= 1.5m;低压 0.7m,中压 1.0m。
+    source_clause: GB 50289-2016 §4.1.9 表 4.1.9
+    verified_by: legacy_not_compiled
+    confidence: low
+    note: 旧条目把燃气压力档压缩成“高压”，与表 4.1.9 的低压/中压 B/A/次高压 B/A 不一致；当前 Solver 切片不编译。
 
   - rule_id: MU-CLEAR-004
     category: horizontal_clearance
     parameter: clearance_building_to_power_direct_buried
     value: 3.0
     unit: m
-    source_clause: GB 50289-2016 表(同上)
-    verified_by: authoritative_secondary
-    confidence: medium
-    note: 建筑物 ↔ 电力电缆(直埋)= 3.0m;>35kV 高压为 13.5m。
+    source_clause: GB 50289-2016 §4.1.9 表 4.1.9
+    verified_by: legacy_not_compiled
+    confidence: low
+    note: 旧条目把建筑物与电力管线的多级表头压成单值，当前 Solver 切片不编译。
 
   - rule_id: MU-CLEAR-005
     category: horizontal_clearance
     parameter: clearance_water_to_sewage_rain
-    range: "1.0-1.5"
+    values:
+      d_le_200: 1.0
+      d_gt_200: 1.5
     unit: m
-    source_clause: GB 50289-2016 表(同上)
-    verified_by: authoritative_secondary
-    confidence: medium
-    note: 给水管 ↔ 污水雨水管线:给水 d≤200mm 时 1.0m,d>200mm 时 1.5m。OCR 来源,建议对原表核对。
+    source_clause: GB 50289-2016 §4.1.9 表 4.1.9
+    verified_by: original_table_crosscheck
+    confidence: high
+    verification:
+      <<: *gb50289_table419_verification
+      evidence_locator: PDF page 13; row 污水、雨水管线; columns 给水管线 d≤200mm / d>200mm
+    note: 给水管 ↔ 污水、雨水管线：d≤200mm 为 1.0m，d>200mm 为 1.5m。
 
   - rule_id: MU-CLEAR-006
     category: horizontal_clearance
-    parameter: clearance_sewage_rain_to_gas_low_pressure
-    value: 1.0
+    parameter: clearance_sewage_rain_to_gas_by_pressure
+    values:
+      low: 1.0
+      medium_b: 1.2
+      medium_a: 1.2
+      sub_high_b: 1.5
+      sub_high_a: 2.0
     unit: m
-    source_clause: GB 50289-2016 表(同上)
-    verified_by: authoritative_secondary
-    confidence: medium
-    note: 污水雨水管线 ↔ 燃气(低压)= 1.0m;中压 1.5m。OCR 来源,建议对原表核对。
+    source_clause: GB 50289-2016 §4.1.9 表 4.1.9
+    verified_by: original_table_crosscheck
+    confidence: high
+    verification:
+      <<: *gb50289_table419_verification
+      evidence_locator: PDF page 13; row 污水、雨水管线; columns 燃气低压 / 中压 B,A / 次高压 B,A
+    note: 旧条目“中压 1.5m”错误；原表中压 B/A 合并单元格均为 1.2m，次高压 B/A 分别为 1.5m/2.0m。大于 1.6MPa 不适用本表。
 
   - rule_id: MU-CLEAR-007
     category: horizontal_clearance
-    parameter: clearance_sewage_rain_to_telecom_direct
-    value: 0.5
+    parameter: clearance_sewage_rain_to_telecom_by_burial
+    values:
+      direct_buried: 1.0
+      duct: 1.0
     unit: m
-    source_clause: GB 50289-2016 表(同上)
-    verified_by: authoritative_secondary
-    confidence: medium
-    note: 污水雨水管线 ↔ 电信电缆(直埋)= 0.5m。OCR 来源,建议对原表核对。
+    source_clause: GB 50289-2016 §4.1.9 表 4.1.9
+    verified_by: original_table_crosscheck
+    confidence: high
+    verification:
+      <<: *gb50289_table419_verification
+      evidence_locator: PDF page 13; row 污水、雨水管线; columns 通信管线直埋 / 管道、通道
+    note: 旧值 0.5m 错误，疑似串入表 4.1.14 垂直净距；表 4.1.9 水平净距两种通信敷设方式均为 1.0m。
 
   - rule_id: MU-CLEAR-008
     category: horizontal_clearance
-    parameter: clearance_sewage_rain_to_power_direct_buried
-    value: 0.5
+    parameter: clearance_sewage_rain_to_power_by_burial
+    values:
+      direct_buried: 0.5
+      protective_conduit: 0.5
     unit: m
-    source_clause: GB 50289-2016 表(同上)
-    verified_by: authoritative_secondary
-    confidence: medium
-    note: 污水雨水管线 ↔ 电力电缆(直埋)= 0.5m。OCR 来源,建议对原表核对。
+    source_clause: GB 50289-2016 §4.1.9 表 4.1.9
+    verified_by: original_table_crosscheck
+    confidence: high
+    verification:
+      <<: *gb50289_table419_verification
+      evidence_locator: PDF page 13; row 污水、雨水管线; columns 电力管线直埋 / 保护管
+    note: 原表该交叉位置为合并单元格 0.5m，不按电压分档；旧编译器强制 voltage_kv 没有规范依据。

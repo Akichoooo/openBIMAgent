@@ -1,9 +1,9 @@
 """市政管网约束源到版本化可执行净距规则集的确定性编译器。
 
 原始 ``constraints.yaml`` 是知识源，不直接等同于生产规则。本模块只编译当前
-DN300 重力污水直管切片需要的水平净距规则，并保留源文件 SHA-256、编译器身份和
-规则集 canonical SHA-256。高置信规则可进入生产判定；中低置信规则及条件不足均
-失败关闭为 review_required/unsupported，不得静默放行。
+DN300 重力污水直管切片需要的水平净距规则，并保留源文件 SHA-256、编译器身份、
+结构化规范核验证据和规则集 canonical SHA-256。生产执行资格不能只由 confidence
+决定；规范身份、状态、条款、表格、内容副本哈希、定位与适用条件必须同时完整。
 """
 
 from __future__ import annotations
@@ -12,20 +12,21 @@ import hashlib
 import json
 import math
 import re
+from datetime import date
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal, Mapping
 
 import yaml
-from pydantic import Field, ValidationError, model_validator
+from pydantic import Field, ValidationError, field_validator, model_validator
 
 from openbimagent.schema_gate.gate import SchemaGate, SchemaGateError
 from openbimagent.utility.contracts import StrictFrozenModel
 
-MUNICIPAL_RULE_SET_VERSION = "1.0"
+MUNICIPAL_RULE_SET_VERSION = "1.1"
 MUNICIPAL_RULE_SET_ID = "municipal-utility-dn300-wastewater-clearance"
 MUNICIPAL_RULE_COMPILER_NAME = "municipal-constraints-compiler"
-MUNICIPAL_RULE_COMPILER_VERSION = "0.1.0"
+MUNICIPAL_RULE_COMPILER_VERSION = "0.2.0"
 DEFAULT_MUNICIPAL_CONSTRAINTS_PATH = (
     Path(__file__).resolve().parents[3]
     / "domain_packs"
@@ -34,7 +35,7 @@ DEFAULT_MUNICIPAL_CONSTRAINTS_PATH = (
     / "constraints.yaml"
 )
 _HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
-_RANGE_PATTERN = re.compile(r"^\s*([0-9]+(?:\.[0-9]+)?)\s*-\s*([0-9]+(?:\.[0-9]+)?)\s*$")
+_HTTP_URL_PATTERN = re.compile(r"^https?://[^\s]+$")
 
 
 class MunicipalRuleError(ValueError):
@@ -65,10 +66,69 @@ class RuleConditionOperator(StrEnum):
     GT = "gt"
 
 
+class VerificationStatus(StrEnum):
+    VERIFIED = "verified"
+    UNVERIFIED = "unverified"
+
+
+class VerificationSourceTier(StrEnum):
+    OFFICIAL_COPY = "official_copy"
+    AUTHORITATIVE_SECONDARY = "authoritative_secondary"
+    UNVERIFIED = "unverified"
+
+
 class RuleCondition(StrictFrozenModel):
     field: Literal["outer_diameter_mm", "pressure_class", "burial_method", "voltage_kv"]
     operator: RuleConditionOperator
     value: str | float
+
+
+class RuleVerification(StrictFrozenModel):
+    """某条编译规则的规范身份、状态和原表内容核验证据。"""
+
+    status: VerificationStatus
+    source_tier: VerificationSourceTier
+    standard_id: str | None = Field(default=None, min_length=1, max_length=128)
+    standard_title: str | None = Field(default=None, min_length=1, max_length=512)
+    standard_status: Literal["current", "superseded", "unknown"] = "unknown"
+    status_checked_at: date | None = None
+    status_source_url: str | None = Field(default=None, min_length=1, max_length=2048)
+    clause: str | None = Field(default=None, min_length=1, max_length=128)
+    table: str | None = Field(default=None, min_length=1, max_length=128)
+    content_checked_at: date | None = None
+    content_source_url: str | None = Field(default=None, min_length=1, max_length=2048)
+    content_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    evidence_locator: str | None = Field(default=None, min_length=1, max_length=2048)
+    crosscheck_source: str | None = Field(default=None, min_length=1, max_length=1024)
+    applicability_complete: bool = False
+
+    @field_validator("status_source_url", "content_source_url")
+    @classmethod
+    def _validate_http_url(cls, value: str | None) -> str | None:
+        if value is not None and _HTTP_URL_PATTERN.fullmatch(value) is None:
+            raise ValueError("规范证据 URL 必须是完整 http(s) URL")
+        return value
+
+    def production_eligible(self) -> bool:
+        return all(
+            (
+                self.status is VerificationStatus.VERIFIED,
+                self.source_tier is VerificationSourceTier.OFFICIAL_COPY,
+                self.standard_id == "GB 50289-2016",
+                bool(self.standard_title),
+                self.standard_status == "current",
+                self.status_checked_at is not None,
+                bool(self.status_source_url),
+                self.clause == "4.1.9",
+                self.table == "4.1.9",
+                self.content_checked_at is not None,
+                bool(self.content_source_url),
+                bool(self.content_sha256),
+                bool(self.evidence_locator),
+                bool(self.crosscheck_source),
+                self.applicability_complete,
+            )
+        )
 
 
 class CompiledClearanceRule(StrictFrozenModel):
@@ -81,7 +141,7 @@ class CompiledClearanceRule(StrictFrozenModel):
     required_clearance_m: float = Field(gt=0)
     unit: Literal["m"] = "m"
     source_clause: str = Field(min_length=1, max_length=1024)
-    verified_by: str = Field(min_length=1, max_length=128)
+    verification: RuleVerification
     confidence: RuleConfidence
     enforcement: RuleEnforcement
     required_attributes: tuple[
@@ -93,12 +153,13 @@ class CompiledClearanceRule(StrictFrozenModel):
     def _validate_enforcement(self) -> "CompiledClearanceRule":
         expected = (
             RuleEnforcement.PRODUCTION
-            if self.confidence is RuleConfidence.HIGH
+            if self.confidence is RuleConfidence.HIGH and self.verification.production_eligible()
             else RuleEnforcement.REVIEW_REQUIRED
         )
         if self.enforcement is not expected:
             raise ValueError(
-                f"规则 {self.rule_key!r} enforcement 必须与 confidence 对齐: {self.confidence.value} -> {expected.value}"
+                f"规则 {self.rule_key!r} enforcement 与 confidence/verification 不一致: "
+                f"expected={expected.value}"
             )
         condition_fields = {condition.field for condition in self.conditions}
         if not condition_fields.issubset(set(self.required_attributes)):
@@ -107,12 +168,12 @@ class CompiledClearanceRule(StrictFrozenModel):
 
 
 class MunicipalRuleSet(StrictFrozenModel):
-    protocol_version: str = Field(default=MUNICIPAL_RULE_SET_VERSION, pattern=r"^1\.0$")
+    protocol_version: str = Field(default=MUNICIPAL_RULE_SET_VERSION, pattern=r"^1\.1$")
     rule_set_id: str = Field(default=MUNICIPAL_RULE_SET_ID, min_length=1, max_length=256)
     source_path: str = Field(min_length=1, max_length=1024)
     source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     compiler_name: str = Field(default=MUNICIPAL_RULE_COMPILER_NAME, pattern=r"^municipal-constraints-compiler$")
-    compiler_version: str = Field(default=MUNICIPAL_RULE_COMPILER_VERSION, pattern=r"^0\.1\.0$")
+    compiler_version: str = Field(default=MUNICIPAL_RULE_COMPILER_VERSION, pattern=r"^0\.2\.0$")
     rules: tuple[CompiledClearanceRule, ...]
     canonical_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
@@ -194,32 +255,37 @@ def compile_municipal_rule_set(
             obstacle_kind="aabb",
             obstacle_category="building",
         ),
-        *_compile_water_rules(
-            _require_source_rule(indexed, "MU-CLEAR-005", "clearance_water_to_sewage_rain")
+        *_compile_mapped_rules(
+            _require_source_rule(indexed, "MU-CLEAR-005", "clearance_water_to_sewage_rain"),
+            variants={
+                "d_le_200": ("MU-CLEAR-005:water:d_le_200", "outer_diameter_mm", "le", 200.0),
+                "d_gt_200": ("MU-CLEAR-005:water:d_gt_200", "outer_diameter_mm", "gt", 200.0),
+            },
+            obstacle_category="water",
         ),
-        _compile_single_value_rule(
-            _require_source_rule(indexed, "MU-CLEAR-006", "clearance_sewage_rain_to_gas_low_pressure"),
-            rule_key="MU-CLEAR-006:gas:low",
-            obstacle_kind="existing_pipe",
+        *_compile_mapped_rules(
+            _require_source_rule(indexed, "MU-CLEAR-006", "clearance_sewage_rain_to_gas_by_pressure"),
+            variants={
+                name: (f"MU-CLEAR-006:gas:{name}", "pressure_class", "eq", name)
+                for name in ("low", "medium_b", "medium_a", "sub_high_b", "sub_high_a")
+            },
             obstacle_category="gas",
-            required_attributes=("pressure_class",),
-            conditions=(RuleCondition(field="pressure_class", operator="eq", value="low"),),
         ),
-        _compile_single_value_rule(
-            _require_source_rule(indexed, "MU-CLEAR-007", "clearance_sewage_rain_to_telecom_direct"),
-            rule_key="MU-CLEAR-007:telecom:direct_buried",
-            obstacle_kind="existing_pipe",
+        *_compile_mapped_rules(
+            _require_source_rule(indexed, "MU-CLEAR-007", "clearance_sewage_rain_to_telecom_by_burial"),
+            variants={
+                name: (f"MU-CLEAR-007:telecom:{name}", "burial_method", "eq", name)
+                for name in ("direct_buried", "duct")
+            },
             obstacle_category="telecom",
-            required_attributes=("burial_method",),
-            conditions=(RuleCondition(field="burial_method", operator="eq", value="direct_buried"),),
         ),
-        _compile_single_value_rule(
-            _require_source_rule(indexed, "MU-CLEAR-008", "clearance_sewage_rain_to_power_direct_buried"),
-            rule_key="MU-CLEAR-008:power:direct_buried",
-            obstacle_kind="existing_pipe",
+        *_compile_mapped_rules(
+            _require_source_rule(indexed, "MU-CLEAR-008", "clearance_sewage_rain_to_power_by_burial"),
+            variants={
+                name: (f"MU-CLEAR-008:power:{name}", "burial_method", "eq", name)
+                for name in ("direct_buried", "protective_conduit")
+            },
             obstacle_category="power",
-            required_attributes=("burial_method", "voltage_kv"),
-            conditions=(RuleCondition(field="burial_method", operator="eq", value="direct_buried"),),
         ),
     ]
     data: dict[str, Any] = {
@@ -247,7 +313,7 @@ def select_clearance_rule(
     obstacle_category: str,
     attributes: Mapping[str, Any] | None = None,
 ) -> RuleSelectionResult:
-    """按障碍物工程事实选择净距规则；不完整、低置信或歧义时失败关闭。"""
+    """按障碍物工程事实选择净距规则；不完整、未晋级或歧义时失败关闭。"""
     facts = dict(attributes or {})
     candidates = [
         rule
@@ -331,10 +397,6 @@ def _compile_single_value_rule(
     rule_key: str,
     obstacle_kind: Literal["aabb", "existing_pipe"],
     obstacle_category: Literal["building", "water", "gas", "power", "telecom"],
-    required_attributes: tuple[
-        Literal["outer_diameter_mm", "pressure_class", "burial_method", "voltage_kv"], ...
-    ] = (),
-    conditions: tuple[RuleCondition, ...] = (),
 ) -> CompiledClearanceRule:
     value = raw.get("value")
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
@@ -345,38 +407,41 @@ def _compile_single_value_rule(
         required_clearance_m=float(value),
         obstacle_kind=obstacle_kind,
         obstacle_category=obstacle_category,
-        required_attributes=required_attributes,
-        conditions=conditions,
+        required_attributes=(),
+        conditions=(),
     )
 
 
-def _compile_water_rules(raw: Mapping[str, Any]) -> list[CompiledClearanceRule]:
-    match = _RANGE_PATTERN.match(str(raw.get("range") or ""))
-    if match is None:
-        raise MunicipalRuleError("规则 MU-CLEAR-005 range 必须是形如 '1.0-1.5' 的数值区间")
-    lower, upper = (float(match.group(1)), float(match.group(2)))
-    if lower <= 0 or upper < lower:
-        raise MunicipalRuleError("规则 MU-CLEAR-005 range 必须是正数递增区间")
-    return [
-        _compiled_rule(
-            raw,
-            rule_key="MU-CLEAR-005:water:d_le_200",
-            required_clearance_m=lower,
-            obstacle_kind="existing_pipe",
-            obstacle_category="water",
-            required_attributes=("outer_diameter_mm",),
-            conditions=(RuleCondition(field="outer_diameter_mm", operator="le", value=200.0),),
-        ),
-        _compiled_rule(
-            raw,
-            rule_key="MU-CLEAR-005:water:d_gt_200",
-            required_clearance_m=upper,
-            obstacle_kind="existing_pipe",
-            obstacle_category="water",
-            required_attributes=("outer_diameter_mm",),
-            conditions=(RuleCondition(field="outer_diameter_mm", operator="gt", value=200.0),),
-        ),
-    ]
+def _compile_mapped_rules(
+    raw: Mapping[str, Any],
+    *,
+    variants: Mapping[str, tuple[str, str, str, str | float]],
+    obstacle_category: Literal["water", "gas", "power", "telecom"],
+) -> list[CompiledClearanceRule]:
+    values = raw.get("values")
+    if not isinstance(values, dict) or set(values) != set(variants):
+        raise MunicipalRuleError(
+            f"规则 {raw.get('rule_id')} values 必须精确包含 {sorted(variants)}"
+        )
+    compiled: list[CompiledClearanceRule] = []
+    for variant, (rule_key, field, operator, condition_value) in variants.items():
+        value = values[variant]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+            raise MunicipalRuleError(f"规则 {raw.get('rule_id')} values.{variant} 必须是有限数值")
+        compiled.append(
+            _compiled_rule(
+                raw,
+                rule_key=rule_key,
+                required_clearance_m=float(value),
+                obstacle_kind="existing_pipe",
+                obstacle_category=obstacle_category,
+                required_attributes=(field,),  # type: ignore[arg-type]
+                conditions=(
+                    RuleCondition(field=field, operator=operator, value=condition_value),  # type: ignore[arg-type]
+                ),
+            )
+        )
+    return compiled
 
 
 def _compiled_rule(
@@ -393,17 +458,17 @@ def _compiled_rule(
 ) -> CompiledClearanceRule:
     try:
         confidence = RuleConfidence(str(raw.get("confidence") or ""))
-    except ValueError as exc:
-        raise MunicipalRuleError(f"规则 {raw.get('rule_id')} confidence 非法") from exc
+        verification = RuleVerification.model_validate(raw.get("verification"))
+    except (ValueError, ValidationError) as exc:
+        raise MunicipalRuleError(f"规则 {raw.get('rule_id')} confidence/verification 非法: {exc}") from exc
     enforcement = (
         RuleEnforcement.PRODUCTION
-        if confidence is RuleConfidence.HIGH
+        if confidence is RuleConfidence.HIGH and verification.production_eligible()
         else RuleEnforcement.REVIEW_REQUIRED
     )
     source_clause = str(raw.get("source_clause") or "")
-    verified_by = str(raw.get("verified_by") or "")
-    if not source_clause or not verified_by:
-        raise MunicipalRuleError(f"规则 {raw.get('rule_id')} 缺少 source_clause/verified_by")
+    if not source_clause:
+        raise MunicipalRuleError(f"规则 {raw.get('rule_id')} 缺少 source_clause")
     return CompiledClearanceRule(
         rule_key=rule_key,
         source_rule_id=str(raw["rule_id"]),
@@ -411,7 +476,7 @@ def _compiled_rule(
         obstacle_category=obstacle_category,
         required_clearance_m=required_clearance_m,
         source_clause=source_clause,
-        verified_by=verified_by,
+        verification=verification,
         confidence=confidence,
         enforcement=enforcement,
         required_attributes=required_attributes,
@@ -438,7 +503,7 @@ def _canonical_sha256(payload: Mapping[str, Any]) -> str:
         allow_nan=False,
     ).encode("utf-8")
     digest = hashlib.sha256(encoded).hexdigest()
-    if not _HASH_PATTERN.match(digest):  # 防御性断言，避免未来替换实现返回非 SHA-256。
+    if not _HASH_PATTERN.match(digest):
         raise AssertionError("canonical hash implementation did not return SHA-256")
     return digest
 
@@ -458,6 +523,9 @@ __all__ = [
     "RuleEnforcement",
     "RuleSelectionResult",
     "RuleSelectionStatus",
+    "RuleVerification",
+    "VerificationSourceTier",
+    "VerificationStatus",
     "compile_municipal_rule_set",
     "select_clearance_rule",
 ]

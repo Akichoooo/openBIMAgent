@@ -14,7 +14,7 @@ from openbimagent.utility import UtilitySolverError, solve_straight_gravity_util
 
 def solver_payload() -> dict:
     return {
-        "protocol_version": "0.3",
+        "protocol_version": "0.4",
         "request_id": "case-001",
         "source_ir_sha256": "b" * 64,
         "coordinate_reference": {
@@ -148,29 +148,101 @@ def test_aabb_clearance_shortfall_and_intersection_fail() -> None:
 
 
 
-def test_medium_confidence_existing_pipe_rule_is_unknown_even_when_geometry_is_clear() -> None:
+def _existing_pipe(
+    *,
+    obstacle_id: str = "water-001",
+    category: str = "water",
+    y_m: float = 1.25,
+    z_m: float = 10.15,
+    outer_diameter_mm: float = 200.0,
+    pressure_class: str | None = None,
+    burial_method: str | None = None,
+    voltage_kv: float | None = None,
+) -> dict:
+    return {
+        "obstacle_id": obstacle_id,
+        "kind": "existing_pipe",
+        "category": category,
+        "start_center": {"x_m": 0.0, "y_m": y_m, "z_m": z_m},
+        "end_center": {"x_m": 10.0, "y_m": y_m, "z_m": z_m - 0.03},
+        "outer_diameter_mm": outer_diameter_mm,
+        "pressure_class": pressure_class,
+        "burial_method": burial_method,
+        "voltage_kv": voltage_kv,
+    }
+
+
+def test_verified_water_rule_produces_pass_fail() -> None:
+    passing = solver_payload()
+    passing["collision_context"] = {
+        "coverage": "complete",
+        "obstacles": [_existing_pipe(y_m=1.25)],
+    }
+    pass_result = solve_straight_gravity_utility(passing)
+    pass_evidence = next(
+        item for item in pass_result.compiled_ir.evidence if item.check_name == "clash_free"
+    )
+    assert pass_evidence.status.value == "pass"
+    assert pass_evidence.measured_value == pytest.approx(1.0)
+    assert pass_evidence.limit_value == pytest.approx(1.0)
+    assert "GB 50289-2016 表 4.1.9" in pass_evidence.detail
+    assert "ddb68a18b81146fba4443962ce94f641abeb3d9914e1aeb0c69cc21bd5e3a426" in (
+        pass_evidence.detail
+    )
+    assert "PDF page 13; row 污水、雨水管线" in pass_evidence.detail
+    assert "municipal-utility-dn300-wastewater-clearance@" in pass_evidence.detail
+
+    failing = solver_payload()
+    failing["collision_context"] = {
+        "coverage": "complete",
+        "obstacles": [_existing_pipe(y_m=1.24)],
+    }
+    fail_result = solve_straight_gravity_utility(failing)
+    fail_evidence = next(
+        item for item in fail_result.compiled_ir.evidence if item.check_name == "clash_free"
+    )
+    assert fail_evidence.status.value == "fail"
+    assert fail_result.domain_gate.status is GateStatus.FAIL
+
+
+def test_horizontal_clearance_does_not_use_vertical_separation() -> None:
     payload = solver_payload()
     payload["collision_context"] = {
         "coverage": "complete",
-        "obstacles": [
-            {
-                "obstacle_id": "water-001",
-                "kind": "existing_pipe",
-                "category": "water",
-                "start_center": {"x_m": 0.0, "y_m": 0.75, "z_m": 10.15},
-                "end_center": {"x_m": 10.0, "y_m": 0.75, "z_m": 10.12},
-                "outer_diameter_mm": 200.0,
-                "pressure_class": None,
-                "burial_method": None,
-                "voltage_kv": None,
-            }
-        ],
+        "obstacles": [_existing_pipe(y_m=0.5, z_m=100.0)],
+    }
+    result = solve_straight_gravity_utility(payload)
+    clash = next(item for item in result.compiled_ir.evidence if item.check_name == "clash_free")
+    assert clash.status.value == "fail"
+    assert clash.measured_value == pytest.approx(0.25)
+    assert "水平净距" in clash.detail
+
+
+def test_verified_gas_power_and_telecom_rules_are_executable() -> None:
+    cases = [
+        (_existing_pipe(category="gas", y_m=1.45, pressure_class="medium_b"), 1.2),
+        (_existing_pipe(category="power", y_m=0.75, burial_method="direct_buried"), 0.5),
+        (_existing_pipe(category="telecom", y_m=1.25, burial_method="duct"), 1.0),
+    ]
+    for obstacle, expected in cases:
+        payload = solver_payload()
+        payload["collision_context"] = {"coverage": "complete", "obstacles": [obstacle]}
+        result = solve_straight_gravity_utility(payload)
+        clash = next(item for item in result.compiled_ir.evidence if item.check_name == "clash_free")
+        assert clash.status.value == "pass"
+        assert clash.limit_value == pytest.approx(expected)
+
+
+def test_unmodelled_burial_method_remains_unknown() -> None:
+    payload = solver_payload()
+    payload["collision_context"] = {
+        "coverage": "complete",
+        "obstacles": [_existing_pipe(category="telecom", y_m=2.0, burial_method="tunnel")],
     }
     result = solve_straight_gravity_utility(payload)
     clash = next(item for item in result.compiled_ir.evidence if item.check_name == "clash_free")
     assert clash.status.value == "unknown"
-    assert clash.measured_value is None
-    assert "review_required" in clash.detail
+    assert "unsupported" in clash.detail
     assert result.domain_gate.status is GateStatus.UNKNOWN
 
 

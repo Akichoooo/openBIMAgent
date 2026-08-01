@@ -16,7 +16,7 @@ phases:
   - id: route_planning
     agent: utility_planner       # 领域角色(包内 agents/ 覆盖)
     solver: municipal-straight-gravity-solver
-    solver_version: 0.3.0
+    solver_version: 0.4.0
     input_schema: utility_solver_input.schema.json
     rule_source: knowledge/constraints.yaml
     rule_set_schema: municipal_rule_set.schema.json
@@ -36,7 +36,7 @@ phases:
 acceptance:
   scad_loop:    { min_score: 8.0, max_iters: 6 }
   blender_loop: { min_score: 8.5, max_iters: 4 }
-  domain_gate:  # FAIL/UNKNOWN 均阻断；v0.3 高置信规则才可确定性判定 clash_free
+  domain_gate:  # FAIL/UNKNOWN 均阻断；v0.4 仅规范证据完整并晋级的规则可确定性判定 clash_free
     { diameter_in_spec: true, slope_in_spec: true, cover_depth_in_spec: true,
       manhole_spacing_in_spec: true, clash_free: true }
 deliverables: [IFC 构件库, 纵断/剖切图, 汇报漫游视频]

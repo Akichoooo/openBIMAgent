@@ -2,25 +2,16 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://openbimagent.local/schemas/utility_solver_input.schema.json",
   "title": "StraightGravitySolverInput",
-  "description": "市政 Solver v0.3 输入：两井一直管、DN300 混凝土、重力污水。障碍物只提交工程事实，禁止调用方提交 rule_id、净距限值或规范条款；规则由受信任 MunicipalRuleSet 选择。",
+  "description": "市政 Solver v0.4 输入：两井一直管、DN300 混凝土、重力污水。障碍物只提交工程事实；水平净距规则由受信任 MunicipalRuleSet 选择。",
   "type": "object",
   "required": [
-    "protocol_version",
-    "request_id",
-    "source_ir_sha256",
-    "coordinate_reference",
-    "start",
-    "end",
-    "diameter_mm",
-    "material",
-    "design_slope",
-    "surface_context",
-    "start_invert_m",
-    "collision_context"
+    "protocol_version", "request_id", "source_ir_sha256", "coordinate_reference",
+    "start", "end", "diameter_mm", "material", "design_slope", "surface_context",
+    "start_invert_m", "collision_context"
   ],
   "additionalProperties": false,
   "properties": {
-    "protocol_version": {"const": "0.3"},
+    "protocol_version": {"const": "0.4"},
     "request_id": {"type": "string", "minLength": 1, "maxLength": 256},
     "source_ir_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "coordinate_reference": {"$ref": "#/$defs/coordinate_reference"},
@@ -31,12 +22,7 @@
     "design_slope": {"type": "number", "minimum": 0},
     "surface_context": {"enum": ["driveway", "sidewalk"]},
     "start_invert_m": {"type": ["number", "null"]},
-    "collision_context": {
-      "oneOf": [
-        {"type": "null"},
-        {"$ref": "#/$defs/collision_context"}
-      ]
-    }
+    "collision_context": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/collision_context"}]}
   },
   "$defs": {
     "coordinate": {
@@ -44,9 +30,7 @@
       "required": ["x_m", "y_m", "z_m"],
       "additionalProperties": false,
       "properties": {
-        "x_m": {"type": "number"},
-        "y_m": {"type": "number"},
-        "z_m": {"type": "number"}
+        "x_m": {"type": "number"}, "y_m": {"type": "number"}, "z_m": {"type": "number"}
       }
     },
     "coordinate_reference": {
@@ -67,9 +51,7 @@
       "additionalProperties": false,
       "properties": {
         "node_id": {"type": "string", "minLength": 1, "maxLength": 256},
-        "x_m": {"type": "number"},
-        "y_m": {"type": "number"},
-        "ground_elevation_m": {"type": "number"}
+        "x_m": {"type": "number"}, "y_m": {"type": "number"}, "ground_elevation_m": {"type": "number"}
       }
     },
     "aabb_obstacle": {
@@ -78,24 +60,15 @@
       "additionalProperties": false,
       "properties": {
         "obstacle_id": {"type": "string", "minLength": 1, "maxLength": 256},
-        "kind": {"const": "aabb"},
-        "category": {"const": "building"},
-        "min_corner": {"$ref": "#/$defs/coordinate"},
-        "max_corner": {"$ref": "#/$defs/coordinate"}
+        "kind": {"const": "aabb"}, "category": {"const": "building"},
+        "min_corner": {"$ref": "#/$defs/coordinate"}, "max_corner": {"$ref": "#/$defs/coordinate"}
       }
     },
     "existing_pipe_obstacle": {
       "type": "object",
       "required": [
-        "obstacle_id",
-        "kind",
-        "category",
-        "start_center",
-        "end_center",
-        "outer_diameter_mm",
-        "pressure_class",
-        "burial_method",
-        "voltage_kv"
+        "obstacle_id", "kind", "category", "start_center", "end_center",
+        "outer_diameter_mm", "pressure_class", "burial_method", "voltage_kv"
       ],
       "additionalProperties": false,
       "properties": {
@@ -105,8 +78,14 @@
         "start_center": {"$ref": "#/$defs/coordinate"},
         "end_center": {"$ref": "#/$defs/coordinate"},
         "outer_diameter_mm": {"type": "number", "exclusiveMinimum": 0},
-        "pressure_class": {"type": ["string", "null"], "enum": ["low", "medium", "high", null]},
-        "burial_method": {"type": ["string", "null"], "enum": ["direct_buried", "duct", "tunnel", null]},
+        "pressure_class": {
+          "type": ["string", "null"],
+          "enum": ["low", "medium_b", "medium_a", "sub_high_b", "sub_high_a", null]
+        },
+        "burial_method": {
+          "type": ["string", "null"],
+          "enum": ["direct_buried", "protective_conduit", "duct", "tunnel", null]
+        },
         "voltage_kv": {"type": ["number", "null"], "exclusiveMinimum": 0}
       }
     },
@@ -118,12 +97,7 @@
         "coverage": {"const": "complete"},
         "obstacles": {
           "type": "array",
-          "items": {
-            "oneOf": [
-              {"$ref": "#/$defs/aabb_obstacle"},
-              {"$ref": "#/$defs/existing_pipe_obstacle"}
-            ]
-          }
+          "items": {"oneOf": [{"$ref": "#/$defs/aabb_obstacle"}, {"$ref": "#/$defs/existing_pipe_obstacle"}]}
         }
       }
     }

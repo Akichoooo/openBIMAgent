@@ -1,6 +1,6 @@
 # openBIMAgent 总体架构
 
-版本:v0.8.3(municipal executable rule set v0)· 2026-08-01
+版本:v0.8.4(municipal verified rule promotion v1)· 2026-08-01
 依据:`docs/research/01-11` 全部调研与评审 · 决议:`docs/architecture/DECISIONS_DRAFT.md`
 姊妹篇:[COMPONENTS.md](COMPONENTS.md)(组件/agent/模型配置/上下文管理详设)
 
@@ -58,7 +58,7 @@ flowchart TB
 2. **Plan**:实例化 `PLAN.md` + `TODO.md` + **Scene Graph IR**(只出语义,C2)。
 3. **Schema 门禁**:工件过 JSON Schema,漂移即 FIX。
 4. **Research**:产出 `references.md`;资产进 `asset_cache`(hash + 429 退避)。
-5. **市政规则编译与求解边界**：Playbook 声明包内 `rule_source`，Pipeline 将受信任 `knowledge/constraints.yaml` 确定性编译为 `MunicipalRuleSet v1.0`，保存 source SHA-256、编译器身份和 canonical SHA-256，再交给 `municipal-straight-gravity-solver v0.3.0`。Solver 输入 v0.3 的障碍物只描述类别、几何和工程属性，Schema 禁止调用方提交 `rule_id`、净距限值或条款。当前 DN300 污水直管切片中，仅高置信 `MU-CLEAR-001`（建筑物 2.5m）可执行并产生 PASS/FAIL；给水、燃气、电力、通信的中置信规则、属性缺失、无适用规则或歧义统一生成 UNKNOWN 并阻断。`collision_context` 缺失同样为 UNKNOWN；显式完整空清单可 PASS。几何仍按 AABB/既有直圆管胶囊体实体表面最短净距和 `1e-6m` 容差计算。障碍物是 Solver Context，不混入待交付实体；Pipeline 同时落盘本次实际使用的 `municipal_rule_set.json`；结果经 `compiled utility IR v1`、RuleEvidence 与 Domain Gate 放行或阻断，外部 evidence 不能覆盖 Solver 已判定的 PASS/FAIL。
+5. **市政规则编译、核验与求解边界**：Playbook 声明包内 `rule_source`，Pipeline 将受信任 `knowledge/constraints.yaml` 确定性编译为 `MunicipalRuleSet v1.1`（compiler `0.2.0`），保存 source SHA-256、编译器身份、逐规则 `RuleVerification` 和 canonical SHA-256，再交给 `municipal-straight-gravity-solver v0.4.0`。Solver 输入 v0.4 的障碍物只描述类别、几何和工程属性，Schema 禁止调用方提交 `rule_id`、净距限值或条款。production 不再由 `confidence=high` 单独决定：还必须具有当前标准身份、状态核验、官方公开副本、条款/表号、核验日期、内容 SHA-256、原表定位、独立交叉复核和完整适用条件。系统按 `GB 50289-2016` 第 4.1.9 条/表 4.1.9 双 PDF 原表核验结果，生产执行建筑物、给水、燃气、电力和通信共 12 条规则；属性缺失、无适用规则、未晋级或歧义统一生成 UNKNOWN 并阻断。表 4.1.9 是水平净距，几何按 XY 平面中设计管与 AABB 投影矩形或既有管投影中心线的实体表面距离计算，Z 高差不能抬高结果；边界容差为 `1e-6m`。`collision_context` 缺失同样为 UNKNOWN，显式完整空清单可 PASS。规范允许采取安全措施后减距，但当前没有独立例外审批协议，因此不自动放宽。障碍物是 Solver Context，不混入待交付实体；Pipeline 落盘 `municipal_rule_set.json`，RuleEvidence 保存标准身份、表号、规范副本 SHA-256、原表定位和 Rule Set hash；结果经 `compiled utility IR v1` 与 Domain Gate 放行或阻断，外部 evidence 不能覆盖 Solver 已判定的 PASS/FAIL。
 6. **逐资产建模**:SCAD 快检挡结构错误 → MCP 精建(只调预置库/包内 tools)→ 精检环渲染评分 → 不通过给可执行返工指令 → 回滚点 = 该批前快照。**每批产出 HTML 验收页给人看**。
 7. **灯光渲染**:统一色调、氛围、英雄机位、相机轨迹。
 8. **domain_gate + Deliver**:compiled IR 的规则证据确定性聚合为 `domain_evidence` → 领域硬门禁 → 交付清单(C5)→ **人审签**。缺失或 UNKNOWN 证据不能当作通过。

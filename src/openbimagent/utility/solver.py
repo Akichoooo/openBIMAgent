@@ -1,4 +1,4 @@
-"""市政管网 Solver v0.3：两井一直管重力污水的确定性竖向与碰撞求解。
+"""市政管网 Solver v0.4：两井一直管重力污水的确定性竖向与水平净距求解。
 
 该切片只解决已知起终点平面坐标和地面标高的一段直管。正 slope 表示沿
 start -> end 流向下降。若未指定 start_invert_m，Solver 选择同时满足两端
@@ -6,9 +6,10 @@ start -> end 流向下降。若未指定 start_invert_m，Solver 选择同时满
 明确报告合规或失败。
 
 碰撞上下文缺失时 ``clash_free`` 失败关闭为 UNKNOWN；调用方显式声明完整上下文后，
-Solver 对三维 AABB 和既有圆管胶囊体执行实体表面最短净距检查。净距限值只能来自
-受信任 MunicipalRuleSet：高置信规则生成 PASS/FAIL，中低置信或属性不足生成 UNKNOWN。
-v0.3 不做路线寻优或自动避让。水力能力仍为 UNKNOWN。
+Solver 按 GB 50289-2016 的水平净距定义，在 XY 平面计算设计管与建筑投影或既有管
+投影的实体表面最短距离。净距限值只能来自带完整规范核验证据的 MunicipalRuleSet；
+未获 production 资格或属性不足生成 UNKNOWN。v0.4 不做路线寻优、自动避让或减距例外，
+水力能力仍为 UNKNOWN。
 """
 
 from __future__ import annotations
@@ -36,9 +37,9 @@ from openbimagent.utility.rules import (
     select_clearance_rule,
 )
 
-UTILITY_SOLVER_INPUT_VERSION = "0.3"
+UTILITY_SOLVER_INPUT_VERSION = "0.4"
 UTILITY_SOLVER_NAME = "municipal-straight-gravity-solver"
-UTILITY_SOLVER_VERSION = "0.3.0"
+UTILITY_SOLVER_VERSION = "0.4.0"
 MIN_SEWAGE_DIAMETER_MM = 300.0
 MIN_DN300_CONCRETE_SLOPE = 0.003
 MAX_DN300_TO_DN600_MANHOLE_SPACING_M = 75.0
@@ -89,8 +90,14 @@ class ExistingPipeObstacle(StrictFrozenModel):
     start_center: Coordinate3D
     end_center: Coordinate3D
     outer_diameter_mm: float = Field(gt=0)
-    pressure_class: Literal["low", "medium", "high"] | None = None
-    burial_method: Literal["direct_buried", "duct", "tunnel"] | None = None
+    pressure_class: Literal[
+        "low",
+        "medium_b",
+        "medium_a",
+        "sub_high_b",
+        "sub_high_a",
+    ] | None = None
+    burial_method: Literal["direct_buried", "protective_conduit", "duct", "tunnel"] | None = None
     voltage_kv: float | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
@@ -121,9 +128,9 @@ class CollisionContext(StrictFrozenModel):
 
 
 class StraightGravitySolverInput(StrictFrozenModel):
-    """Solver v0.3 的版本化输入；仅支持单一 DN300 混凝土重力污水直管。"""
+    """Solver v0.4 的版本化输入；仅支持单一 DN300 混凝土重力污水直管。"""
 
-    protocol_version: str = Field(default=UTILITY_SOLVER_INPUT_VERSION, pattern=r"^0\.3$")
+    protocol_version: str = Field(default=UTILITY_SOLVER_INPUT_VERSION, pattern=r"^0\.4$")
     request_id: str = Field(min_length=1, max_length=256)
     source_ir_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     coordinate_reference: CoordinateReference
@@ -421,16 +428,16 @@ def _clash_evidence(
     for obstacle in sorted(context.obstacles, key=lambda item: item.obstacle_id):
         attributes: dict[str, Any] = {}
         if isinstance(obstacle, AxisAlignedBoxObstacle):
-            axis_distance_m = _segment_aabb_distance(
+            axis_distance_m = _segment_aabb_horizontal_distance(
                 design_start,
                 design_end,
                 obstacle.min_corner,
                 obstacle.max_corner,
             )
             actual_clearance_m = axis_distance_m - pipe_radius_m
-            geometry_label = "AABB"
+            geometry_label = "AABB horizontal projection"
         else:
-            axis_distance_m = _segment_segment_distance(
+            axis_distance_m = _segment_segment_horizontal_distance(
                 design_start,
                 design_end,
                 obstacle.start_center,
@@ -441,7 +448,7 @@ def _clash_evidence(
                 - pipe_radius_m
                 - obstacle.outer_diameter_mm / 2000.0
             )
-            geometry_label = "existing_pipe"
+            geometry_label = "existing_pipe horizontal projection"
             attributes = {
                 "outer_diameter_mm": obstacle.outer_diameter_mm,
                 "pressure_class": obstacle.pressure_class,
@@ -480,6 +487,7 @@ def _clash_evidence(
             )
             continue
         rule = selection.rule
+        verification = rule.verification
         required_m = rule.required_clearance_m
         passed = actual_clearance_m + CLASH_TOLERANCE_M >= required_m
         evidence.append(
@@ -491,9 +499,12 @@ def _clash_evidence(
                 subject_type="segment",
                 subject_id=segment_id,
                 detail=(
-                    f"设计管段与 {geometry_label} 障碍物 {obstacle.obstacle_id!r} 的实体表面最短净距 "
+                    f"设计管段与 {geometry_label} 障碍物 {obstacle.obstacle_id!r} 的实体表面水平净距 "
                     f"{actual_clearance_m:.6f} m，要求不少于 {required_m:.6f} m；"
                     f"规则 {rule.rule_key} 来自受信任规则集 {rule_set.rule_set_id}@{rule_set.canonical_sha256}；"
+                    f"规范 {verification.standard_id} 表 {verification.table}；"
+                    f"规范副本 SHA-256={verification.content_sha256}；"
+                    f"原表定位={verification.evidence_locator}；"
                     f"数值容差 {CLASH_TOLERANCE_M:g} m"
                 ),
                 measured_value=actual_clearance_m,
@@ -506,17 +517,17 @@ def _clash_evidence(
 
 
 
-def _segment_aabb_distance(
+def _segment_aabb_horizontal_distance(
     start: Coordinate3D,
     end: Coordinate3D,
     minimum: Coordinate3D,
     maximum: Coordinate3D,
 ) -> float:
-    """返回三维线段到闭合 AABB 的精确欧氏距离。"""
-    p0 = _point_tuple(start)
-    p1 = _point_tuple(end)
-    low = _point_tuple(minimum)
-    high = _point_tuple(maximum)
+    """返回 XY 平面中设计中心线到闭合建筑投影矩形的精确距离。"""
+    p0 = (start.x_m, start.y_m)
+    p1 = (end.x_m, end.y_m)
+    low = (minimum.x_m, minimum.y_m)
+    high = (maximum.x_m, maximum.y_m)
     direction = tuple(right - left for left, right in zip(p0, p1, strict=True))
     breaks = {0.0, 1.0}
     for origin, delta, axis_low, axis_high in zip(p0, direction, low, high, strict=True):
@@ -561,9 +572,9 @@ def _segment_aabb_distance(
 
 
 def _point_aabb_distance_squared(
-    point: tuple[float, float, float],
-    minimum: tuple[float, float, float],
-    maximum: tuple[float, float, float],
+    point: tuple[float, ...],
+    minimum: tuple[float, ...],
+    maximum: tuple[float, ...],
 ) -> float:
     total = 0.0
     for value, low, high in zip(point, minimum, maximum, strict=True):
@@ -575,22 +586,28 @@ def _point_aabb_distance_squared(
 
 
 
-def _segment_segment_distance(
+def _segment_segment_horizontal_distance(
     first_start: Coordinate3D,
     first_end: Coordinate3D,
     second_start: Coordinate3D,
     second_end: Coordinate3D,
 ) -> float:
-    """返回两条非退化三维闭线段的精确最短距离。"""
-    p1 = _point_tuple(first_start)
-    q1 = _point_tuple(first_end)
-    p2 = _point_tuple(second_start)
-    q2 = _point_tuple(second_end)
+    """返回 XY 平面中两条闭线段的精确最短距离。"""
+    p1 = (first_start.x_m, first_start.y_m)
+    q1 = (first_end.x_m, first_end.y_m)
+    p2 = (second_start.x_m, second_start.y_m)
+    q2 = (second_end.x_m, second_end.y_m)
     d1 = _subtract(q1, p1)
     d2 = _subtract(q2, p2)
     offset = _subtract(p1, p2)
     a = _dot(d1, d1)
     e = _dot(d2, d2)
+    if a <= 1e-15 and e <= 1e-15:
+        return math.sqrt(max(0.0, _dot(offset, offset)))
+    if a <= 1e-15:
+        return _point_segment_distance_2d(p1, p2, q2)
+    if e <= 1e-15:
+        return _point_segment_distance_2d(p2, p1, q1)
     b = _dot(d1, d2)
     c = _dot(d1, offset)
     f = _dot(d2, offset)
@@ -608,7 +625,24 @@ def _segment_segment_distance(
         first_parameter = _clamp((b - c) / a)
     closest_first = _add_scaled(p1, d1, first_parameter)
     closest_second = _add_scaled(p2, d2, second_parameter)
-    return math.sqrt(max(0.0, _dot(_subtract(closest_first, closest_second), _subtract(closest_first, closest_second))))
+    delta = _subtract(closest_first, closest_second)
+    return math.sqrt(max(0.0, _dot(delta, delta)))
+
+
+
+def _point_segment_distance_2d(
+    point: tuple[float, ...],
+    start: tuple[float, ...],
+    end: tuple[float, ...],
+) -> float:
+    direction = _subtract(end, start)
+    denominator = _dot(direction, direction)
+    if denominator <= 1e-15:
+        delta = _subtract(point, start)
+        return math.sqrt(max(0.0, _dot(delta, delta)))
+    parameter = _clamp(_dot(_subtract(point, start), direction) / denominator)
+    delta = _subtract(point, _add_scaled(start, direction, parameter))
+    return math.sqrt(max(0.0, _dot(delta, delta)))
 
 
 
@@ -624,27 +658,27 @@ def _point_tuple(point: Coordinate3D) -> tuple[float, float, float]:
 
 
 def _subtract(
-    left: tuple[float, float, float],
-    right: tuple[float, float, float],
-) -> tuple[float, float, float]:
-    return tuple(a - b for a, b in zip(left, right, strict=True))  # type: ignore[return-value]
+    left: tuple[float, ...],
+    right: tuple[float, ...],
+) -> tuple[float, ...]:
+    return tuple(a - b for a, b in zip(left, right, strict=True))
 
 
 
-def _dot(left: tuple[float, float, float], right: tuple[float, float, float]) -> float:
+def _dot(left: tuple[float, ...], right: tuple[float, ...]) -> float:
     return sum(a * b for a, b in zip(left, right, strict=True))
 
 
 
 def _add_scaled(
-    origin: tuple[float, float, float],
-    direction: tuple[float, float, float],
+    origin: tuple[float, ...],
+    direction: tuple[float, ...],
     parameter: float,
-) -> tuple[float, float, float]:
+) -> tuple[float, ...]:
     return tuple(
         value + parameter * delta
         for value, delta in zip(origin, direction, strict=True)
-    )  # type: ignore[return-value]
+    )
 
 
 

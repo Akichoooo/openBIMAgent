@@ -111,8 +111,8 @@ def run_pipeline(
       时对应批次明确 ESCALATE，不静默跳过。
     - 声明 ``municipal-straight-gravity-solver`` 的 playbook 可通过 utility_solver_input
       执行确定性求解并落 compiled IR；输入缺失或证据不足均为 UNKNOWN，构建前阻断。
-    - v0.3 从 playbook 声明的受信任 rule_source 编译 MunicipalRuleSet；障碍物只提交
-      工程事实。高置信规则产生 PASS/FAIL，中低置信或条件不足产生 UNKNOWN。
+    - v0.4 从 playbook 声明的受信任 rule_source 编译 MunicipalRuleSet；障碍物只提交
+      工程事实。仅高置信且规范核验证据完整的规则产生 PASS/FAIL，其他情况产生 UNKNOWN。
     - domain_evidence 可补充 Solver 尚未判定的证据，但不能覆盖 Solver 已明确
       判定的 PASS/FAIL，避免外部布尔值绕过确定性工程门禁。
     - approval_fn 为空 且 yes=False:不审批(测试默认);yes=True 跳过所有审批门。
@@ -469,7 +469,7 @@ def _validate_solver_declaration(phase: dict[str, Any]) -> None:
             "Solver Rule Set Schema 不匹配: "
             f"playbook={declared_rule_set_schema!r}, expected={expected_rule_set_schema!r}"
         )
-    if UTILITY_SOLVER_INPUT_VERSION != "0.3" or MUNICIPAL_RULE_SET_VERSION != "1.0":
+    if UTILITY_SOLVER_INPUT_VERSION != "0.4" or MUNICIPAL_RULE_SET_VERSION != "1.1":
         raise ValueError(
             "Runtime Solver/Rule Set 协议版本未受支持: "
             f"input={UTILITY_SOLVER_INPUT_VERSION!r}, rules={MUNICIPAL_RULE_SET_VERSION!r}"
