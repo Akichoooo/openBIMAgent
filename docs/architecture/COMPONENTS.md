@@ -1,6 +1,6 @@
 # openBIMAgent 组件与运行配置详设
 
-版本:v0.5(P1e Runtime IPC 写控制)· 2026-08-01 · 姊妹篇:[ARCHITECTURE.md](ARCHITECTURE.md)
+版本:v0.6(P1f 本地 Operator Console)· 2026-08-01 · 姊妹篇:[ARCHITECTURE.md](ARCHITECTURE.md)
 
 本文档回答四个问题:**每个组件干什么、每个 agent 怎么配、多厂家模型怎么统管、上下文怎么扛住。**
 
@@ -23,8 +23,9 @@
 | `domain_packs/` | 领域专家包 + 模板族(_base) | Markdown/YAML/JSON | ARCH §4 | M0 三包 |
 | `knowledge_base` | **知识库四层**(见下) | 文件/检索,向量库 P2 | openBIMForge 知识资产 | M1 |
 | `asset_cache` | 资产本地缓存(hash + 429 退避) | 文件系统 | 06 报告 | M1 |
-| `server` | SSE 事件流 + OpenAPI | FastAPI | 08 报告 schema | M2 |
-| `tui` | 第一个客户端(**含会话侧边栏**,Codex CLI 风格) | Textual/Rich | pi-tui + Codex | M2 |
+| `operator-console` | Subagent Runtime 本地操作面板 | Python 标准库 HTTP + 内嵌 HTML/JS | P1d Control Plane + P1e IPC | P1f |
+| `server` | 全产品 SSE 事件流 + OpenAPI | FastAPI | 08 报告 schema | M2 |
+| `tui` | 完整客户端(**含会话侧边栏**,Codex CLI 风格) | Textual/Rich | pi-tui + Codex | M2 |
 
 ### 知识库四层(knowledge_base,用户指定确认需要)
 
@@ -64,6 +65,7 @@
 - **P1d Actor 与 Resume 幂等**：`actor.py` 定义版本化 `ActorRef`；Approval、Resume、Steer 新事实使用稳定 `actor_id/actor_type`，历史字符串兼容读取为 `legacy`。Resume 强制调用方 `idempotency_key` 和 `instruction_sha256`；相同 actor/key/语义返回原 Handle/Receipt，不同语义失败，RuntimeState 使重启后仍可复用。
 - **P1d Control Plane**：`control_plane.py` 从 RuntimeState 和父/子 Session 构建只读投影，查询 attempts、lineage、approvals、resumes、steers，去重重复事实并对冲突/损坏失败关闭；默认视图不返回 task/instruction 原文。CLI `control` 子命令支持文本/JSON，查询不获取 Runtime lease。
 - **P1e Runtime IPC**：`ipc.py` 定义版本化 `IpcRequest/IpcResponse/IpcDiscovery`，以及 loopback-only `RuntimeIpcServer/RuntimeIpcClient`。`runtime-serve` 持有 Runtime lease 并启动 IPC，`control-write` 只经 discovery/token 调用该实例。服务路由 `approval.decide/attempt.resume/attempt.steer/attempt.cancel`，按稳定 ActorRef 与调用方幂等键拒绝重放冲突；协议限制消息大小、socket 超时和 payload 白名单，认证错误不回显输入或 token。
+- **P1f Operator Console**：`console.py` 将 `ReadOnlyControlPlane` 和 `RuntimeIpcClient` 组合为独立 loopback HTTP 操作界面。GET snapshot 展示 attempts/approvals/resumes/steers；POST control 代理 Ping、Approve/Reject、Resume、Steer、Cancel。浏览器不读取 IPC discovery/token，ActorRef 在 Console 启动时固定；写请求必须通过 Host、Origin、CSRF、Content-Type、请求大小和契约校验。服务使用标准库与内嵌静态页面，不新增 Web 框架或 Node 构建链，也不获取 Runtime lease。
 - `AgentLoop.subagent` 支持 `dispatch/status/cancel/join/resume/steer`;resume 必须带稳定 `idempotency_key`；dispatch 对模型只暴露 `role/task/context_mode/execution_mode/artifact_contract`,所有 child AgentLoop 都移除 `subagent` 工具以维持禁嵌套。
 
 ### 2.5 vision(双环自检 + 评分分层)

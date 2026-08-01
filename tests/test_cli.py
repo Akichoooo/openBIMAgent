@@ -210,6 +210,17 @@ def test_control_write_requires_resource_and_instruction(tmp_path, capsys) -> No
     assert "需要 --instruction" in capsys.readouterr().out
 
 
+def test_operator_console_rejects_non_loopback_host(tmp_path, capsys) -> None:
+    code = main([
+        "operator-console",
+        "--sessions-dir", str(tmp_path / "sessions"),
+        "--actor-id", "human:operator",
+        "--host", "0.0.0.0",
+    ])
+    assert code == 1
+    assert "只允许绑定 127.0.0.1" in capsys.readouterr().out
+
+
 # ---------- HITL 斜杠命令(_handle_slash) ----------
 
 

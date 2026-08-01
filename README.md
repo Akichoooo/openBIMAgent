@@ -12,7 +12,7 @@
 
 ## 状态
 
-M1 持续实现中。已具备确定性 Pipeline、Blender/Vectorworks MCP 客户端、Domain Gate，以及 Subagent Runtime v1 的 child Session、不可变 Artifact、background/status/cancel/join、跨进程 Session 索引锁、重启 rehydrate、Approval Broker、P1c `resume/steer`、P1d 控制面基础和 P1e 单机 Runtime IPC。`resume` 永远创建新的 request/agent/child attempt，以 `lineage_id + attempt_number` 保持谱系；稳定 `ActorRef`、`instruction_sha256` 和调用方 `idempotency_key` 保证同键同语义重试复用、同键不同语义严格冲突。旧结果只作为不可变只读上下文，禁止静默重放旧工具副作用；`steer` 仅绑定当前 queued/running attempt，在下一轮 Provider 调用前的安全边界应用。只读 `ReadOnlyControlPlane` 与 `control` CLI 不获取 Runtime lease；P1e `runtime-serve` 由唯一 lease owner 启动 loopback-only IPC，`control-write` 经 bearer token 和 ActorRef 提交 Approval/Resume/Steer/Cancel，客户端不能直接重建 Runtime 或绕过审批。通用 Loop 的 MCP/vision/deliver 接线和双宿主 E2E 仍在推进。
+M1 持续实现中。已具备确定性 Pipeline、Blender/Vectorworks MCP 客户端、Domain Gate，以及 Subagent Runtime v1 的 child Session、不可变 Artifact、background/status/cancel/join、跨进程 Session 索引锁、重启 rehydrate、Approval Broker、P1c `resume/steer`、P1d 控制面基础、P1e 单机 Runtime IPC 和 P1f 本地 Operator Console。`resume` 永远创建新的 request/agent/child attempt，以 `lineage_id + attempt_number` 保持谱系；稳定 `ActorRef`、`instruction_sha256` 和调用方 `idempotency_key` 保证同键同语义重试复用、同键不同语义严格冲突。旧结果只作为不可变只读上下文，禁止静默重放旧工具副作用；`steer` 仅绑定当前 queued/running attempt，在下一轮 Provider 调用前的安全边界应用。只读 `ReadOnlyControlPlane` 与 `control` CLI 不获取 Runtime lease；P1e `runtime-serve` 由唯一 lease owner 启动 loopback-only IPC，`control-write` 经 bearer token 和 ActorRef 提交 Approval/Resume/Steer/Cancel；P1f `operator-console` 用浏览器展示 attempts/approvals/resumes/steers，并在服务端代理写控制，浏览器不接触 IPC token。通用 Loop 的 MCP/vision/deliver 接线和双宿主 E2E 仍在推进。
 
 ## 文档地图
 
@@ -87,6 +87,20 @@ uv run python -m openbimagent control-write cancel <request_id> --actor-id human
 ```
 
 > IPC v1 仅绑定 `127.0.0.1`，discovery 和 token 位于 `sessions/_runtime`；原始 token 不进入 Session、RuntimeState 或 CLI 参数。IPC 不是远程 API，不应暴露端口或共享 sessions 目录。调用方必须为每个逻辑写操作稳定复用 `actor_id + idempotency_key`。
+
+P1f 本地 Operator Console（终端 1 的 Runtime 保持运行）：
+
+```bash
+# 终端 2：启动独立 Console；它不持有 Runtime lease
+uv run python -m openbimagent operator-console \
+  --sessions-dir out/sessions \
+  --actor-id human:operator \
+  --display-name "Local Operator"
+
+# 浏览器打开命令输出的 http://127.0.0.1:8765/
+```
+
+Console 展示 attempts、pending approvals、resumes 和 steers，并代理 Ping、Approve/Reject、Resume、Steer、Cancel。它只监听 `127.0.0.1`，强制 Host/Origin/CSRF、JSON Content-Type、64 KiB 请求上限和 CSP 安全头，不提供 CORS。ActorRef 在服务端启动时固定；浏览器无法声明 actor，也不会收到 `control-ipc.token`。该 Console 是单机操作面板，不是远程管理 API。
 
 常用参数:
 

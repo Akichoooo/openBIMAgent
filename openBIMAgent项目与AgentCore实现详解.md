@@ -1,7 +1,7 @@
 # openBIMAgent 项目与 Agent Core 实现详解
 
 > 更新日期：2026-08-01
-> 当前判断：**M0 已附条件收官；M1 模块级能力已大体实现并完成首轮产品级接线；Subagent Runtime v1 已推进至 P1e 单机 IPC；M1.5 市政管网的 Solver、真实 BIM 构件生成和端到端交付仍未完成。**
+> 当前判断：**M0 已附条件收官；M1 模块级能力已大体实现并完成首轮产品级接线；Subagent Runtime v1 已推进至 P1f 本地 Operator Console；M1.5 市政管网的 Solver、真实 BIM 构件生成和端到端交付仍未完成。**
 
 ## 1. 项目是什么
 
@@ -179,6 +179,7 @@ P0 已新增真实 Subagent Runtime v1：
 - P1d Resume 强制调用方提供 `idempotency_key`，并持久化 `instruction_sha256`。幂等域为 `actor_id + idempotency_key`：同 source/同指令重试返回原 Handle/Receipt，不创建或重跑 attempt；同键不同 source/指令严格冲突；Runtime 重启后仍从持久状态复用原事实。
 - P1d 新增只读 `ReadOnlyControlPlane` 与 `control` CLI，查询 attempts、lineage、approvals、resumes、steers；投影默认不返回 task/instruction 原文，可与活跃 Runtime 并行读取且不获取 lease。
 - P1e 新增单机 `RuntimeIpcServer/RuntimeIpcClient`：`runtime-serve` 持有唯一 Runtime lease 并绑定 `127.0.0.1`，`control-write` 经 discovery、私有 token、ActorRef 和幂等键提交 Approval/Resume/Steer/Cancel。服务端不接受外部 runtime/legacy actor，不保存 token，不允许客户端自行重建 Runtime；请求采用白名单 payload、大小上限、超时和 message_id 校验。
+- P1f 新增本地 `OperatorConsoleServer/OperatorConsoleService`：`operator-console` 独立展示 attempts、approvals、resumes、steers，并在服务端代理 Ping、Approve/Reject、Resume、Steer、Cancel。它不获取 Runtime lease，浏览器不读取 IPC bearer token，ActorRef 在启动时固定；HTTP 强制 loopback、Host/Origin/CSRF、JSON、64 KiB 上限、16 并发和 CSP 等安全头。
 - 可靠性语义采用失败关闭：不可变 Artifact 通过原子“存在即失败”发布；child 声明的输出文件缺失时不会误报 `completed`，而会生成结构化 `FAILED`、错误工件、manifest 和 delivery receipt。
 - 10 个 K3/Kimi 既有 `agents/*.md` 均纳入 profile 解析回归，保持 Markdown + YAML frontmatter、禁嵌套和 artifact-mediated 协作约束。
 
@@ -408,7 +409,7 @@ uv run python -m openbimagent control resumes --sessions-dir out/sessions --json
 uv run python -m openbimagent control steers --request-id <request_id> --sessions-dir out/sessions --json
 ```
 
-`control` 是 P1d 的只读控制面，不取得 Runtime lease，也不会执行 resume/steer/approval 副作用。P1e 的 `control-write` 只连接由 `runtime-serve` 启动、持有 lease 的本机 Runtime；它不能离线写 Session，也不能越过 Runtime 内存中的 Approval Broker/Steer Queue。
+`control` 是 P1d 的只读控制面，不取得 Runtime lease，也不会执行 resume/steer/approval 副作用。P1e 的 `control-write` 只连接由 `runtime-serve` 启动、持有 lease 的本机 Runtime；它不能离线写 Session，也不能越过 Runtime 内存中的 Approval Broker/Steer Queue。P1f 的 `operator-console` 复用相同边界：读侧投影持久事实，写侧只代理到活跃 IPC，不自行构造 Runtime；浏览器只访问本地 HTTP，不读取 IPC token。
 
 CLI 已能完成单 Blender 主链，但当前 CLI 尚未增加 Vectorworks client/builder 与 `domain_evidence` 的配置入口。因此双 target 目前主要通过 Python API 注入，CLI 产品化仍需下一轮接线。
 
@@ -500,7 +501,7 @@ P1e 单机 Runtime IPC 的最终验收结果：P1e + CLI + Schema Gate + Runtime
 | OpenAI Chat 方言 | 已实现 | 统一 completion 契约 |
 | Anthropic/Responses 方言 | 未实现 | 仍会 NotImplemented |
 | Orchestrator | 已实现 | 重试、doom-loop、并发、统一 judge |
-| Subagent Runtime v1 | P0 + P1a + P1b-A + P1b-B + P1c + P1d + P1e 已实现 | 版本化契约、child Session、不可变 artifact、manifest、生命周期与 receipt；background/status/cancel/join、并发≤4、跨进程索引锁、Runtime lease、重启 rehydrate、Approval Broker、显式新 attempt 的 resume、ActorRef、幂等 Resume、只读 Control Plane、按安全轮次边界 steer，以及 loopback Runtime IPC 写控制已接通 |
+| Subagent Runtime v1 | P0 + P1a + P1b-A + P1b-B + P1c + P1d + P1e + P1f 已实现 | 版本化契约、child Session、不可变 artifact、manifest、生命周期与 receipt；background/status/cancel/join、并发≤4、跨进程索引锁、Runtime lease、重启 rehydrate、Approval Broker、显式新 attempt 的 resume、ActorRef、幂等 Resume、只读 Control Plane、按安全轮次边界 steer、loopback Runtime IPC 写控制和本地 Operator Console 已接通 |
 | Builder | 已实现 | LLM、AST 预检、模板回退、可选缓存 |
 | SCAD Loop | 模块已实现、主链条件启用 | 缺 Solver 几何 IR 时跳过 |
 | Blender Loop | 已实现 | 执行、截图、多视角、评分、回滚 |
@@ -537,8 +538,8 @@ P1e 单机 Runtime IPC 的最终验收结果：P1e + CLI + Schema Gate + Runtime
 ### P2：架构统一与效率
 
 1. 将 `AgentLoop` 的 MCP/vision/deliver 占位工具接到现有 pipeline 模块，消除双轨入口；subagent 已在 Runtime v1 接通。
-2. Subagent Runtime 的后台 status/cancel、跨进程锁、重启 rehydrate、Approval Broker、child ask、decision receipt、显式新 attempt 的 `resume`、幂等 key、稳定 actor identity、只读 Control Plane、安全轮次边界 `steer` 和单机 Runtime IPC 已完成；下一步不急于分布式化，先让 Web/TUI 消费现有读写控制面，并回到市政 compiled utility IR 与确定性 Solver 主线。
-3. 将现有 Control Plane、Approval Broker 与 Runtime 写 API 接到未来 Web/TUI；UI 必须传稳定 `ActorRef` 和 Resume `idempotency_key`，不能依赖显示名或把只读 CLI 误当成写控制入口。
+2. Subagent Runtime 的后台 status/cancel、跨进程锁、重启 rehydrate、Approval Broker、child ask、decision receipt、显式新 attempt 的 `resume`、幂等 key、稳定 actor identity、只读 Control Plane、安全轮次边界 `steer`、单机 Runtime IPC 和本地 Operator Console 已完成；下一步不急于分布式化，转回市政 compiled utility IR 与确定性 Solver 主线。
+3. 后续完整 Web/TUI 应复用 Operator Console 已验证的读写边界：ActorRef 必须由可信服务端固定或认证映射，写操作保留稳定 idempotency_key，浏览器不得直接读取 Runtime IPC token。
 4. 在双宿主稳定后默认启用 Builder cache 和 orchestrator 并发。
 5. 更新根 `README.md` 与 `pyproject.toml` 中仍停留在“M0 骨架/设计阶段”的描述。
 6. 将真实冒烟命令、环境依赖和故障恢复固化为验收脚本。

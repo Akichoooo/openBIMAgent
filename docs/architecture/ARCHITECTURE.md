@@ -1,6 +1,6 @@
 # openBIMAgent 总体架构
 
-版本:v0.5.0(Subagent Runtime v1 P1e 单机 IPC)· 2026-08-01
+版本:v0.6.0(Subagent Runtime v1 P1f 本地 Operator Console)· 2026-08-01
 依据:`docs/research/01-11` 全部调研与评审 · 决议:`docs/architecture/DECISIONS_DRAFT.md`
 姊妹篇:[COMPONENTS.md](COMPONENTS.md)(组件/agent/模型配置/上下文管理详设)
 
@@ -138,7 +138,7 @@ domain_packs/<name>/
 ## 6. 子代理、trace 与事件协议
 
 - 子代理 = Markdown + YAML frontmatter;禁嵌套;并发 ≤4;child session;返回 = 摘要 + 工件路径 + <200 字核心提示。
-- **Subagent Runtime v1(P0 + P1a + P1b-A + P1b-B Approval + P1c Resume/Steer + P1d Control Plane 已接通)**:版本化 `SubagentRequest/SubagentHandle/SubagentResultEnvelope` + JSON Schema;模型只可请求 `role/task/context_mode/execution_mode/artifact_contract`,实际 model/tools/permissions 由受信任角色 profile 决定。`LocalSubagentRuntime` 每次创建真实 child Session,将 summary/output 复制到不可变运行目录,生成含 size/SHA-256 的 `ArtifactManifest`,父 Session 只接收紧凑结果与工件指针。
+- **Subagent Runtime v1(P0 + P1a + P1b-A + P1b-B Approval + P1c Resume/Steer + P1d Control Plane + P1e IPC + P1f Operator Console 已接通)**:版本化 `SubagentRequest/SubagentHandle/SubagentResultEnvelope` + JSON Schema;模型只可请求 `role/task/context_mode/execution_mode/artifact_contract`,实际 model/tools/permissions 由受信任角色 profile 决定。`LocalSubagentRuntime` 每次创建真实 child Session,将 summary/output 复制到不可变运行目录,生成含 size/SHA-256 的 `ArtifactManifest`,父 Session 只接收紧凑结果与工件指针。
 - P1a 已实现进程内 `background → status/cancel/join`,线程池并发硬上限 4。取消使用协作式 `threading.Event`,贯穿默认 child `AgentLoop` 和 Provider 流式调用;只有 Manifest、终态 lifecycle 与 receipt 全部完成后才暴露终态。
 - P1b-A 将 background 可变状态原子写入 `sessions/_runtime/<request_id>.json`。启动时：终态直接恢复且不重跑模型；`finalizing` 幂等补齐 lifecycle/receipt；遗留 `prepared/running` 以 `RuntimeRestarted(retryable=true)` 失败关闭，避免重复副作用；损坏状态文件严格失败并报告路径。
 - P1b-B Approval Broker 将 child 的 `Permission.ASK` 记录为版本化 `ApprovalRequest`，同时投递父/子 Session；父侧可使用兼容旧接口的 bool callback，或调用 `pending_approvals()/decide_approval()` 异步决策。`DecisionReceipt` 支持 approved/rejected/cancelled/timed_out/runtime_restarted、同决策幂等和冲突拒绝。Session 仅保存参数字段类型摘要及 canonical SHA-256，不保存 code/content/token 等原始值。
@@ -148,6 +148,7 @@ domain_packs/<name>/
 - P1d 将 `requested_by/decided_by` 升级为版本化 `ActorRef(actor_id, actor_type, display_name)`；历史字符串 actor 在读取时规范化为 `legacy`，新写入使用稳定身份。Resume 增加 `instruction_sha256 + idempotency_key`，幂等域是 `actor_id + idempotency_key`：同语义重试复用原 Handle/Receipt，不同 source 或指令哈希严格冲突，重启后从 RuntimeState 恢复同一事实。
 - P1d `ReadOnlyControlPlane` 只投影 `sessions/_runtime/*.json` 与父/子 Session 审计事实，提供 attempts/lineage/approvals/resumes/steers 查询；默认不暴露 task/instruction 原文。`control` CLI 支持文本和 JSON 输出，可与活跃 Runtime 并行读取且不获取 lease。
 - P1e 增加 `RuntimeIpcServer/RuntimeIpcClient` 和 `runtime-serve/control-write` CLI。服务绑定唯一 Runtime lease owner，仅监听 `127.0.0.1`，使用 `sessions/_runtime/control-ipc.json` discovery 与独立 token 文件；请求/响应为版本化单行 JSON，消息大小、超时、ActorType、payload 字段和 message_id 均严格校验。Approval/Resume/Steer/Cancel 由服务路由到内存 Runtime，客户端不能自行重建 Runtime；IPC 写操作按 `actor_id + idempotency_key` 幂等，冲突失败，bearer token 不进入 Session/RuntimeState/日志。
+- P1f 增加独立 `OperatorConsoleServer/OperatorConsoleService` 和 `operator-console` CLI。Console 不持有 Runtime lease：只读查询直接投影持久化 Control Plane，写控制由服务端 `RuntimeIpcClient` 代理到唯一 lease owner。浏览器只获得隐私收敛的 snapshot、启动时固定的 ActorRef 展示值和独立 CSRF token，不获得 IPC bearer token。HTTP 仅绑定 `127.0.0.1`，强制 Host/Origin/CSRF、JSON Content-Type、64 KiB 请求上限、16 并发、CSP/Frame/CORP 安全头并禁用 CORS；它是单机操作界面，不是远程 API。
 - v1 生命周期用 custom 事件记录 `subagent_created/started/completed/failed/cancelled`、`artifact_committed`、`delivery_receipt`、`approval_requested/approval_decided`、`resume_requested/resume_receipt`、`steer_requested/steer_receipt`;父子关系及 attempt lineage 写入 `sessions/index.json.child_of`。Resume/Steer 控制事件支持幂等补写和父子/三方对账，冲突事实严格失败。
 - trace = pi JSONL 树 + OTel `gen_ai.*` 对齐 + custom 事件(screenshot/score/patch/snapshot/subagent lifecycle/artifact/receipt)+ VLM 留痕(reasoning/anchor_ref/actionable_feedback);纯文件,不接 Langfuse。
 - SSE(M0 定 schema,M2 实现):全走 `data-*` parts;双视图(tool-result 给 LLM 文本,data 流给 UI 素材)。

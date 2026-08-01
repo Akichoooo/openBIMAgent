@@ -77,6 +77,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_control_write(args)
     if args.cmd == "runtime-serve":
         return _cmd_runtime_serve(args)
+    if args.cmd == "operator-console":
+        return _cmd_operator_console(args)
     parser.print_help()
     return 2
 
@@ -162,6 +164,20 @@ def _build_parser() -> argparse.ArgumentParser:
     serve_p.add_argument("--profile", default=None, help="child AgentLoop 使用的 providers profile")
     serve_p.add_argument("--approval-timeout", type=float, default=300.0)
     serve_p.add_argument("--ipc-timeout", type=float, default=5.0)
+
+    console_p = sub.add_parser("operator-console", help="启动 loopback-only 本地 Runtime 操作界面")
+    console_p.add_argument("--sessions-dir", default=DEFAULT_SESSIONS_DIR, type=Path)
+    console_p.add_argument("--host", default="127.0.0.1", help="仅允许 127.0.0.1")
+    console_p.add_argument("--port", type=int, default=8765, help="本地 HTTP 端口；0 表示自动分配")
+    console_p.add_argument("--actor-id", required=True, help="服务端固定注入的稳定 ActorRef actor_id")
+    console_p.add_argument(
+        "--actor-type",
+        choices=["human", "agent", "service"],
+        default="human",
+        help="调用方 actor 类型",
+    )
+    console_p.add_argument("--display-name", default=None, help="可选显示名称，不参与授权身份")
+    console_p.add_argument("--ipc-timeout", type=float, default=5.0)
 
     return parser
 
@@ -602,6 +618,42 @@ def _cmd_runtime_serve(args: argparse.Namespace) -> int:
     finally:
         if runtime is not None:
             runtime.shutdown(wait=True, cancel_pending=False)
+    return 0
+
+
+def _cmd_operator_console(args: argparse.Namespace) -> int:
+    """启动独立 loopback HTTP Console；不持有 Runtime lease。"""
+    from openbimagent.orchestrator.actor import ActorRef, ActorType
+    from openbimagent.orchestrator.console import OperatorConsoleServer, OperatorConsoleService
+
+    server = None
+    try:
+        actor = ActorRef(
+            actor_id=args.actor_id,
+            actor_type=ActorType(args.actor_type),
+            display_name=args.display_name,
+        )
+        service = OperatorConsoleService(
+            args.sessions_dir,
+            actor=actor,
+            ipc_timeout_s=args.ipc_timeout,
+        )
+        server = OperatorConsoleServer(service, host=args.host, port=args.port)
+        print(
+            "[operator-console] ready "
+            f"url={server.start()} actor={actor.actor_id} sessions={Path(args.sessions_dir).resolve()}"
+        )
+        stop = threading.Event()
+        while not stop.wait(0.5):
+            pass
+    except KeyboardInterrupt:
+        print("\n[operator-console] stopping")
+    except Exception as exc:
+        print(f"[operator-console error] {exc}")
+        return 1
+    finally:
+        if server is not None:
+            server.stop()
     return 0
 
 
