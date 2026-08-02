@@ -143,6 +143,8 @@ Domain Pack 不是提示词包。提示词和 Playbook 负责语义澄清、角�
 
 **M1 G2 统一交付协议**：Subagent Runtime 与 Pipeline/Core Loop 共用 `ArtifactManifest v1.1`，不维护第二套交付清单。每个记录包含受控相对路径、媒体类型、生成者、source attempt、依赖、状态、size 和 SHA-256；Manifest 可携带 lineage/attempt/resume、幂等键、canonical 语义摘要与 Domain Gate 状态。交付先限制路径在 workdir 内、重算声明 hash，再复制到不可变目录；同键同语义复用，同键异义冲突，不同键保留独立历史。若工件已原子发布而 Manifest 尚未发布，恢复流程只在 hash 与原语义一致时重建记录。完成态只接受 completed 工件，`FAIL/UNKNOWN` 始终拒绝；`SKIPPED` 仅表示 Playbook 没有启用领域硬门禁，必须与显式 `domain_gate_required=false` 同时成立并原样审计，不能伪装为领域 `PASS`。
 
+**M1 G3 双宿主语义协议**：`SemanticSnapshot v1` 以 stable ID 投影系统、节点、端口和管段，统一比较对象数量、坐标/中心线、尺寸、坡度、拓扑、工程材质、IFC 分类与领域属性，并为每个对象保留 canonical `source_ir_path`。Blender 离线适配器直接物化严格校验后的 `CompiledUtilityIR`；Vectorworks 离线适配器必须先经过 typed plan 与 fake executor，再从实际对象、记录和连接状态反投影。比较器只忽略协议显式允许的 `host_handle` 与 `presentation_material`，任何对象缺失或坐标、尺寸、拓扑、分类/属性偏差均生成 `SemanticComparisonReport v1` 并失败关闭。真实宿主快照仍留待 G6 审批后验证。
+
 ## 6. 子代理、trace 与事件协议
 
 - 子代理 = Markdown + YAML frontmatter;禁嵌套;并发 ≤4;child session;返回 = 摘要 + 工件路径 + <200 字核心提示。

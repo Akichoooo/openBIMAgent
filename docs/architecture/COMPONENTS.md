@@ -75,14 +75,20 @@
 - `FakeVectorworksExecutor` 提供离线 receipt、部分成功注入、补偿提示和幂等恢复；重试跳过已应用 operation，完成后同计划复用 receipt，同 stable object ID 不同语义严格冲突。
 - Pipeline 的 typed 主路径只注入 Solver 生成的完整 `CompiledUtilityIR`；缺失时拒绝拿 Scene Graph IR 顶替。旧三参数 `vs.*` Builder 仅保留兼容路径，不能作为 G1 证据，typed executor 也不得回退 `execute_code`。
 
-### 2.6 deliver.manifest(G2 统一不可变交付)
+### 2.6 assembly.semantic_snapshot(G3 双宿主语义一致性)
+
+- `SemanticSnapshot v1` 以 stable ID 表达 system/node/port/segment，携带位置或中心线、拓扑、直径、长度、起终标高、坡度、工程材质、IFC 分类、领域属性和 canonical `source_ir_path`；Pydantic 与 JSON Schema 均禁止额外字段和非有限数值。
+- `FakeBlenderSemanticExecutor` 直接从严格 `CompiledUtilityIR` 生成离线 Blender 语义；`FakeVectorworksSemanticExecutor` 必须执行 `VectorworksExecutionPlan`，再从 fake executor 的对象、记录和连接状态反投影，避免直接复制 IR 掩盖 Builder 丢字段。
+- `compare_semantic_snapshots()` 按 stable ID 和字段路径递归比较，报告对象 ID、字段、左右值及双方 IR 来源。允许差异固定为宿主内部 `host_handle` 与表现层 `presentation_material`；坐标、尺寸、坡度、拓扑、工程材质、分类和领域属性均不可忽略。
+
+### 2.7 deliver.manifest(G2 统一不可变交付)
 
 - `ArtifactManifest v1.1` 是 Pipeline、Core Loop 与 Subagent Runtime 的统一协议；`ArtifactRecord` 记录受控相对路径、媒体类型、生成者、source attempt、依赖、状态、size 与 SHA-256，Manifest 记录 lineage/attempt/resume、幂等键、语义摘要和 Domain Gate 状态。
 - `commit_delivery_manifest()` 只接受 workdir 内相对路径，重算源文件 hash 后复制为不可变副本；同键同语义复用、同键异义冲突、不同键保留独立历史。工件已发布但 Manifest 未发布时，可在 expected SHA-256 一致的前提下恢复记录。
 - 完成态 Manifest 只接受 completed 工件。已声明领域门禁时必须为 `PASS`；未声明时只接受并保留 `SKIPPED`。`domain_gate_required` 与状态必须严格匹配，`FAIL/UNKNOWN` 不能交付，调用者也不能用 `SKIPPED` 绕过实际门禁。
 - `deliver.gate` 返回验收通过的解析路径；Pipeline 仅在 C5 accepted 且 plan 成功后提交 Manifest。Core Loop 的 `deliver` 工具使用结构化工件列表、稳定幂等键和显式 `PASS`，不接受自由清单文本。
 
-### 2.7 orchestrator(子代理调度)
+### 2.8 orchestrator(子代理调度)
 
 - 角色文件 = Markdown + YAML frontmatter。基础字段:`name/model/tools/permissions`;Runtime v1 字段:`context_mode/max_turns/artifact_contract/nesting`;正文为 system prompt。角色文件是受信任的能力上限,调用者不能通过请求提升 model/tools/permissions。
 - 派发:PASS / FIX(带可执行返工指令)/ ESCALATE(升模型或问人);禁嵌套;并发 ≤4。

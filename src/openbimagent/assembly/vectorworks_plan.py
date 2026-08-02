@@ -242,22 +242,28 @@ class VectorworksBuilder:
         systems = sorted(compiled.systems, key=lambda item: item.system_id)
         nodes = sorted(compiled.nodes, key=lambda item: item.node_id)
         segments = sorted(compiled.segments, key=lambda item: item.segment_id)
-        for system in systems:
+        for system_index, system in enumerate(systems):
             if selected and system.system_id not in selected:
                 continue
-            operations.extend(_create_and_record_system(system))
-        for node in nodes:
+            operations.extend(_create_and_record_system(system, f"/systems/{system_index}"))
+        for node_index, node in enumerate(nodes):
             if selected and node.node_id not in selected:
                 continue
-            operations.extend(_create_and_record_node(node))
-            for port in sorted(node.ports, key=lambda item: item.port_id):
+            operations.extend(_create_and_record_node(node, f"/nodes/{node_index}"))
+            for port_index, port in enumerate(sorted(node.ports, key=lambda item: item.port_id)):
                 if selected and port.port_id not in selected and node.node_id not in selected:
                     continue
-                operations.extend(_create_and_record_port(port, node.system_id))
-        for segment in segments:
+                operations.extend(
+                    _create_and_record_port(
+                        port,
+                        node.system_id,
+                        f"/nodes/{node_index}/ports/{port_index}",
+                    )
+                )
+        for segment_index, segment in enumerate(segments):
             if selected and segment.segment_id not in selected:
                 continue
-            operations.extend(_create_and_record_segment(segment))
+            operations.extend(_create_and_record_segment(segment, f"/segments/{segment_index}"))
             operations.append(
                 VectorworksOperation(
                     operation=VectorworksOperationKind.CONNECT_TOPOLOGY,
@@ -322,16 +328,34 @@ def _class_name(system_type: str) -> str:
     return f"M1-Utility-{system_type.upper()}"
 
 
-def _record(operation_id: str, object_id: str, object_type: VectorworksObjectType, ifc_class: str, ifc_type: str | None, system_id: str) -> VectorworksOperation:
+def _record(
+    operation_id: str,
+    object_id: str,
+    object_type: VectorworksObjectType,
+    object_kind: str,
+    ifc_class: str,
+    ifc_type: str | None,
+    system_id: str,
+    source_ir_path: str,
+    domain_properties: dict[str, str | float | int | bool | None] | None = None,
+    geometry_properties: dict[str, float] | None = None,
+) -> VectorworksOperation:
     fields = [
         RecordField(field_name="StableObjectID", value=object_id),
         RecordField(field_name="IRObjectID", value=object_id),
         RecordField(field_name="ObjectType", value=object_type.value),
+        RecordField(field_name="ObjectKind", value=object_kind),
         RecordField(field_name="SystemID", value=system_id),
         RecordField(field_name="IFCClass", value=ifc_class),
+        RecordField(field_name="SourceIRPath", value=source_ir_path),
     ]
     if ifc_type is not None:
         fields.append(RecordField(field_name="IFCPredefinedType", value=ifc_type))
+    for name, value in sorted((domain_properties or {}).items()):
+        if value is not None:
+            fields.append(RecordField(field_name=f"Domain_{name}", value=value))
+    for name, value in sorted((geometry_properties or {}).items()):
+        fields.append(RecordField(field_name=name, value=value, unit="m"))
     return VectorworksOperation(
         operation=VectorworksOperationKind.SET_RECORD,
         operation_id=operation_id,
@@ -342,7 +366,7 @@ def _record(operation_id: str, object_id: str, object_type: VectorworksObjectTyp
     )
 
 
-def _create_and_record_system(system: Any) -> list[VectorworksOperation]:
+def _create_and_record_system(system: Any, source_ir_path: str) -> list[VectorworksOperation]:
     obj_type = VectorworksObjectType.UTILITY_SYSTEM
     return [
         VectorworksOperation(
@@ -356,11 +380,21 @@ def _create_and_record_system(system: Any) -> list[VectorworksOperation]:
             ifc_class=system.ifc_class,
             ifc_predefined_type=system.ifc_predefined_type,
         ),
-        _record(f"record:{system.system_id}", system.system_id, obj_type, system.ifc_class, system.ifc_predefined_type, system.system_id),
+        _record(
+            f"record:{system.system_id}",
+            system.system_id,
+            obj_type,
+            "system",
+            system.ifc_class,
+            system.ifc_predefined_type,
+            system.system_id,
+            source_ir_path,
+            {"flow_regime": system.flow_regime.value, "system_type": system.system_type.value},
+        ),
     ]
 
 
-def _create_and_record_node(node: Any) -> list[VectorworksOperation]:
+def _create_and_record_node(node: Any, source_ir_path: str) -> list[VectorworksOperation]:
     obj_type = VectorworksObjectType(node.node_type.value)
     return [
         VectorworksOperation(
@@ -375,11 +409,21 @@ def _create_and_record_node(node: Any) -> list[VectorworksOperation]:
             ifc_class=node.ifc_class,
             ifc_predefined_type=node.ifc_predefined_type,
         ),
-        _record(f"record:{node.node_id}", node.node_id, obj_type, node.ifc_class, node.ifc_predefined_type, node.system_id),
+        _record(
+            f"record:{node.node_id}",
+            node.node_id,
+            obj_type,
+            "node",
+            node.ifc_class,
+            node.ifc_predefined_type,
+            node.system_id,
+            source_ir_path,
+            {"ground_elevation_m": node.ground_elevation_m, "node_type": node.node_type.value},
+        ),
     ]
 
 
-def _create_and_record_port(port: Any, system_id: str) -> list[VectorworksOperation]:
+def _create_and_record_port(port: Any, system_id: str, source_ir_path: str) -> list[VectorworksOperation]:
     obj_type = VectorworksObjectType.DISTRIBUTION_PORT
     return [
         VectorworksOperation(
@@ -393,11 +437,21 @@ def _create_and_record_port(port: Any, system_id: str) -> list[VectorworksOperat
             position=Coordinate(**port.position.model_dump()),
             ifc_class=port.ifc_class,
         ),
-        _record(f"record:{port.port_id}", port.port_id, obj_type, port.ifc_class, None, system_id),
+        _record(
+            f"record:{port.port_id}",
+            port.port_id,
+            obj_type,
+            "port",
+            port.ifc_class,
+            None,
+            system_id,
+            source_ir_path,
+            {"direction": port.direction.value},
+        ),
     ]
 
 
-def _create_and_record_segment(segment: Any) -> list[VectorworksOperation]:
+def _create_and_record_segment(segment: Any, source_ir_path: str) -> list[VectorworksOperation]:
     obj_type = VectorworksObjectType.PIPE_SEGMENT
     return [
         VectorworksOperation(
@@ -416,7 +470,22 @@ def _create_and_record_segment(segment: Any) -> list[VectorworksOperation]:
             ifc_class=segment.ifc_class,
             ifc_predefined_type=segment.ifc_predefined_type,
         ),
-        _record(f"record:{segment.segment_id}", segment.segment_id, obj_type, segment.ifc_class, segment.ifc_predefined_type, segment.system_id),
+        _record(
+            f"record:{segment.segment_id}",
+            segment.segment_id,
+            obj_type,
+            "segment",
+            segment.ifc_class,
+            segment.ifc_predefined_type,
+            segment.system_id,
+            source_ir_path,
+            {"min_cover_depth_m": segment.min_cover_depth_m},
+            {
+                "EndInvertM": segment.end_invert_m,
+                "HorizontalLengthM": segment.horizontal_length_m,
+                "StartInvertM": segment.start_invert_m,
+            },
+        ),
     ]
 
 

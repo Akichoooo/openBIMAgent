@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/semantic_comparison_report.schema.json",
+  "title": "SemanticComparisonReportV1",
+  "type": "object",
+  "required": ["comparison_version", "left_host", "right_host", "source_ir_id", "source_ir_sha256", "status", "compared_object_count", "differences"],
+  "additionalProperties": false,
+  "properties": {
+    "comparison_version": {"type": "string", "pattern": "^1(\\.\\d+)?$"},
+    "left_host": {"enum": ["blender", "vectorworks"]},
+    "right_host": {"enum": ["blender", "vectorworks"]},
+    "source_ir_id": {"type": "string", "minLength": 1},
+    "source_ir_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "status": {"enum": ["PASS", "FAIL"]},
+    "compared_object_count": {"type": "integer", "minimum": 0},
+    "differences": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["object_id", "field_path", "left_value", "right_value", "left_source_ir_path", "right_source_ir_path"],
+        "additionalProperties": false,
+        "properties": {
+          "object_id": {"type": "string", "minLength": 1, "maxLength": 256},
+          "field_path": {"type": "string", "minLength": 1, "maxLength": 512},
+          "left_value": {},
+          "right_value": {},
+          "left_source_ir_path": {"type": ["string", "null"]},
+          "right_source_ir_path": {"type": ["string", "null"]}
+        }
+      }
+    }
+  }
+}
