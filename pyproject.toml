@@ -11,6 +11,7 @@ dependencies = [
     "httpx",
     "google-genai",
     "fastmcp",
+    "ifcopenshell>=0.8.5",
 ]
 
 [dependency-groups]

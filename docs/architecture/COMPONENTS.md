@@ -81,14 +81,21 @@
 - `FakeBlenderSemanticExecutor` 直接从严格 `CompiledUtilityIR` 生成离线 Blender 语义；`FakeVectorworksSemanticExecutor` 必须执行 `VectorworksExecutionPlan`，再从 fake executor 的对象、记录和连接状态反投影，避免直接复制 IR 掩盖 Builder 丢字段。
 - `compare_semantic_snapshots()` 按 stable ID 和字段路径递归比较，报告对象 ID、字段、左右值及双方 IR 来源。允许差异固定为宿主内部 `host_handle` 与表现层 `presentation_material`；坐标、尺寸、坡度、拓扑、工程材质、分类和领域属性均不可忽略。
 
-### 2.7 deliver.manifest(G2 统一不可变交付)
+### 2.7 deliver.ifc_ids(G4 IFC4X3/IDS 交付门禁)
+
+- `build_ifc_ids_package()` 只接受严格 `SemanticSnapshot v1`，使用 IfcOpenShell `0.8.5+` 生成 IFC4X3 原生系统、检查井、端口、管段及系统/端口/连接关系；stable ID 确定性派生 IFC GlobalId，Source IR 身份写入 IfcProject 属性集，对象属性保留 canonical `source_ir_path`。
+- `municipal_utility.ids` 使用 buildingSMART IDS 1.0 的 entity/property/partOf 标准 facet，版本枚举固定为 `IFC4X3_ADD2`。项目固定 v1.0 Final 官方 XSD（仅规范化行尾空白，副本 SHA-256 固定为 `528d0969f0ba16bb211a77c431f450f6b4ca788e0839ed45929b285c81c6aa30`），生成后与每次语义验证前均离线 XSD 校验；摘要漂移、非标准元素、错误 occurrence 位置和非法版本均失败关闭。
+- IDS 标准不表达 `IfcRelConnectsPorts.RealizingElement` 端口对，故连接完整性由独立 `IFC-REL-CONNECTS-PORTS` 确定性规则验证，并与 IDS findings 一起进入 `IfcIdsValidationReport v1` 和逐项 `RuleEvidence`，而不是扩展 IDS XML。
+- Report 可投影为 `ifc_ids_compliant` Domain Gate evidence；删除必要属性、破坏实体/PredefinedType、系统归属或连接关系均稳定 FAIL。`commit_ifc_ids_package()` 只在验证 PASS 时将 IFC、IDS、报告和证据提交到统一不可变 Artifact Manifest。
+
+### 2.8 deliver.manifest(G2 统一不可变交付)
 
 - `ArtifactManifest v1.1` 是 Pipeline、Core Loop 与 Subagent Runtime 的统一协议；`ArtifactRecord` 记录受控相对路径、媒体类型、生成者、source attempt、依赖、状态、size 与 SHA-256，Manifest 记录 lineage/attempt/resume、幂等键、语义摘要和 Domain Gate 状态。
 - `commit_delivery_manifest()` 只接受 workdir 内相对路径，重算源文件 hash 后复制为不可变副本；同键同语义复用、同键异义冲突、不同键保留独立历史。工件已发布但 Manifest 未发布时，可在 expected SHA-256 一致的前提下恢复记录。
 - 完成态 Manifest 只接受 completed 工件。已声明领域门禁时必须为 `PASS`；未声明时只接受并保留 `SKIPPED`。`domain_gate_required` 与状态必须严格匹配，`FAIL/UNKNOWN` 不能交付，调用者也不能用 `SKIPPED` 绕过实际门禁。
 - `deliver.gate` 返回验收通过的解析路径；Pipeline 仅在 C5 accepted 且 plan 成功后提交 Manifest。Core Loop 的 `deliver` 工具使用结构化工件列表、稳定幂等键和显式 `PASS`，不接受自由清单文本。
 
-### 2.8 orchestrator(子代理调度)
+### 2.9 orchestrator(子代理调度)
 
 - 角色文件 = Markdown + YAML frontmatter。基础字段:`name/model/tools/permissions`;Runtime v1 字段:`context_mode/max_turns/artifact_contract/nesting`;正文为 system prompt。角色文件是受信任的能力上限,调用者不能通过请求提升 model/tools/permissions。
 - 派发:PASS / FIX(带可执行返工指令)/ ESCALATE(升模型或问人);禁嵌套;并发 ≤4。
