@@ -253,8 +253,23 @@ def execute_typed_plan(
             raise TypedPlanError("existing state idempotency_key mismatch")
         if state.get("canonical_sha256") != plan["canonical_sha256"]:
             raise TypedPlanError("same output/state has different canonical semantics")
-        if state.get("receipt") is not None:
-            return state["receipt"]
+        if Path(str(state.get("output_path"))).resolve() != target:
+            raise TypedPlanError("existing state output_path mismatch")
+        receipt = state.get("receipt")
+        if receipt is not None:
+            if not target.is_file():
+                raise TypedPlanError(
+                    f"completed receipt exists but controlled Blender file is missing: {target}"
+                )
+            if (
+                receipt.get("plan_id") != plan["plan_id"]
+                or receipt.get("idempotency_key") != plan["idempotency_key"]
+                or receipt.get("canonical_sha256") != plan["canonical_sha256"]
+                or Path(str(receipt.get("output_path"))).resolve() != target
+                or Path(str(receipt.get("state_path"))).resolve() != sidecar
+            ):
+                raise TypedPlanError("completed receipt plan/output/state identity mismatch")
+            return receipt
         if target.is_file():
             # The .blend save can become durable immediately before the sidecar
             # acknowledgement. Always reopen a matching controlled file so a

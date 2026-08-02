@@ -282,6 +282,24 @@ def test_typed_host_repeated_execution_returns_stable_receipt(tmp_path) -> None:
     assert len(fake.save_calls) == save_count
 
 
+def test_typed_host_completed_receipt_requires_controlled_file_and_identity(tmp_path) -> None:
+    module = _load_typed_module()
+    fake = _FakeBpy()
+    receipt = _execute(module, fake, tmp_path)
+    output = tmp_path / "case.blend"
+    output.unlink()
+    with pytest.raises(module.TypedPlanError, match="controlled Blender file is missing"):
+        _execute(module, fake, tmp_path)
+
+    output.write_bytes(b"RESTORED")
+    sidecar = Path(receipt["state_path"])
+    state = json.loads(sidecar.read_text(encoding="utf-8"))
+    state["receipt"]["output_path"] = str(tmp_path / "tampered.blend")
+    sidecar.write_text(json.dumps(state), encoding="utf-8")
+    with pytest.raises(module.TypedPlanError, match="identity mismatch"):
+        _execute(module, fake, tmp_path)
+
+
 def test_typed_host_partial_failure_resumes_by_opening_controlled_file(tmp_path) -> None:
     module = _load_typed_module()
     shared: dict[str, tuple[_Data, Any]] = {}
