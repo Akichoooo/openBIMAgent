@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import uuid
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -490,17 +493,27 @@ def _create_and_record_segment(segment: Any, source_ir_path: str) -> list[Vector
 
 
 class FakeVectorworksExecutor:
-    """Offline executor with receipts, partial completion, and idempotent retries."""
+    """Offline executor with optional durable host facts for restart recovery tests."""
 
-    def __init__(self, *, fail_after_operations: int | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        fail_after_operations: int | None = None,
+        state_path: Path | None = None,
+    ) -> None:
         self.capabilities = VectorworksCapabilities()
         self.fail_after_operations = fail_after_operations
+        self.state_path = Path(state_path).resolve() if state_path is not None else None
         self.objects: dict[str, VectorworksOperation] = {}
         self.records: dict[str, tuple[RecordField, ...]] = {}
         self.connections: dict[str, tuple[str, ...]] = {}
         self._applied: dict[str, set[str]] = {}
+        self._plan_hashes: dict[str, str] = {}
         self._receipts: dict[str, VectorworksExecutionReceipt] = {}
         self.execute_calls = 0
+        self.apply_calls = 0
+        if self.state_path is not None and self.state_path.is_file():
+            self._load_state()
 
     def describe_capabilities(self) -> VectorworksCapabilities:
         return self.capabilities
@@ -514,10 +527,12 @@ class FakeVectorworksExecutor:
         self.execute_calls += 1
         plan = VectorworksExecutionPlan.model_validate(plan.model_dump(mode="json"))
         validate_plan_capabilities(plan, capabilities or self.capabilities)
+        known_hash = self._plan_hashes.get(plan.idempotency_key)
+        if known_hash is not None and known_hash != plan.canonical_sha256:
+            raise VectorworksPlanError("同一幂等键对应不同 execution plan，拒绝执行")
+        self._plan_hashes[plan.idempotency_key] = plan.canonical_sha256
         previous = self._receipts.get(plan.idempotency_key)
         if previous is not None:
-            if previous.canonical_sha256 != plan.canonical_sha256:
-                raise VectorworksPlanError("同一幂等键对应不同 execution plan，拒绝执行")
             return previous
         applied = self._applied.setdefault(plan.idempotency_key, set())
         operation_receipts: list[OperationReceipt] = []
@@ -531,6 +546,7 @@ class FakeVectorworksExecutor:
                 break
             self._apply(op)
             applied.add(op.operation_id)
+            self._persist_state()
             operation_receipts.append(OperationReceipt(operation_id=op.operation_id, status=ReceiptStatus.COMPLETED, object_id=op.object_id))
         complete = len(applied) == len(plan.operations)
         status = ReceiptStatus.COMPLETED if complete else ReceiptStatus.PARTIAL
@@ -547,9 +563,98 @@ class FakeVectorworksExecutor:
         )
         if complete:
             self._receipts[plan.idempotency_key] = receipt
+        self._persist_state()
         return receipt
 
+    def _load_state(self) -> None:
+        if self.state_path is None:
+            return
+        try:
+            payload = json.loads(self.state_path.read_text(encoding="utf-8"))
+            if payload.get("state_version") != "1.0":
+                raise ValueError("unsupported state_version")
+            self.objects = {
+                key: VectorworksOperation.model_validate(value)
+                for key, value in payload.get("objects", {}).items()
+            }
+            self.records = {
+                key: tuple(RecordField.model_validate(value) for value in values)
+                for key, values in payload.get("records", {}).items()
+            }
+            self.connections = {
+                key: tuple(str(value) for value in values)
+                for key, values in payload.get("connections", {}).items()
+            }
+            self._applied = {
+                key: {str(value) for value in values}
+                for key, values in payload.get("applied", {}).items()
+            }
+            self._plan_hashes = {
+                str(key): str(value)
+                for key, value in payload.get("plan_hashes", {}).items()
+            }
+            self._receipts = {
+                key: VectorworksExecutionReceipt.model_validate(value)
+                for key, value in payload.get("receipts", {}).items()
+            }
+        except Exception as exc:
+            raise VectorworksPlanError(
+                f"Vectorworks fake host 状态损坏: {self.state_path}: {exc}"
+            ) from exc
+
+    def _persist_state(self) -> None:
+        if self.state_path is None:
+            return
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "state_version": "1.0",
+            "objects": {
+                key: value.model_dump(mode="json")
+                for key, value in sorted(self.objects.items())
+            },
+            "records": {
+                key: [value.model_dump(mode="json") for value in values]
+                for key, values in sorted(self.records.items())
+            },
+            "connections": {
+                key: list(values)
+                for key, values in sorted(self.connections.items())
+            },
+            "applied": {
+                key: sorted(values)
+                for key, values in sorted(self._applied.items())
+            },
+            "plan_hashes": dict(sorted(self._plan_hashes.items())),
+            "receipts": {
+                key: value.model_dump(mode="json")
+                for key, value in sorted(self._receipts.items())
+            },
+        }
+        encoded = (
+            json.dumps(
+                payload,
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+                allow_nan=False,
+            )
+            + "\n"
+        ).encode("utf-8")
+        temporary = self.state_path.with_name(
+            f".{self.state_path.name}.{uuid.uuid4().hex}.tmp"
+        )
+        try:
+            with temporary.open("xb") as file:
+                file.write(encoded)
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(temporary, self.state_path)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+
     def _apply(self, op: VectorworksOperation) -> None:
+        self.apply_calls += 1
         if op.operation is VectorworksOperationKind.CREATE_OBJECT:
             existing = self.objects.get(op.object_id)
             if existing is not None and existing != op:

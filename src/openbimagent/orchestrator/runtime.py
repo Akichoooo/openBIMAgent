@@ -36,6 +36,7 @@ from openbimagent.orchestrator.control import (
 )
 from openbimagent.orchestrator.contracts import (
     ArtifactRecord,
+    ArtifactStatus,
     ContextMode,
     ExecutionMode,
     SubagentError,
@@ -110,6 +111,7 @@ class _BackgroundRun:
     future: Future[SubagentResultEnvelope] | None = None
     status: SubagentStatus = SubagentStatus.QUEUED
     result: SubagentResultEnvelope | None = None
+    checkpoints: tuple[ArtifactRecord, ...] = ()
     resume_request: ResumeRequest | None = None
     resume_receipt: ResumeReceipt | None = None
 
@@ -342,6 +344,71 @@ class LocalSubagentRuntime:
                 parent_session=run.parent_session,
                 child_session=run.child_session,
             )
+
+    def checkpoint_artifact(
+        self,
+        request_id: str,
+        *,
+        source: Path,
+        idempotency_key: str,
+        kind: str = "side-effect-checkpoint",
+    ) -> ArtifactRecord:
+        """Persist an immutable partial side-effect fact before an attempt can be lost."""
+        run = self._background_run(request_id)
+        if not idempotency_key.strip():
+            raise SubagentRuntimeError("checkpoint idempotency_key 不能为空")
+        source = Path(source).resolve()
+        if not source.is_file():
+            raise FileNotFoundError(f"checkpoint 工件不存在: {source}")
+        digest = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()[:24]
+        destination = self.artifact_store.run_dir(run.handle.agent_id) / f"checkpoint-{digest}.bin"
+        with self._background_lock:
+            if run.status not in {SubagentStatus.QUEUED, SubagentStatus.RUNNING}:
+                raise SubagentRuntimeError("checkpoint 只允许绑定 queued/running attempt")
+            existing = next(
+                (
+                    record
+                    for record in run.checkpoints
+                    if Path(record.path).name == destination.name
+                ),
+                None,
+            )
+            if existing is not None:
+                current_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+                if existing.sha256 != current_sha256:
+                    raise SubagentRuntimeError(
+                        "同一 checkpoint idempotency_key 对应不同副作用事实"
+                    )
+                return existing
+            if destination.is_file():
+                record = self.artifact_store.record_existing(
+                    destination,
+                    kind=kind,
+                    expected_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+                    source_attempt_id=request_id,
+                    status=ArtifactStatus.PARTIAL,
+                )
+            else:
+                record = self.artifact_store.commit_file(
+                    run.handle.agent_id,
+                    source,
+                    name=destination.name,
+                    kind=kind,
+                    source_attempt_id=request_id,
+                    status=ArtifactStatus.PARTIAL,
+                )
+            run.checkpoints = (*run.checkpoints, record)
+            self._persist(run, phase="running", status=run.status)
+        run.child_session.append_new(
+            EventType.CUSTOM,
+            {
+                "customType": CustomType.ARTIFACT_COMMITTED,
+                "request_id": request_id,
+                "agent_id": run.handle.agent_id,
+                "artifact": record.model_dump(mode="json"),
+            },
+        )
+        return record
 
     def pending_approvals(self, request_id: str | None = None):
         """列出等待父侧决策的 child 审批请求。"""
@@ -671,6 +738,7 @@ class LocalSubagentRuntime:
             status=current,
             phase=phase,
             result=result,
+            checkpoints=run.checkpoints,
             resume_request=run.resume_request,
             resume_receipt=run.resume_receipt,
         )
@@ -717,6 +785,7 @@ class LocalSubagentRuntime:
             future=None,
             status=record.status,
             result=record.result,
+            checkpoints=record.checkpoints,
             resume_request=record.resume_request,
             resume_receipt=record.resume_receipt,
         )
@@ -779,27 +848,32 @@ class LocalSubagentRuntime:
             manifest, manifest_path = self.artifact_store.write_manifest(
                 request_id=run.request.request_id,
                 agent_id=run.handle.agent_id,
-                records=(record,),
+                records=(record, *run.checkpoints),
                 name="recovery-manifest.json",
+                lineage_id=run.request.lineage_id,
+                attempt_number=run.request.attempt_number,
+                resumed_from_request_id=run.request.resumed_from_request_id,
+                status=ArtifactStatus.FAILED,
             )
             records = manifest.records
-        record = records[0]
-        child_has_artifact = any(
-            event.type is EventType.CUSTOM
-            and event.payload.customType is CustomType.ARTIFACT_COMMITTED
-            and event.payload.model_dump().get("artifact", {}).get("path") == record.path
-            for event in run.child_session.load()
-        )
-        if not child_has_artifact:
-            run.child_session.append_new(
-                EventType.CUSTOM,
-                {
-                    "customType": CustomType.ARTIFACT_COMMITTED,
-                    "request_id": run.request.request_id,
-                    "agent_id": run.handle.agent_id,
-                    "artifact": record.model_dump(mode="json"),
-                },
+        child_events = run.child_session.load()
+        for recovery_record in records:
+            child_has_artifact = any(
+                event.type is EventType.CUSTOM
+                and event.payload.customType is CustomType.ARTIFACT_COMMITTED
+                and event.payload.model_dump().get("artifact", {}).get("path") == recovery_record.path
+                for event in child_events
             )
+            if not child_has_artifact:
+                run.child_session.append_new(
+                    EventType.CUSTOM,
+                    {
+                        "customType": CustomType.ARTIFACT_COMMITTED,
+                        "request_id": run.request.request_id,
+                        "agent_id": run.handle.agent_id,
+                        "artifact": recovery_record.model_dump(mode="json"),
+                    },
+                )
         now = datetime.now(timezone.utc)
         receipt_id = _receipt_id(run.request.request_id, run.handle.agent_id, SubagentStatus.FAILED)
         envelope = SubagentResultEnvelope(
@@ -811,7 +885,7 @@ class LocalSubagentRuntime:
             status=SubagentStatus.FAILED,
             summary="",
             hint=_truncate_hint(error.message),
-            artifacts=(record,),
+            artifacts=records,
             manifest_path=str(manifest_path),
             started_at=now,
             ended_at=now,

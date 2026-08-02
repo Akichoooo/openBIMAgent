@@ -72,7 +72,7 @@
 - `VectorworksBuilder` 只接受通过严格模型校验的完整 `CompiledUtilityIR v1`，按 stable ID 排序并生成 `VectorworksExecutionPlan v1`；计划显式包含对象类型、图层、分类、记录、IFC 语义、单位、坐标、尺寸和拓扑，不含自然语言命令或自由脚本。
 - `vectorworks_execution_plan.schema.json` 与 Pydantic 模型共同限制操作 allowlist：`create_object`、`set_record`、`connect_topology`；未知操作、未知对象类型、版本漂移、字段缺失、hash 篡改和引用不闭合均失败关闭。
 - canonical SHA-256 排除其派生的 `plan_id/idempotency_key`，相同 IR 不受集合顺序影响；幂等键固定为 `vw-plan:<sha256>`。宿主执行前必须对协议版本、Vectorworks 2024 API、单位和 capability allowlist 预检。
-- `FakeVectorworksExecutor` 提供离线 receipt、部分成功注入、补偿提示和幂等恢复；重试跳过已应用 operation，完成后同计划复用 receipt，同 stable object ID 不同语义严格冲突。
+- `FakeVectorworksExecutor` 提供离线 receipt、部分成功注入、补偿提示和幂等恢复；重试跳过已应用 operation，完成后同计划复用 receipt，同 stable object ID 不同语义严格冲突。G5 测试可显式传入 `state_path`，将 plan hash、已应用 operation、对象/记录/拓扑和完成 receipt 以 `fsync + os.replace` 原子保存；新 executor 实例从该宿主事实恢复，canonical hash 漂移失败关闭，且只补执行未确认 operation。
 - Pipeline 的 typed 主路径只注入 Solver 生成的完整 `CompiledUtilityIR`；缺失时拒绝拿 Scene Graph IR 顶替。旧三参数 `vs.*` Builder 仅保留兼容路径，不能作为 G1 证据，typed executor 也不得回退 `execute_code`。
 
 ### 2.6 assembly.semantic_snapshot(G3 双宿主语义一致性)
@@ -95,18 +95,18 @@
 - 完成态 Manifest 只接受 completed 工件。已声明领域门禁时必须为 `PASS`；未声明时只接受并保留 `SKIPPED`。`domain_gate_required` 与状态必须严格匹配，`FAIL/UNKNOWN` 不能交付，调用者也不能用 `SKIPPED` 绕过实际门禁。
 - `deliver.gate` 返回验收通过的解析路径；Pipeline 仅在 C5 accepted 且 plan 成功后提交 Manifest。Core Loop 的 `deliver` 工具使用结构化工件列表、稳定幂等键和显式 `PASS`，不接受自由清单文本。
 
-### 2.9 orchestrator(子代理调度)
+### 2.9 orchestrator(G5 子代理恢复与副作用安全)
 
 - 角色文件 = Markdown + YAML frontmatter。基础字段:`name/model/tools/permissions`;Runtime v1 字段:`context_mode/max_turns/artifact_contract/nesting`;正文为 system prompt。角色文件是受信任的能力上限,调用者不能通过请求提升 model/tools/permissions。
 - 派发:PASS / FIX(带可执行返工指令)/ ESCALATE(升模型或问人);禁嵌套;并发 ≤4。
 - **子代理返回** = 结构化摘要 + 工件路径 + **<200 字核心提示/警告**;原始过程留 child session,父代理按需深翻。
 - **Runtime v1**:`contracts.py` 定义版本化 Request/Handle/Result;`runtime.py` 创建真实 child Session 并执行受控 child runner;`artifacts.py` 原子提交不可变工件和 `manifest.json`(size + SHA-256)。请求、结果、manifest 均经过 Schema Gate。
 - **P1a 后台生命周期**:`LocalSubagentRuntime.submit/status/cancel/join` 使用最多 4 worker 的进程内线程池;取消信号传到 child Loop/Provider。终态与 Manifest、lifecycle、receipt 同步发布。
-- **P1b-A 持久恢复**:`state.py` 将 background Request/Handle/status/result 以原子 JSON 写入 `sessions/_runtime`；`runtime.py` 在独占 `RuntimeLease` 内 rehydrate。终态不重跑，`finalizing` 幂等补签，遗留运行任务以 `RuntimeRestarted` 失败关闭；损坏记录严格失败。`SessionStore` 以进程内共享锁、跨进程文件锁和原子替换保护 `sessions/index.json`。
+- **P1b-A 持久恢复**:`state.py` 将 background Request/Handle/status/result/checkpoints 以原子 JSON 写入 `sessions/_runtime`；`runtime.py` 在独占 `RuntimeLease` 内 rehydrate。`checkpoint_artifact()` 只允许 queued/running attempt，用调用方稳定幂等键生成不可变 `partial` 工件；同键同内容复用、异义冲突。终态不重跑，`finalizing` 幂等补签，遗留运行任务以 `RuntimeRestarted` 失败关闭并将 checkpoint 纳入 failed recovery Manifest；损坏记录严格失败。`SessionStore` 以进程内共享锁、跨进程文件锁和原子替换保护 `sessions/index.json`。
 - **P1b-B Approval Broker**:`approval.py` 定义 `ApprovalRequest/DecisionReceipt` v1。child `Permission.ASK` 经父 Session 转发，支持旧 bool callback 和父侧 `pending_approvals()/decide_approval()`；超时、取消、回调异常和 Runtime 重启均失败关闭。恢复时对账父子事件并补齐单边 receipt，冲突事实严格失败。工具参数仅落字段类型摘要与 SHA-256。
 - **P1c Resume/Steer**：`control.py` 定义 `ResumeRequest/ResumeReceipt/SteerDirective/SteerReceipt`。每次 `resume` 创建新 `request_id/agent_id/child_session_id`，共享 `lineage_id` 并递增 `attempt_number`；旧 Artifact 只按路径和 SHA-256 引用，任务前缀禁止假设或重放旧副作用。`steer` 同时绑定 request/agent/child/lineage/attempt，只在 `AgentLoop` 下一轮 Provider 调用前消费，不插入 Provider 请求或同一工具批次中间；取消、终态、身份不匹配或 Runtime 重启签发失败回执，历史 accepted 指令不重新入队。
 - **P1c 恢复与审计**：RuntimeState 持久化 resume request/receipt 并在重启时幂等补齐父、source child、new child 三方事件；steer 请求/回执对账父子 Session，单边缺失自动补齐、冲突事实严格失败。遗留非终态 attempt 仍按 P1b-A 失败关闭，绝不自动重新提交模型或工具。
-- **P1d Actor 与 Resume 幂等**：`actor.py` 定义版本化 `ActorRef`；Approval、Resume、Steer 新事实使用稳定 `actor_id/actor_type`，历史字符串兼容读取为 `legacy`。Resume 强制调用方 `idempotency_key` 和 `instruction_sha256`；相同 actor/key/语义返回原 Handle/Receipt，不同语义失败，RuntimeState 使重启后仍可复用。
+- **P1d Actor 与 Resume 幂等**：`actor.py` 定义版本化 `ActorRef`；Approval、Resume、Steer 新事实使用稳定 `actor_id/actor_type`，历史字符串兼容读取为 `legacy`。Resume 强制调用方 `idempotency_key` 和 `instruction_sha256`；相同 actor/key/语义返回原 Handle/Receipt，不同语义失败，RuntimeState 使重启后仍可复用。最终 `commit_delivery_manifest()` 继续携带 source attempt、lineage、attempt number 和 resumed-from request，保证恢复控制身份与交付审计一致。
 - **P1d Control Plane**：`control_plane.py` 从 RuntimeState 和父/子 Session 构建只读投影，查询 attempts、lineage、approvals、resumes、steers，去重重复事实并对冲突/损坏失败关闭；默认视图不返回 task/instruction 原文。CLI `control` 子命令支持文本/JSON，查询不获取 Runtime lease。
 - **P1e Runtime IPC**：`ipc.py` 定义版本化 `IpcRequest/IpcResponse/IpcDiscovery`，以及 loopback-only `RuntimeIpcServer/RuntimeIpcClient`。`runtime-serve` 持有 Runtime lease 并启动 IPC，`control-write` 只经 discovery/token 调用该实例。服务路由 `approval.decide/attempt.resume/attempt.steer/attempt.cancel`，按稳定 ActorRef 与调用方幂等键拒绝重放冲突；协议限制消息大小、socket 超时和 payload 白名单，认证错误不回显输入或 token。
 - **P1f Operator Console**：`console.py` 将 `ReadOnlyControlPlane` 和 `RuntimeIpcClient` 组合为独立 loopback HTTP 操作界面。GET snapshot 展示 attempts/approvals/resumes/steers；POST control 代理 Ping、Approve/Reject、Resume、Steer、Cancel。浏览器不读取 IPC discovery/token，ActorRef 在 Console 启动时固定；写请求必须通过 Host、Origin、CSRF、Content-Type、请求大小和契约校验。服务使用标准库与内嵌静态页面，不新增 Web 框架或 Node 构建链，也不获取 Runtime lease。

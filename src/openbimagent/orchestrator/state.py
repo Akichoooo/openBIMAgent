@@ -16,6 +16,7 @@ from typing import BinaryIO, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from openbimagent.orchestrator.contracts import (
+    ArtifactRecord,
     SubagentHandle,
     SubagentRequest,
     SubagentResultEnvelope,
@@ -40,6 +41,7 @@ class RuntimeStateRecord(BaseModel):
     phase: RuntimePhase
     updated_at: datetime
     result: SubagentResultEnvelope | None = None
+    checkpoints: tuple[ArtifactRecord, ...] = ()
     resume_request: ResumeRequest | None = None
     resume_receipt: ResumeReceipt | None = None
 
@@ -79,6 +81,10 @@ class RuntimeStateRecord(BaseModel):
                 raise ValueError("resume_receipt.new_agent_id 与 handle 不一致")
             if self.resume_receipt.new_child_session_id != self.handle.child_session_id:
                 raise ValueError("resume_receipt.new_child_session_id 与 handle 不一致")
+        if any(record.source_attempt_id != self.request.request_id for record in self.checkpoints):
+            raise ValueError("checkpoint source_attempt_id 必须绑定当前 request_id")
+        if any(record.status.value != "partial" for record in self.checkpoints):
+            raise ValueError("Runtime checkpoint 必须标记为 partial")
         if self.result is not None:
             if self.result.request_id != self.request.request_id:
                 raise ValueError("result.request_id 与 request 不一致")
@@ -181,6 +187,7 @@ class RuntimeStateStore:
         status: SubagentStatus,
         phase: RuntimePhase,
         result: SubagentResultEnvelope | None = None,
+        checkpoints: tuple[ArtifactRecord, ...] = (),
         resume_request: ResumeRequest | None = None,
         resume_receipt: ResumeReceipt | None = None,
     ) -> RuntimeStateRecord:
@@ -191,6 +198,7 @@ class RuntimeStateStore:
             phase=phase,
             updated_at=datetime.now(timezone.utc),
             result=result,
+            checkpoints=checkpoints,
             resume_request=resume_request,
             resume_receipt=resume_receipt,
         )
