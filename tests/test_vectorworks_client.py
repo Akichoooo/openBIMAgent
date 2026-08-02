@@ -7,7 +7,13 @@ from types import SimpleNamespace
 
 import pytest
 
+from openbimagent.assembly.vectorworks_plan import (
+    ReceiptStatus,
+    VectorworksBuilder,
+    VectorworksExecutionReceipt,
+)
 from openbimagent.mcp_clients.vectorworks import VectorworksClientError, VectorworksMCPClient
+from test_compiled_utility_ir import solved_payload
 
 
 class FakeMCP:
@@ -55,6 +61,107 @@ def test_execute_code_success_and_approval_passthrough() -> None:
         assert fake.calls == [
             ("execute_vs_code", {"code": "vs.Rect((0, 0), (10, 10))", "approved": True})
         ]
+
+    asyncio.run(run())
+
+
+def test_execute_plan_sends_typed_payload_and_validates_receipt() -> None:
+    async def run() -> None:
+        plan = VectorworksBuilder().build(solved_payload())
+        receipt = VectorworksExecutionReceipt(
+            receipt_id=f"vw-receipt-{plan.canonical_sha256[:24]}",
+            plan_id=plan.plan_id,
+            idempotency_key=plan.idempotency_key,
+            canonical_sha256=plan.canonical_sha256,
+            status=ReceiptStatus.COMPLETED,
+        )
+        client = VectorworksMCPClient(toolset="minimal")
+        fake = FakeMCP({
+            "execute_plan": result(
+                structured={"result": receipt.model_dump(mode="json")}
+            ),
+        })
+        client._mcp_client = fake
+
+        out = await client.execute_plan(
+            plan,
+            output_path=r"D:\devloop\G6_Test\openbimagent_g6.vwx",
+            approved=True,
+        )
+
+        assert out == receipt
+        assert fake.calls == [
+            (
+                "execute_plan",
+                {
+                    "plan": plan.model_dump(mode="json"),
+                    "output_path": r"D:\devloop\G6_Test\openbimagent_g6.vwx",
+                    "approved": True,
+                },
+            )
+        ]
+
+    asyncio.run(run())
+
+
+def test_execute_plan_accepts_server_typed_capabilities_envelope() -> None:
+    async def run() -> None:
+        plan = VectorworksBuilder().build(solved_payload())
+        receipt = VectorworksExecutionReceipt(
+            receipt_id=f"vw-receipt-{plan.canonical_sha256[:24]}",
+            plan_id=plan.plan_id,
+            idempotency_key=plan.idempotency_key,
+            canonical_sha256=plan.canonical_sha256,
+            status=ReceiptStatus.COMPLETED,
+        )
+        client = VectorworksMCPClient(
+            default_output_path=r"D:\devloop\G6_Test\openbimagent_g6.vwx"
+        )
+        client._mcp_client = FakeMCP({
+            "execute_plan": result(structured={"result": receipt.model_dump(mode="json")}),
+        })
+        capabilities = {
+            "server_version": "1.0.0-m1",
+            "typed_execution": {
+                "protocol_version": "1.0",
+                "host_api_version": "2024",
+                "units": ["m", "mm"],
+                "operations": ["create_object", "set_record", "connect_topology"],
+                "object_types": [
+                    "utility_system", "manhole", "inlet", "outlet", "junction",
+                    "valve", "equipment", "terminal", "distribution_port", "pipe_segment",
+                ],
+            },
+        }
+        out = await client.execute_plan(plan, approved=True, capabilities=capabilities)
+        assert out == receipt
+
+    asyncio.run(run())
+
+
+def test_execute_plan_rejects_receipt_identity_tampering() -> None:
+    async def run() -> None:
+        plan = VectorworksBuilder().build(solved_payload())
+        client = VectorworksMCPClient()
+        client._mcp_client = FakeMCP({
+            "execute_plan": result(structured={"result": {
+                "receipt_id": "vw-receipt-tampered",
+                "plan_id": plan.plan_id,
+                "idempotency_key": plan.idempotency_key,
+                "canonical_sha256": "0" * 64,
+                "status": "completed",
+                "applied_operations": [],
+                "confirmed_object_ids": [],
+                "compensations": [],
+                "errors": [],
+            }}),
+        })
+        with pytest.raises(VectorworksClientError, match="receipt identity"):
+            await client.execute_plan(
+                plan,
+                output_path=r"D:\devloop\G6_Test\openbimagent_g6.vwx",
+                approved=True,
+            )
 
     asyncio.run(run())
 

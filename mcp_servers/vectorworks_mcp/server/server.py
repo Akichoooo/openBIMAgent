@@ -49,6 +49,7 @@ UPSTREAM_SOURCE = "openBIMForge vectorworks_plugin"
 # OPENBIMAGENT (b/d): 文件 IPC 配置
 DEFAULT_JOBS_DIR = os.getenv("VW_MCP_JOBS_DIR", "jobs")
 DEFAULT_RESULTS_DIR = os.getenv("VW_MCP_RESULTS_DIR", "results")
+DEFAULT_AUTHORIZED_ROOT = os.getenv("VW_MCP_AUTHORIZED_ROOT", "")
 COMMAND_TIMEOUT = float(os.getenv("VW_MCP_TIMEOUT", "60"))
 POLL_INTERVAL = 0.1  # 100ms 轮询间隔
 
@@ -511,6 +512,26 @@ def describe_capabilities() -> dict[str, Any]:
             "vs_index_loaded": len(vs_index) > 0,
             "vs_index_count": len(vs_index),
             "file_ipc": True,
+            "typed_execution": {
+                "protocol_version": "1.0",
+                "host_api_version": "2024",
+                "units": ["m", "mm"],
+                "operations": ["create_object", "set_record", "connect_topology"],
+                "object_types": [
+                    "utility_system",
+                    "manhole",
+                    "inlet",
+                    "outlet",
+                    "junction",
+                    "valve",
+                    "equipment",
+                    "terminal",
+                    "distribution_port",
+                    "pipe_segment",
+                ],
+                "controlled_save": True,
+                "idempotent_receipts": True,
+            },
             "poll_interval_ms": int(POLL_INTERVAL * 1000),
             "command_timeout_s": int(COMMAND_TIMEOUT),
             "limitations": [
@@ -526,6 +547,35 @@ def describe_capabilities() -> dict[str, Any]:
     except Exception as e:
         logger.error(f"describe_capabilities failed: {str(e)}")
         return {"error": str(e)}
+
+
+@mcp.tool()
+def execute_plan(
+    plan: dict[str, Any],
+    output_path: str,
+    approved: bool = False,
+) -> dict[str, Any]:
+    """执行结构化 Vectorworks plan；typed 主链不经过自由脚本入口。"""
+    try:
+        client = get_client()
+        params: dict[str, Any] = {
+            "plan": plan,
+            "output_path": output_path,
+        }
+        if DEFAULT_AUTHORIZED_ROOT:
+            params["authorized_root"] = DEFAULT_AUTHORIZED_ROOT
+        if approved:
+            params["_approved"] = True
+        return client.send_command("execute_plan", params)
+    except PermissionError as exc:
+        logger.warning(f"execute_plan blocked by gate: {exc}")
+        return {"ok": False, "error": str(exc), "gate_blocked": True}
+    except (TypeError, ValueError) as exc:
+        logger.warning(f"execute_plan validation failed: {exc}")
+        return {"ok": False, "error": str(exc), "validation_failed": True}
+    except Exception as exc:
+        logger.error(f"execute_plan failed: {exc}")
+        return {"ok": False, "error": str(exc)}
 
 
 @mcp.tool()

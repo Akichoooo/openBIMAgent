@@ -13,11 +13,18 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from openbimagent.assembly.vectorworks_plan import (
+    VectorworksCapabilities,
+    VectorworksExecutionPlan,
+    VectorworksExecutionReceipt,
+    validate_plan_capabilities,
+)
+
 COMMAND_TIMEOUT = 60.0
 SERVER_PATH = Path(__file__).resolve().parents[3] / "mcp_servers" / "vectorworks_mcp" / "server" / "server.py"
 TOOLSETS_PATH = Path(__file__).resolve().parents[3] / "mcp_servers" / "vectorworks_mcp" / "toolsets.json"
 VALID_TOOLSETS = frozenset({"full", "modeling", "minimal"})
-MCP_TOOLS = frozenset({"ping", "describe_capabilities", "execute_vs_code"})
+MCP_TOOLS = frozenset({"ping", "describe_capabilities", "execute_plan", "execute_vs_code"})
 
 
 class VectorworksClientError(RuntimeError):
@@ -39,6 +46,8 @@ class VectorworksMCPClient:
         toolset: str = "modeling",
         jobs_dir: Path | str | None = None,
         results_dir: Path | str | None = None,
+        authorized_root: Path | str | None = None,
+        default_output_path: Path | str | None = None,
         timeout: float = COMMAND_TIMEOUT,
         server_env: dict[str, str] | None = None,
     ) -> None:
@@ -56,6 +65,11 @@ class VectorworksMCPClient:
             env["VW_MCP_JOBS_DIR"] = str(Path(jobs_dir).resolve())
         if results_dir is not None:
             env["VW_MCP_RESULTS_DIR"] = str(Path(results_dir).resolve())
+        if authorized_root is not None:
+            env["VW_MCP_AUTHORIZED_ROOT"] = str(Path(authorized_root).resolve())
+        self._default_output_path = (
+            Path(default_output_path).resolve() if default_output_path is not None else None
+        )
         self._server_env = env
         self._mcp_client: Any = None
         self._mcp_cm: Any = None
@@ -119,6 +133,62 @@ class VectorworksMCPClient:
         caps = await self.call_tool("describe_capabilities", {})
         self._capabilities = caps
         return caps
+
+    async def execute_plan(
+        self,
+        plan: VectorworksExecutionPlan | dict[str, Any],
+        *,
+        output_path: Path | str | None = None,
+        approved: bool = False,
+        capabilities: VectorworksCapabilities | dict[str, Any] | None = None,
+    ) -> VectorworksExecutionReceipt:
+        """发送 canonical typed plan；响应必须绑定同一计划身份。"""
+        typed_plan = (
+            plan
+            if isinstance(plan, VectorworksExecutionPlan)
+            else VectorworksExecutionPlan.model_validate(plan)
+        )
+        if capabilities is not None:
+            if isinstance(capabilities, VectorworksCapabilities):
+                typed_capabilities = capabilities
+            elif isinstance(capabilities, dict):
+                typed_payload = capabilities.get("typed_execution")
+                typed_capabilities = VectorworksCapabilities.model_validate(
+                    typed_payload if isinstance(typed_payload, dict) else capabilities
+                )
+            else:
+                raise TypeError("Vectorworks capabilities 必须是 typed model 或 dict")
+            validate_plan_capabilities(typed_plan, typed_capabilities)
+        effective_output = output_path or self._default_output_path
+        if effective_output is None:
+            raise ValueError("Vectorworks execute_plan 缺少 output_path/default_output_path")
+        target = str(Path(effective_output))
+        if not target.lower().endswith(".vwx"):
+            raise ValueError("Vectorworks output_path 必须以 .vwx 结尾")
+        result = await self.call_tool(
+            "execute_plan",
+            {
+                "plan": typed_plan.model_dump(mode="json"),
+                "output_path": target,
+                "approved": approved,
+            },
+        )
+        if result.get("ok") is False:
+            flag = "approval_gate" if result.get("gate_blocked") else "typed_execution"
+            raise VectorworksClientError(
+                f"Vectorworks typed plan 执行失败 ({flag}):{result.get('error', 'unknown')}"
+            )
+        try:
+            receipt = VectorworksExecutionReceipt.model_validate(result)
+        except Exception as exc:
+            raise VectorworksClientError(f"Vectorworks receipt 无效:{exc}") from exc
+        if (
+            receipt.plan_id != typed_plan.plan_id
+            or receipt.idempotency_key != typed_plan.idempotency_key
+            or receipt.canonical_sha256 != typed_plan.canonical_sha256
+        ):
+            raise VectorworksClientError("Vectorworks receipt identity 与请求计划不一致")
+        return receipt
 
     async def execute_code(self, code: str, *, approved: bool = False) -> dict[str, Any]:
         """执行 ``vs.*`` 代码；服务端继续负责 arity 与 handoff/hash/approval 门禁。"""

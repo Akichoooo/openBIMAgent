@@ -226,7 +226,11 @@ class VectorworksPlanExecutor(Protocol):
     def describe_capabilities(self) -> VectorworksCapabilities: ...
 
     def execute_plan(
-        self, plan: VectorworksExecutionPlan, *, capabilities: VectorworksCapabilities | None = None
+        self,
+        plan: VectorworksExecutionPlan,
+        *,
+        capabilities: VectorworksCapabilities | None = None,
+        approved: bool = False,
     ) -> VectorworksExecutionReceipt: ...
 
 
@@ -523,7 +527,9 @@ class FakeVectorworksExecutor:
         plan: VectorworksExecutionPlan,
         *,
         capabilities: VectorworksCapabilities | None = None,
+        approved: bool = False,
     ) -> VectorworksExecutionReceipt:
+        del approved  # 离线 fake 无外部副作用；真实 adapter 仍强制传递审批状态。
         self.execute_calls += 1
         plan = VectorworksExecutionPlan.model_validate(plan.model_dump(mode="json"))
         validate_plan_capabilities(plan, capabilities or self.capabilities)

@@ -76,6 +76,11 @@ ApprovalFn = Callable[[str, str], bool]
 SUMMARY_MAX_LEN = 200
 
 
+def _semantic_params(params: dict[str, Any]) -> dict[str, Any]:
+    """移除审批控制字段；控制状态不得改变被审批 payload 的身份。"""
+    return {key: value for key, value in params.items() if key != "_approved"}
+
+
 def generate_handoff_summary(command: str, params: dict[str, Any]) -> str:
     """生成操作摘要 (handoff 第 1 重)。
 
@@ -87,9 +92,18 @@ def generate_handoff_summary(command: str, params: dict[str, Any]) -> str:
         操作摘要字符串 (≤200 字符)。execute_code 时从 code 中匹配
         vs.* 调用并生成"创建墙体: ..."等中文摘要;其他命令直接描述。
     """
+    if command == "execute_plan":
+        plan = params.get("plan") if isinstance(params.get("plan"), dict) else {}
+        operations = plan.get("operations") if isinstance(plan.get("operations"), list) else []
+        output_name = str(params.get("output_path") or "").replace("\\", "/").rsplit("/", 1)[-1]
+        summary = (
+            f"执行 typed Vectorworks 计划 {plan.get('plan_id', 'unknown')}; "
+            f"operations={len(operations)}; output={output_name or 'unknown'}"
+        )
+        return summary[:SUMMARY_MAX_LEN]
     if command != "execute_code":
         # 非执行代码命令,直接描述命令名 + 关键参数
-        param_keys = ",".join(sorted(params.keys())) if params else ""
+        param_keys = ",".join(sorted(_semantic_params(params).keys())) if params else ""
         summary = f"执行命令: {command}" + (f" (参数: {param_keys})" if param_keys else "")
         return summary[:SUMMARY_MAX_LEN]
 
@@ -130,7 +144,13 @@ def compute_params_hash(params: dict[str, Any]) -> str:
     Returns:
         sha256(params_json) 前 16 字符 (防篡改,任务书 D2 要求 16 字符)
     """
-    params_str = json.dumps(params, sort_keys=True, ensure_ascii=False)
+    params_str = json.dumps(
+        _semantic_params(params),
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
     return hashlib.sha256(params_str.encode("utf-8")).hexdigest()[:16]
 
 
@@ -144,6 +164,8 @@ def requires_approval(command: str, params: dict[str, Any]) -> bool:
     Returns:
         True 表示高风险操作,需用户审批
     """
+    if command == "execute_plan":
+        return True
     if command != "execute_code":
         return False
 

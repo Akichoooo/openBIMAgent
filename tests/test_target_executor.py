@@ -55,6 +55,44 @@ def test_vectorworks_executor_runs_builder_and_writes_result(tmp_path) -> None:
     assert (tmp_path / "batch_01_vectorworks_result.json").is_file()
 
 
+def test_typed_async_vectorworks_client_connects_before_capability_probe(tmp_path) -> None:
+    from openbimagent.assembly.vectorworks_plan import VectorworksCapabilities
+
+    plan_receipt = FakeVectorworksExecutor()
+
+    class AsyncTypedClient:
+        def __init__(self) -> None:
+            self.is_connected = False
+            self.events: list[str] = []
+
+        async def connect(self) -> None:
+            self.events.append("connect")
+            self.is_connected = True
+
+        async def describe_capabilities(self):
+            assert self.is_connected
+            self.events.append("capabilities")
+            return VectorworksCapabilities()
+
+        async def execute_plan(self, plan, *, capabilities=None, approved=False):
+            assert self.is_connected
+            assert approved is True
+            self.events.append("execute_plan")
+            return plan_receipt.execute_plan(plan, capabilities=capabilities, approved=approved)
+
+    client = AsyncTypedClient()
+    executor = make_vectorworks_batch_executor(
+        ir=solved_payload(),
+        batch_names=["全部资产"],
+        work_dir=tmp_path,
+        client=client,
+        builder_fn=VectorworksBuilder(),
+        auto_approve=True,
+    )
+    assert executor("全部资产", None).verdict is Verdict.PASS
+    assert client.events == ["connect", "capabilities", "execute_plan"]
+
+
 def test_typed_vectorworks_executor_writes_receipt_and_is_idempotent(tmp_path) -> None:
     client = FakeVectorworksExecutor()
     executor = make_vectorworks_batch_executor(

@@ -77,7 +77,7 @@ def make_vectorworks_batch_executor(
                     hint=f"target=vectorworks batch={batch} execution plan 未获批准",
                 )
             try:
-                receipt = _run_vectorworks_plan(client, built)
+                receipt = _run_vectorworks_plan(client, built, approved=approved)
             except Exception as exc:
                 return BatchReport(
                     Verdict.FIX,
@@ -200,20 +200,44 @@ def _build_vectorworks_payload(
     return builder_fn(assets, ir, rework)
 
 
-def _run_vectorworks_plan(client: Any, plan: VectorworksExecutionPlan) -> VectorworksExecutionReceipt:
+def _run_vectorworks_plan(
+    client: Any,
+    plan: VectorworksExecutionPlan,
+    *,
+    approved: bool = True,
+) -> VectorworksExecutionReceipt:
     if not hasattr(client, "execute_plan"):
         raise RuntimeError("Vectorworks typed executor 缺少 execute_plan；不能回退自由脚本")
-    capabilities = client.describe_capabilities()
-    if inspect.isawaitable(capabilities) or inspect.iscoroutinefunction(client.execute_plan):
+    uses_async = any(
+        inspect.iscoroutinefunction(getattr(client, name, None))
+        for name in ("connect", "describe_capabilities", "execute_plan")
+    )
+    if uses_async:
         async def run() -> VectorworksExecutionReceipt:
-            effective_caps = await capabilities if inspect.isawaitable(capabilities) else capabilities
-            result = client.execute_plan(plan, capabilities=effective_caps)
+            if hasattr(client, "connect") and not getattr(client, "is_connected", False):
+                connection = client.connect()
+                if inspect.isawaitable(connection):
+                    await connection
+            capabilities = client.describe_capabilities()
+            effective_caps = (
+                await capabilities if inspect.isawaitable(capabilities) else capabilities
+            )
+            result = client.execute_plan(
+                plan,
+                capabilities=effective_caps,
+                approved=approved,
+            )
             if inspect.isawaitable(result):
                 result = await result
             return VectorworksExecutionReceipt.model_validate(result)
 
         return asyncio.run(run())
-    result = client.execute_plan(plan, capabilities=capabilities)
+    capabilities = client.describe_capabilities()
+    result = client.execute_plan(
+        plan,
+        capabilities=capabilities,
+        approved=approved,
+    )
     return result if isinstance(result, VectorworksExecutionReceipt) else VectorworksExecutionReceipt.model_validate(result)
 
 

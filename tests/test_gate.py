@@ -111,6 +111,31 @@ def test_check_gate_approved() -> None:
     assert result2["requires_approval"] is False
 
 
+def test_typed_execute_plan_always_requires_approval_and_has_stable_identity() -> None:
+    """typed plan 创建对象并保存工程，必须审批；控制字段不得改变语义 hash。"""
+    gate = _load_gate_module()
+    plan = {
+        "plan_id": "vw-plan-abc",
+        "canonical_sha256": "a" * 64,
+        "idempotency_key": f"vw-plan:{'a' * 64}",
+        "operations": [{"operation_id": "create:node-1"}],
+    }
+    params = {"plan": plan, "output_path": r"D:\devloop\G6_Test\case.vwx"}
+
+    assert gate.requires_approval("execute_plan", params) is True
+    summary = gate.generate_handoff_summary("execute_plan", params)
+    assert "vw-plan-abc" in summary
+    assert "1" in summary
+    assert "case.vwx" in summary
+    assert len(summary) <= gate.SUMMARY_MAX_LEN
+
+    approved = {**params, "_approved": True}
+    assert gate.compute_params_hash(params) == gate.compute_params_hash(approved)
+    result = gate.check_gate("execute_plan", approved)
+    assert result["ok"] is True
+    assert result["approved"] is True
+
+
 def test_check_gate_rejected() -> None:
     """check_gate 被拒绝:approval_fn 返回 False → ok=False,reason 非空。"""
     gate = _load_gate_module()

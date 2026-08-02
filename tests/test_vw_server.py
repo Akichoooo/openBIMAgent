@@ -87,6 +87,45 @@ def test_describe_capabilities_tool(monkeypatch: pytest.MonkeyPatch) -> None:
         server._client = None  # type: ignore[attr-defined]
 
 
+def test_execute_plan_tool_forwards_typed_payload_and_approval() -> None:
+    """MCP 工具只转发结构化 plan，不得转译为 execute_code。"""
+    server = _load_server_module()
+    plan = {
+        "plan_version": "1.0",
+        "protocol_version": "1.0",
+        "host_api_version": "2024",
+        "plan_id": "vw-plan-test",
+        "ir_id": "ir-test",
+        "source_ir_sha256": "a" * 64,
+        "units": "m",
+        "operations": [{"operation_id": "create:node-1"}],
+        "canonical_sha256": "b" * 64,
+        "idempotency_key": f"vw-plan:{'b' * 64}",
+    }
+    fake = _FakeClient({"execute_plan": {"status": "completed"}})
+    server.set_client(fake)
+    server.DEFAULT_AUTHORIZED_ROOT = ""
+    try:
+        result = server.execute_plan(
+            plan,
+            r"D:\devloop\G6_Test\openbimagent_g6.vwx",
+            approved=True,
+        )
+        assert result["status"] == "completed"
+        assert fake.calls == [
+            (
+                "execute_plan",
+                {
+                    "plan": plan,
+                    "output_path": r"D:\devloop\G6_Test\openbimagent_g6.vwx",
+                    "_approved": True,
+                },
+            )
+        ]
+    finally:
+        server._client = None
+
+
 def test_execute_vs_code_tool(monkeypatch: pytest.MonkeyPatch) -> None:
     """execute_vs_code() 工具:mock send_command → 返回 {"ok":True}。"""
     server = _load_server_module()
