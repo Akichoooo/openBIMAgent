@@ -145,6 +145,7 @@ class VectorworksExecutionPlan(BaseModel):
     plan_id: str = Field(min_length=1, max_length=256)
     ir_id: str = Field(min_length=1, max_length=256)
     source_ir_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    compiled_ir_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     units: str = Field(default=VECTORWORKS_UNIT, pattern=r"^m$")
     operations: tuple[VectorworksOperation, ...] = Field(min_length=1)
     canonical_sha256: str = Field(default="", pattern=r"^(|[0-9a-f]{64})$")
@@ -155,6 +156,12 @@ class VectorworksExecutionPlan(BaseModel):
         operation_ids = [item.operation_id for item in self.operations]
         if len(operation_ids) != len(set(operation_ids)):
             raise ValueError("execution plan operation_id 必须唯一")
+        if any(
+            item.operation is VectorworksOperationKind.CREATE_OBJECT
+            and item.layer_name != VECTORWORKS_LAYER
+            for item in self.operations
+        ):
+            raise ValueError("create_object layer_name 必须匹配固定 Vectorworks 范围锁")
         if self.canonical_sha256:
             expected = self.compute_canonical_sha256()
             if self.canonical_sha256 != expected:
@@ -198,6 +205,9 @@ class VectorworksCapabilities(BaseModel):
     units: tuple[str, ...] = (VECTORWORKS_UNIT, "mm")
     operations: tuple[VectorworksOperationKind, ...] = tuple(VectorworksOperationKind)
     object_types: tuple[VectorworksObjectType, ...] = tuple(VectorworksObjectType)
+    controlled_save: bool = True
+    idempotent_receipts: bool = True
+    semantic_snapshot: bool = True
 
 
 class OperationReceipt(BaseModel):
@@ -206,6 +216,7 @@ class OperationReceipt(BaseModel):
     operation_id: str
     status: ReceiptStatus
     object_id: str
+    host_handle: str | None = None
 
 
 class VectorworksExecutionReceipt(BaseModel):
@@ -216,8 +227,11 @@ class VectorworksExecutionReceipt(BaseModel):
     idempotency_key: str
     canonical_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     status: ReceiptStatus
+    output_path: str
+    state_path: str
     applied_operations: tuple[OperationReceipt, ...] = ()
     confirmed_object_ids: tuple[str, ...] = ()
+    semantic_snapshot: dict[str, Any] | None = None
     compensations: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
 
@@ -286,6 +300,7 @@ class VectorworksBuilder:
             plan_id="pending",
             ir_id=compiled.ir_id,
             source_ir_sha256=compiled.source_ir_sha256,
+            compiled_ir_sha256=compiled.canonical_sha256(),
             operations=tuple(operations),
         )
         return plan.finalized()
@@ -308,6 +323,14 @@ def validate_plan_capabilities(
         raise VectorworksPlanError("Vectorworks host API version 不匹配")
     if plan.units not in capabilities.units:
         raise VectorworksPlanError(f"Vectorworks 不支持计划单位: {plan.units!r}")
+    if (
+        not capabilities.controlled_save
+        or not capabilities.idempotent_receipts
+        or not capabilities.semantic_snapshot
+    ):
+        raise VectorworksPlanError(
+            "Vectorworks capability 缺少 controlled_save/idempotent_receipts/semantic_snapshot"
+        )
     allowed_ops = set(capabilities.operations)
     allowed_objects = set(capabilities.object_types)
     known_objects = {op.object_id for op in plan.operations if op.operation is VectorworksOperationKind.CREATE_OBJECT}
@@ -345,7 +368,8 @@ def _record(
     system_id: str,
     source_ir_path: str,
     domain_properties: dict[str, str | float | int | bool | None] | None = None,
-    geometry_properties: dict[str, float] | None = None,
+    geometry_properties: dict[str, tuple[float, str | None]] | None = None,
+    material: str | None = None,
 ) -> VectorworksOperation:
     fields = [
         RecordField(field_name="StableObjectID", value=object_id),
@@ -358,11 +382,13 @@ def _record(
     ]
     if ifc_type is not None:
         fields.append(RecordField(field_name="IFCPredefinedType", value=ifc_type))
+    if material is not None:
+        fields.append(RecordField(field_name="Material", value=material))
     for name, value in sorted((domain_properties or {}).items()):
         if value is not None:
             fields.append(RecordField(field_name=f"Domain_{name}", value=value))
-    for name, value in sorted((geometry_properties or {}).items()):
-        fields.append(RecordField(field_name=name, value=value, unit="m"))
+    for name, (value, unit) in sorted((geometry_properties or {}).items()):
+        fields.append(RecordField(field_name=name, value=value, unit=unit))
     return VectorworksOperation(
         operation=VectorworksOperationKind.SET_RECORD,
         operation_id=operation_id,
@@ -488,10 +514,13 @@ def _create_and_record_segment(segment: Any, source_ir_path: str) -> list[Vector
             source_ir_path,
             {"min_cover_depth_m": segment.min_cover_depth_m},
             {
-                "EndInvertM": segment.end_invert_m,
-                "HorizontalLengthM": segment.horizontal_length_m,
-                "StartInvertM": segment.start_invert_m,
+                "DiameterMM": (segment.diameter_mm, "mm"),
+                "EndInvertM": (segment.end_invert_m, "m"),
+                "HorizontalLengthM": (segment.horizontal_length_m, "m"),
+                "Slope": (segment.slope, None),
+                "StartInvertM": (segment.start_invert_m, "m"),
             },
+            material=segment.material,
         ),
     ]
 
@@ -562,6 +591,8 @@ class FakeVectorworksExecutor:
             idempotency_key=plan.idempotency_key,
             canonical_sha256=plan.canonical_sha256,
             status=status,
+            output_path="vectorworks://fake",
+            state_path=str(self.state_path or "vectorworks://fake-state"),
             applied_operations=tuple(operation_receipts),
             confirmed_object_ids=tuple(sorted(self.objects)),
             compensations=tuple(f"restore:{op.object_id}" for op in plan.operations if op.object_id in self.objects),

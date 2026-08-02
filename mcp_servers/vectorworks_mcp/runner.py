@@ -101,6 +101,11 @@ def execute_vs_code(code: str) -> dict[str, Any]:
 _PLAN_VERSION = "1.0"
 _PROTOCOL_VERSION = "1.0"
 _HOST_API_VERSION = "2024"
+_STATE_VERSION = "1.0"
+_SEMANTIC_SNAPSHOT_VERSION = "1.0"
+_AUTHORIZED_LAYER = "M1-Municipal-Utility"
+_SEMANTIC_DECIMAL_PLACES = 6
+_VECTORWORKS_METERS_UNIT_STYLE = 9
 _ALLOWED_OPERATIONS = {"create_object", "set_record", "connect_topology"}
 _ALLOWED_OBJECT_TYPES = {
     "utility_system",
@@ -169,6 +174,7 @@ def _validate_typed_plan(raw: Any) -> dict[str, Any]:
         "plan_id",
         "ir_id",
         "source_ir_sha256",
+        "compiled_ir_sha256",
         "units",
         "operations",
         "canonical_sha256",
@@ -185,6 +191,10 @@ def _validate_typed_plan(raw: Any) -> dict[str, Any]:
         raise ValueError("execution plan protocol/version 不匹配")
     if raw["host_api_version"] != _HOST_API_VERSION or raw["units"] != "m":
         raise ValueError("execution plan host API/units 不匹配")
+    for hash_field in ("source_ir_sha256", "compiled_ir_sha256"):
+        value = raw[hash_field]
+        if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+            raise ValueError(f"execution plan {hash_field} 无效")
     operations = raw["operations"]
     if not isinstance(operations, list) or not operations:
         raise ValueError("execution plan operations 不能为空")
@@ -207,6 +217,8 @@ def _validate_typed_plan(raw: Any) -> dict[str, Any]:
             raise ValueError("object_id 缺失")
         operation_ids.add(operation_id)
         if kind == "create_object":
+            if operation.get("layer_name") != _AUTHORIZED_LAYER:
+                raise ValueError("create_object escaped authorized Vectorworks layer")
             created.add(object_id)
         elif kind == "set_record" and object_id not in created:
             raise ValueError(f"set_record 引用未知对象: {object_id}")
@@ -254,7 +266,7 @@ def _read_execution_state(path: Path) -> dict[str, Any] | None:
         state = json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
         raise ValueError(f"typed execution sidecar 损坏: {path}: {exc}") from exc
-    if state.get("state_version") != "1.0":
+    if state.get("state_version") != _STATE_VERSION:
         raise ValueError("typed execution sidecar version 不支持")
     return state
 
@@ -289,11 +301,64 @@ def _object_name(operation: dict[str, Any]) -> str:
     return f"VW_M1_{digest}"
 
 
+def _object_layer_name(vs: Any, handle: Any) -> str:
+    layer_handle = vs.GetLayer(handle)
+    if layer_handle is None:
+        raise RuntimeError("Vectorworks 对象没有可读取的设计图层")
+    layer_name = vs.GetLName(layer_handle)
+    if not isinstance(layer_name, str) or not layer_name:
+        raise RuntimeError("Vectorworks 对象设计图层名称为空")
+    return layer_name
+
+
+def _assert_object_layer(vs: Any, handle: Any, expected: str) -> None:
+    actual = _object_layer_name(vs, handle)
+    if actual != expected:
+        raise PermissionError(
+            f"Vectorworks object escaped layer scope: expected={expected!r}, actual={actual!r}"
+        )
+
+
+def _ensure_document_units_meters(vs: Any) -> None:
+    """Set and verify meters before interpreting typed plan coordinates."""
+    unit_info = vs.GetPrimaryUnitInfo()
+    if not isinstance(unit_info, (tuple, list)) or len(unit_info) != 7:
+        raise RuntimeError(
+            f"Vectorworks GetPrimaryUnitInfo returned invalid value: {unit_info!r}"
+        )
+    style, precision, dimension_precision, unit_format, angle_precision, show_mark, display_fraction = unit_info
+    if int(style) != _VECTORWORKS_METERS_UNIT_STYLE:
+        vs.PrimaryUnits(
+            _VECTORWORKS_METERS_UNIT_STYLE,
+            precision,
+            dimension_precision,
+            unit_format,
+            angle_precision,
+            show_mark,
+            display_fraction,
+        )
+    verified = vs.GetPrimaryUnitInfo()
+    if (
+        not isinstance(verified, (tuple, list))
+        or len(verified) != 7
+        or int(verified[0]) != _VECTORWORKS_METERS_UNIT_STYLE
+    ):
+        raise RuntimeError(
+            "Vectorworks document units must be meters before typed geometry execution: "
+            f"actual={verified!r}"
+        )
+
+
 def _create_typed_object(vs: Any, operation: dict[str, Any]) -> Any:
+    layer_name = operation.get("layer_name")
+    if layer_name != _AUTHORIZED_LAYER:
+        raise PermissionError(f"Vectorworks layer scope denied: {layer_name!r}")
     name = _object_name(operation)
     existing = vs.GetObject(name)
     if existing is not None:
+        _assert_object_layer(vs, existing, layer_name)
         return existing
+    vs.Layer(layer_name)
     object_type = operation["object_type"]
     if object_type == "pipe_segment":
         centerline = operation.get("centerline") or []
@@ -314,7 +379,28 @@ def _create_typed_object(vs: Any, operation: dict[str, Any]) -> Any:
         vs.NameClass(class_name)
         vs.SetClass(handle, class_name)
     vs.SetName(handle, name)
+    _assert_object_layer(vs, handle, layer_name)
     return handle
+
+
+def _ensure_record_fields(
+    vs: Any,
+    record_name: str,
+    fields: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+) -> None:
+    record_handle = vs.GetObject(record_name)
+    existing: set[str] = set()
+    if record_handle is not None:
+        count = int(vs.NumFields(record_handle))
+        existing = {
+            str(vs.GetFldName(record_handle, index))
+            for index in range(1, count + 1)
+        }
+    for field in fields:
+        field_name = str(field["field_name"])
+        if field_name not in existing:
+            vs.NewField(record_name, field_name, "", 4, 0)
+            existing.add(field_name)
 
 
 def _set_typed_record(vs: Any, operation: dict[str, Any]) -> None:
@@ -325,9 +411,7 @@ def _set_typed_record(vs: Any, operation: dict[str, Any]) -> None:
     fields = operation.get("record_fields") or []
     if not isinstance(record_name, str) or not record_name or not fields:
         raise ValueError("set_record 缺少 record_name/record_fields")
-    if vs.GetObject(record_name) is None:
-        for field in fields:
-            vs.NewField(record_name, field["field_name"], "", 4, 0)
+    _ensure_record_fields(vs, record_name, fields)
     vs.SetRecord(handle, record_name)
     for field in fields:
         vs.SetRField(handle, record_name, field["field_name"], str(field["value"]))
@@ -339,46 +423,261 @@ def _connect_typed_topology(vs: Any, operation: dict[str, Any]) -> None:
         raise ValueError(f"connect_topology 对象不存在: {operation['object_id']}")
     record_name = "OpenBIMAgent_Topology"
     fields = (("StartPortID", operation["references"][0]), ("EndPortID", operation["references"][1]))
-    if vs.GetObject(record_name) is None:
-        for field_name, _ in fields:
-            vs.NewField(record_name, field_name, "", 4, 0)
+    _ensure_record_fields(
+        vs,
+        record_name,
+        tuple({"field_name": field_name} for field_name, _ in fields),
+    )
     vs.SetRecord(handle, record_name)
     for field_name, value in fields:
         vs.SetRField(handle, record_name, field_name, str(value))
 
 
-def _apply_typed_operation(vs: Any, operation: dict[str, Any]) -> None:
+def _save_controlled_document(vs: Any, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    active_before = str(vs.GetFPathName() or "")
+    if active_before:
+        active_path = Path(active_before).resolve()
+        if active_path != target:
+            raise RuntimeError(
+                "Vectorworks save refused because another document is active: "
+                f"expected={target}, actual={active_path}"
+            )
+        vs.DoMenuTextByName("Save", 0)
+    else:
+        save_result = vs.SaveActiveDocument(str(target))
+        if save_result != 0:
+            raise RuntimeError(
+                f"Vectorworks SaveActiveDocument failed: code={save_result}"
+            )
+    active_after = str(vs.GetFPathName() or "")
+    if not active_after or Path(active_after).resolve() != target:
+        raise RuntimeError(
+            "Vectorworks save did not activate the controlled target document"
+        )
+    if not target.is_file():
+        raise RuntimeError(
+            f"Vectorworks save did not materialize the controlled document: {target}"
+        )
+
+
+def _apply_typed_operation(vs: Any, operation: dict[str, Any]) -> str:
     kind = operation["operation"]
     if kind == "create_object":
-        _create_typed_object(vs, operation)
+        handle = _create_typed_object(vs, operation)
     elif kind == "set_record":
         _set_typed_record(vs, operation)
+        handle = vs.GetObject(_object_name(operation))
     elif kind == "connect_topology":
         _connect_typed_topology(vs, operation)
+        handle = vs.GetObject(_object_name(operation))
     else:  # pragma: no cover - _validate_typed_plan 已失败关闭
         raise ValueError(f"unsupported typed operation: {kind!r}")
+    if handle is None:
+        raise RuntimeError(f"Vectorworks operation 未返回对象: {operation['object_id']}")
+    _assert_object_layer(vs, handle, _AUTHORIZED_LAYER)
+    host_name = vs.GetName(handle)
+    if not isinstance(host_name, str) or not host_name:
+        host_name = _object_name(operation)
+    return host_name
 
 
-def _receipt(plan: dict[str, Any], state: dict[str, Any], errors: list[str]) -> dict[str, Any]:
+def _semantic_number(value: Any) -> float:
+    number = round(float(value), _SEMANTIC_DECIMAL_PLACES)
+    return 0.0 if number == 0 else number
+
+
+def _semantic_coordinate(value: Any) -> dict[str, float]:
+    if not isinstance(value, (tuple, list)) or len(value) != 3:
+        raise ValueError(f"Vectorworks returned invalid 3D coordinate: {value!r}")
+    return {
+        "x_m": _semantic_number(value[0]),
+        "y_m": _semantic_number(value[1]),
+        "z_m": _semantic_number(value[2]),
+    }
+
+
+def _read_3d_center(vs: Any, handle: Any) -> dict[str, float]:
+    result = vs.Get3DCntr(handle)
+    if not isinstance(result, (tuple, list)) or len(result) != 2:
+        raise ValueError(f"Vectorworks Get3DCntr returned invalid value: {result!r}")
+    point, z_value = result
+    if not isinstance(point, (tuple, list)) or len(point) != 2:
+        raise ValueError(f"Vectorworks Get3DCntr returned invalid XY point: {point!r}")
+    return _semantic_coordinate((point[0], point[1], z_value))
+
+
+def _parse_record_value(raw: Any, expected: Any) -> Any:
+    if raw is None or str(raw) == "":
+        raise ValueError("Vectorworks record value is missing")
+    text = str(raw)
+    if isinstance(expected, bool):
+        lowered = text.strip().lower()
+        if lowered not in {"true", "false", "1", "0"}:
+            raise ValueError(f"invalid boolean record value: {text!r}")
+        return lowered in {"true", "1"}
+    if isinstance(expected, int) and not isinstance(expected, bool):
+        return int(text)
+    if isinstance(expected, float):
+        return _semantic_number(text)
+    return text
+
+
+def _record_definitions(plan: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    definitions: dict[str, dict[str, Any]] = {}
+    for operation in plan["operations"]:
+        if operation["operation"] != "set_record":
+            continue
+        definitions[operation["object_id"]] = {
+            item["field_name"]: item["value"]
+            for item in operation.get("record_fields") or []
+        }
+    return definitions
+
+
+def _project_semantic_snapshot(plan: dict[str, Any], vs: Any) -> dict[str, Any]:
+    record_name = "OpenBIMAgent_MunicipalUtility"
+    definitions = _record_definitions(plan)
+    create_operations = [
+        operation
+        for operation in plan["operations"]
+        if operation["operation"] == "create_object"
+    ]
+    objects: list[dict[str, Any]] = []
+    for operation in create_operations:
+        expected_id = operation["object_id"]
+        handle = vs.GetObject(_object_name(operation))
+        if handle is None:
+            raise ValueError(f"semantic projection missing object: {expected_id}")
+        _assert_object_layer(vs, handle, _AUTHORIZED_LAYER)
+        field_definitions = definitions.get(expected_id)
+        if not field_definitions:
+            raise ValueError(f"semantic projection missing record definition: {expected_id}")
+        required = {"StableObjectID", "ObjectKind", "SystemID", "IFCClass", "SourceIRPath"}
+        missing = sorted(required - set(field_definitions))
+        if missing:
+            raise ValueError(f"semantic projection missing required fields for {expected_id}: {missing}")
+        records = {
+            name: _parse_record_value(vs.GetRField(handle, record_name, name), expected)
+            for name, expected in field_definitions.items()
+        }
+        stable_id = str(records["StableObjectID"])
+        if stable_id != expected_id:
+            raise ValueError(
+                f"semantic projection stable identity mismatch: expected={expected_id!r}, actual={stable_id!r}"
+            )
+        object_kind = str(records["ObjectKind"])
+        position = None
+        centerline: list[dict[str, float]] = []
+        if object_kind in {"node", "port"}:
+            position = _read_3d_center(vs, handle)
+        elif object_kind == "segment":
+            vertex_count = int(vs.GetVertNum(handle))
+            if vertex_count < 2:
+                raise ValueError(f"semantic projection pipe has fewer than two vertices: {stable_id}")
+            centerline = [
+                _semantic_coordinate(vs.GetPolyPt3D(handle, index))
+                for index in range(1, vertex_count + 1)
+            ]
+        topology: list[str] = []
+        if object_kind == "segment":
+            topology = [
+                str(vs.GetRField(handle, "OpenBIMAgent_Topology", "StartPortID")),
+                str(vs.GetRField(handle, "OpenBIMAgent_Topology", "EndPortID")),
+            ]
+            if any(not value for value in topology):
+                raise ValueError(f"semantic projection missing topology record: {stable_id}")
+        domain = {
+            name.removeprefix("Domain_"): value
+            for name, value in records.items()
+            if name.startswith("Domain_")
+        }
+        host_name = vs.GetName(handle)
+        if not isinstance(host_name, str) or not host_name:
+            raise ValueError(f"semantic projection missing host name: {stable_id}")
+        material = records.get("Material")
+        objects.append(
+            {
+                "stable_id": stable_id,
+                "object_kind": object_kind,
+                "system_id": str(records["SystemID"]),
+                "position": position,
+                "centerline": centerline,
+                "topology": topology,
+                "diameter_mm": records.get("DiameterMM"),
+                "horizontal_length_m": records.get("HorizontalLengthM"),
+                "start_invert_m": records.get("StartInvertM"),
+                "end_invert_m": records.get("EndInvertM"),
+                "slope": records.get("Slope"),
+                "material": str(material) if material is not None else None,
+                "ifc_class": str(records["IFCClass"]),
+                "ifc_predefined_type": (
+                    str(records["IFCPredefinedType"])
+                    if "IFCPredefinedType" in records
+                    else None
+                ),
+                "domain_properties": domain,
+                "source_ir_path": str(records["SourceIRPath"]),
+                "host_handle": f"vectorworks:{host_name}",
+                "presentation_material": (
+                    f"vectorworks:{material}" if material is not None else None
+                ),
+            }
+        )
+    snapshot = {
+        "snapshot_version": _SEMANTIC_SNAPSHOT_VERSION,
+        "host": "vectorworks",
+        "host_adapter": "vectorworks-typed-plan-1.0.0-m1",
+        "source_ir_id": plan["ir_id"],
+        "source_ir_sha256": plan["compiled_ir_sha256"],
+        "units": "m",
+        "objects": sorted(objects, key=lambda item: item["stable_id"]),
+        "allowed_host_differences": ["host_handle", "presentation_material"],
+        "canonical_sha256": "",
+    }
+    encoded = json.dumps(
+        {key: value for key, value in snapshot.items() if key != "canonical_sha256"},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    snapshot["canonical_sha256"] = hashlib.sha256(encoded).hexdigest()
+    return snapshot
+
+
+def _receipt(
+    plan: dict[str, Any],
+    state: dict[str, Any],
+    errors: list[str],
+    semantic_snapshot: dict[str, Any] | None,
+) -> dict[str, Any]:
     applied = set(state.get("applied_operation_ids") or [])
-    complete = len(applied) == len(plan["operations"])
+    complete = (
+        len(applied) == len(plan["operations"])
+        and semantic_snapshot is not None
+        and not errors
+    )
     status = "completed" if complete else "partial"
+    operation_receipts = {
+        item["operation_id"]: item
+        for item in state.get("operation_receipts") or []
+    }
     return {
         "receipt_id": f"vw-receipt-{plan['canonical_sha256'][:24]}",
         "plan_id": plan["plan_id"],
         "idempotency_key": plan["idempotency_key"],
         "canonical_sha256": plan["canonical_sha256"],
         "status": status,
+        "output_path": state["output_path"],
+        "state_path": state["state_path"],
         "applied_operations": [
-            {
-                "operation_id": operation["operation_id"],
-                "status": "completed",
-                "object_id": operation["object_id"],
-            }
+            operation_receipts[operation["operation_id"]]
             for operation in plan["operations"]
-            if operation["operation_id"] in applied
+            if operation["operation_id"] in operation_receipts
         ],
         "confirmed_object_ids": sorted(state.get("confirmed_object_ids") or []),
+        "semantic_snapshot": semantic_snapshot,
         "compensations": [
             f"restore:{object_id}"
             for object_id in sorted(state.get("confirmed_object_ids") or [])
@@ -402,13 +701,16 @@ def execute_typed_plan(
         if target.exists():
             raise FileExistsError(f"目标工程已存在且无匹配 sidecar，拒绝覆盖: {target}")
         state = {
-            "state_version": "1.0",
+            "state_version": _STATE_VERSION,
             "plan_id": plan["plan_id"],
             "idempotency_key": plan["idempotency_key"],
             "canonical_sha256": plan["canonical_sha256"],
             "output_path": str(target),
+            "state_path": str(sidecar),
             "applied_operation_ids": [],
             "confirmed_object_ids": [],
+            "operation_receipts": [],
+            "receipt": None,
         }
         # 在首个宿主写入前先持久化恢复身份，关闭“工程已保存但 sidecar 尚未创建”的窗口。
         _write_execution_state(sidecar, state)
@@ -416,38 +718,85 @@ def execute_typed_plan(
         state.get("idempotency_key") != plan["idempotency_key"]
         or state.get("canonical_sha256") != plan["canonical_sha256"]
         or Path(str(state.get("output_path"))).resolve() != target
+        or Path(str(state.get("state_path"))).resolve() != sidecar
     ):
         raise ValueError("目标工程 sidecar 与 typed plan 身份冲突")
     if state.get("receipt") and state["receipt"].get("status") == "completed":
+        if not target.is_file():
+            raise FileNotFoundError(
+                f"Vectorworks completed receipt exists but controlled document is missing: {target}"
+            )
         return state["receipt"]
 
     try:
         import vs  # type: ignore[import-not-found]
     except Exception as exc:
         raise RuntimeError(f"vs module not available: {exc}") from exc
+    active_document = str(vs.GetFPathName() or "")
+    if target.exists():
+        if not active_document:
+            raise RuntimeError("Vectorworks recovery cannot identify the active document")
+        if Path(active_document).resolve() != target:
+            raise RuntimeError(
+                "Vectorworks recovery requires the controlled target document to be active: "
+                f"expected={target}, actual={Path(active_document).resolve()}"
+            )
+    elif state.get("applied_operation_ids"):
+        raise FileNotFoundError(
+            f"Vectorworks partial state exists but controlled document is missing: {target}"
+        )
+    elif active_document:
+        raise RuntimeError(
+            "Vectorworks first execution requires an unnamed blank document before any "
+            f"typed host side effect: active={Path(active_document).resolve()}"
+        )
+
+    # Typed plan coordinates are meters. Normalize the active document before any
+    # host geometry is created, including recovery runs after a host restart.
+    _ensure_document_units_meters(vs)
+
     applied = set(state["applied_operation_ids"])
     confirmed = set(state["confirmed_object_ids"])
+    operation_receipts = {
+        item["operation_id"]: item
+        for item in state.get("operation_receipts") or []
+    }
     errors: list[str] = []
     for operation in plan["operations"]:
         if operation["operation_id"] in applied:
             continue
         try:
-            _apply_typed_operation(vs, operation)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            save_result = vs.SaveActiveDocument(str(target))
-            if save_result not in (0, None, True):
-                raise RuntimeError(f"Vectorworks SaveActiveDocument 失败: code={save_result}")
+            host_handle = _apply_typed_operation(vs, operation)
+            _save_controlled_document(vs, target)
             applied.add(operation["operation_id"])
             if operation["operation"] == "create_object":
                 confirmed.add(operation["object_id"])
+            operation_receipts[operation["operation_id"]] = {
+                "operation_id": operation["operation_id"],
+                "status": "completed",
+                "object_id": operation["object_id"],
+                "host_handle": host_handle,
+            }
             state["applied_operation_ids"] = sorted(applied)
             state["confirmed_object_ids"] = sorted(confirmed)
+            state["operation_receipts"] = [
+                operation_receipts[item["operation_id"]]
+                for item in plan["operations"]
+                if item["operation_id"] in operation_receipts
+            ]
             _write_execution_state(sidecar, state)
         except Exception as exc:
             errors.append(f"operation={operation['operation_id']}: {exc}")
             break
-    receipt = _receipt(plan, state, errors)
-    state["receipt"] = receipt
+    semantic_snapshot = None
+    if len(applied) == len(plan["operations"]) and not errors:
+        try:
+            semantic_snapshot = _project_semantic_snapshot(plan, vs)
+        except Exception as exc:
+            errors.append(f"semantic_projection: {exc}")
+    receipt = _receipt(plan, state, errors, semantic_snapshot)
+    if receipt["status"] == "completed":
+        state["receipt"] = receipt
     _write_execution_state(sidecar, state)
     return receipt
 

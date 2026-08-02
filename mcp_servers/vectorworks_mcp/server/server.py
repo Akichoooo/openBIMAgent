@@ -531,6 +531,7 @@ def describe_capabilities() -> dict[str, Any]:
                 ],
                 "controlled_save": True,
                 "idempotent_receipts": True,
+                "semantic_snapshot": True,
             },
             "poll_interval_ms": int(POLL_INTERVAL * 1000),
             "command_timeout_s": int(COMMAND_TIMEOUT),

@@ -182,12 +182,20 @@ class VectorworksMCPClient:
             receipt = VectorworksExecutionReceipt.model_validate(result)
         except Exception as exc:
             raise VectorworksClientError(f"Vectorworks receipt 无效:{exc}") from exc
+        expected_output = Path(effective_output).resolve()
+        expected_state = expected_output.with_suffix(
+            f"{expected_output.suffix}.openbimagent.json"
+        )
         if (
             receipt.plan_id != typed_plan.plan_id
             or receipt.idempotency_key != typed_plan.idempotency_key
             or receipt.canonical_sha256 != typed_plan.canonical_sha256
+            or Path(receipt.output_path).resolve() != expected_output
+            or Path(receipt.state_path).resolve() != expected_state
         ):
-            raise VectorworksClientError("Vectorworks receipt identity 与请求计划不一致")
+            raise VectorworksClientError(
+                "Vectorworks receipt plan/output/state identity 与请求不一致"
+            )
         return receipt
 
     async def execute_code(self, code: str, *, approved: bool = False) -> dict[str, Any]:

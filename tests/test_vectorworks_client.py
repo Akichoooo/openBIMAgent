@@ -74,6 +74,8 @@ def test_execute_plan_sends_typed_payload_and_validates_receipt() -> None:
             idempotency_key=plan.idempotency_key,
             canonical_sha256=plan.canonical_sha256,
             status=ReceiptStatus.COMPLETED,
+            output_path=r"D:\devloop\G6_Test\openbimagent_g6.vwx",
+            state_path=r"D:\devloop\G6_Test\openbimagent_g6.vwx.openbimagent.json",
         )
         client = VectorworksMCPClient(toolset="minimal")
         fake = FakeMCP({
@@ -113,6 +115,8 @@ def test_execute_plan_accepts_server_typed_capabilities_envelope() -> None:
             idempotency_key=plan.idempotency_key,
             canonical_sha256=plan.canonical_sha256,
             status=ReceiptStatus.COMPLETED,
+            output_path=r"D:\devloop\G6_Test\openbimagent_g6.vwx",
+            state_path=r"D:\devloop\G6_Test\openbimagent_g6.vwx.openbimagent.json",
         )
         client = VectorworksMCPClient(
             default_output_path=r"D:\devloop\G6_Test\openbimagent_g6.vwx"
@@ -150,13 +154,46 @@ def test_execute_plan_rejects_receipt_identity_tampering() -> None:
                 "idempotency_key": plan.idempotency_key,
                 "canonical_sha256": "0" * 64,
                 "status": "completed",
+                "output_path": r"D:\devloop\G6_Test\openbimagent_g6.vwx",
+                "state_path": r"D:\devloop\G6_Test\openbimagent_g6.vwx.openbimagent.json",
                 "applied_operations": [],
                 "confirmed_object_ids": [],
+                "semantic_snapshot": None,
                 "compensations": [],
                 "errors": [],
             }}),
         })
-        with pytest.raises(VectorworksClientError, match="receipt identity"):
+        with pytest.raises(VectorworksClientError, match="receipt plan/output/state identity"):
+            await client.execute_plan(
+                plan,
+                output_path=r"D:\devloop\G6_Test\openbimagent_g6.vwx",
+                approved=True,
+            )
+
+    asyncio.run(run())
+
+
+def test_execute_plan_rejects_receipt_output_identity_tampering() -> None:
+    async def run() -> None:
+        plan = VectorworksBuilder().build(solved_payload())
+        client = VectorworksMCPClient()
+        client._mcp_client = FakeMCP({
+            "execute_plan": result(structured={"result": {
+                "receipt_id": f"vw-receipt-{plan.canonical_sha256[:24]}",
+                "plan_id": plan.plan_id,
+                "idempotency_key": plan.idempotency_key,
+                "canonical_sha256": plan.canonical_sha256,
+                "status": "completed",
+                "output_path": r"D:\devloop\G6_Test\different.vwx",
+                "state_path": r"D:\devloop\G6_Test\different.vwx.openbimagent.json",
+                "applied_operations": [],
+                "confirmed_object_ids": [],
+                "semantic_snapshot": None,
+                "compensations": [],
+                "errors": [],
+            }}),
+        })
+        with pytest.raises(VectorworksClientError, match="output/state identity"):
             await client.execute_plan(
                 plan,
                 output_path=r"D:\devloop\G6_Test\openbimagent_g6.vwx",

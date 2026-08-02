@@ -19,6 +19,7 @@ PROTOCOL_VERSION = "1.0"
 HOST_API_VERSION = "5.2"
 STATE_VERSION = "1.0"
 SEMANTIC_SNAPSHOT_VERSION = "1.0"
+SEMANTIC_DECIMAL_PLACES = 6
 OPERATIONS = {"create_object", "set_properties", "connect_topology"}
 OBJECT_TYPES = {
     "utility_system",
@@ -465,15 +466,19 @@ def project_semantic_snapshot(
         if operation["primitive"] == "polyline_curve":
             spline = obj.data.splines[0]
             centerline = [
-                {"x_m": float(point.co.x), "y_m": float(point.co.y), "z_m": float(point.co.z)}
+                {
+                    "x_m": _semantic_number(point.co.x),
+                    "y_m": _semantic_number(point.co.y),
+                    "z_m": _semantic_number(point.co.z),
+                }
                 for point in spline.points
             ]
         position = None
         if operation["position"] is not None:
             position = {
-                "x_m": float(obj.location.x),
-                "y_m": float(obj.location.y),
-                "z_m": float(obj.location.z),
+                "x_m": _semantic_number(obj.location.x),
+                "y_m": _semantic_number(obj.location.y),
+                "z_m": _semantic_number(obj.location.z),
             }
         objects.append(
             {
@@ -523,8 +528,13 @@ def project_semantic_snapshot(
     return snapshot
 
 
+def _semantic_number(value: Any) -> float:
+    number = round(float(value), SEMANTIC_DECIMAL_PLACES)
+    return 0.0 if number == 0 else number
+
+
 def _optional_float(value: Any) -> float | None:
-    return float(value) if value is not None else None
+    return _semantic_number(value) if value is not None else None
 
 
 __all__ = [

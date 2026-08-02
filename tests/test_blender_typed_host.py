@@ -361,6 +361,12 @@ def test_typed_host_rejects_hash_tampering_and_broken_topology(tmp_path) -> None
         _execute(module, fake, tmp_path, plan=plan)
 
 
+def test_semantic_projection_normalizes_host_float32_noise() -> None:
+    module = _load_typed_module()
+    assert module._semantic_number(9.970000267028809) == 9.97
+    assert module._semantic_number(-0.00000001) == 0.0
+
+
 def test_typed_host_source_never_routes_plan_through_exec_or_execute_code() -> None:
     source = _TYPED_PATH.read_text(encoding="utf-8")
     assert "exec(" not in source

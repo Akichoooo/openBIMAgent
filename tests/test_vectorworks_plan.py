@@ -56,11 +56,44 @@ def test_plan_has_explicit_host_semantics_and_allowlisted_operations() -> None:
     assert segment.diameter_mm == 300.0
     assert len(segment.centerline) == 2
     assert segment.ifc_class == "IfcPipeSegment"
+    segment_record = next(
+        item
+        for item in plan.operations
+        if item.operation is VectorworksOperationKind.SET_RECORD
+        and item.object_id == segment.object_id
+    )
+    units = {item.field_name: item.unit for item in segment_record.record_fields}
+    assert units["DiameterMM"] == "mm"
+    assert units["HorizontalLengthM"] == "m"
+    assert units["StartInvertM"] == "m"
+    assert units["EndInvertM"] == "m"
+    assert units["Slope"] is None
 
 
 def test_plan_passes_json_schema() -> None:
     plan = _plan()
+    compiled = CompiledUtilityIR.model_validate(solved_payload())
+    assert plan.compiled_ir_sha256 == compiled.canonical_sha256()
     assert SchemaGate().validate_artifact("vectorworks_execution_plan", plan.model_dump(mode="json")) == []
+
+
+def test_missing_compiled_ir_identity_fails_closed() -> None:
+    payload = _plan().model_dump(mode="json")
+    del payload["compiled_ir_sha256"]
+    with pytest.raises(ValidationError):
+        VectorworksExecutionPlan.model_validate(payload)
+    errors = SchemaGate().validate_artifact("vectorworks_execution_plan", payload)
+    assert any("compiled_ir_sha256" in item for item in errors)
+
+
+def test_layer_scope_escape_fails_closed() -> None:
+    payload = _plan().model_dump(mode="json")
+    create = next(item for item in payload["operations"] if item["operation"] == "create_object")
+    create["layer_name"] = "Escaped-Layer"
+    payload["canonical_sha256"] = ""
+    payload["idempotency_key"] = ""
+    with pytest.raises(ValidationError, match="范围锁"):
+        VectorworksExecutionPlan.model_validate(payload)
 
 
 def test_missing_fields_fail_closed() -> None:
@@ -79,6 +112,10 @@ def test_illegal_version_and_tampered_hash_fail_closed() -> None:
         VectorworksExecutionPlan.model_validate(payload)
     payload = _plan().model_dump(mode="json")
     payload["canonical_sha256"] = "0" * 64
+    with pytest.raises(ValidationError, match="canonical_sha256"):
+        VectorworksExecutionPlan.model_validate(payload)
+    payload = _plan().model_dump(mode="json")
+    payload["compiled_ir_sha256"] = "0" * 64
     with pytest.raises(ValidationError, match="canonical_sha256"):
         VectorworksExecutionPlan.model_validate(payload)
 
