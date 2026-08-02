@@ -16,6 +16,12 @@ MCP 写操作 / execute_code / deliver 前 CLI 审批(y/N,--yes 跳过);Ctrl+C �
 """
 
 from openbimagent.assembly.batch_executor import make_batch_executor
+from openbimagent.assembly.blender_plan import (
+    BlenderBuilder,
+    BlenderExecutionPlan,
+    BlenderExecutionReceipt,
+    FakeBlenderExecutor,
+)
 from openbimagent.assembly.builder import BuilderError, make_builder_fn
 from openbimagent.assembly.pipeline import PipelineResult, run_pipeline
 from openbimagent.assembly.semantic_snapshot import (
@@ -33,7 +39,11 @@ from openbimagent.assembly.vectorworks_plan import (
 )
 
 __all__ = [
+    "BlenderBuilder",
+    "BlenderExecutionPlan",
+    "BlenderExecutionReceipt",
     "BuilderError",
+    "FakeBlenderExecutor",
     "FakeBlenderSemanticExecutor",
     "FakeVectorworksExecutor",
     "FakeVectorworksSemanticExecutor",

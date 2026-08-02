@@ -28,8 +28,10 @@ from openbimagent.assembly.batch_executor import (
 )
 from openbimagent.assembly.builder import make_builder_fn
 from openbimagent.assembly.target_executor import (
+    BlenderBuilder,
     VectorworksBuilder,
     combine_target_executors,
+    make_blender_batch_executor,
     make_vectorworks_batch_executor,
     missing_target_executor,
 )
@@ -88,6 +90,8 @@ def run_pipeline(
     out_dir: Path,
     registry: Any = None,
     blender_client: Any = None,
+    blender_builder: BlenderBuilder | None = None,
+    blender_output_path: Path | str | None = None,
     vectorworks_client: Any = None,
     vectorworks_builder: VectorworksBuilder | None = None,
     domain_evidence: dict[str, Any] | None = None,
@@ -319,6 +323,12 @@ def run_pipeline(
     effective_approval = approval_fn if not yes else None
 
     targets = list(playbook.get("targets") or ["blender"])
+    typed_blender_requested = blender_builder is not None and hasattr(blender_builder, "build")
+    typed_blender_missing_dependency = (
+        "blender" in targets
+        and typed_blender_requested
+        and (utility_solver is None or blender_output_path is None)
+    )
     typed_vectorworks_requires_compiled_ir = (
         "vectorworks" in targets
         and vectorworks_builder is not None
@@ -329,6 +339,28 @@ def run_pipeline(
     if "blender" in targets:
         if blender_client is None:
             executors["blender"] = missing_target_executor("blender", "缺少 blender_client")
+        elif typed_blender_requested:
+            if utility_solver is None:
+                executors["blender"] = missing_target_executor(
+                    "blender",
+                    "typed BlenderBuilder 要求受 Solver 验证的 CompiledUtilityIR；禁止回退 Scene Graph IR",
+                )
+            elif blender_output_path is None:
+                executors["blender"] = missing_target_executor(
+                    "blender",
+                    "typed BlenderBuilder 要求显式 .blend 输出路径和宿主授权根目录",
+                )
+            else:
+                executors["blender"] = make_blender_batch_executor(
+                    ir=utility_solver.compiled_ir.model_dump(mode="json"),
+                    batch_names=batch_names,
+                    work_dir=out / "batches" / "blender",
+                    client=blender_client,
+                    builder_fn=blender_builder,
+                    output_path=blender_output_path,
+                    approval_fn=effective_approval,
+                    auto_approve=yes,
+                )
         else:
             executors["blender"] = make_batch_executor(
                 ir=ir,
@@ -383,7 +415,10 @@ def run_pipeline(
     missing_targets = [
         target
         for target in targets
-        if (target == "blender" and blender_client is None)
+        if (
+            target == "blender"
+            and (blender_client is None or typed_blender_missing_dependency)
+        )
         or (
             target == "vectorworks"
             and (

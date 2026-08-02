@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import os
 import socket
 import subprocess
@@ -25,7 +27,10 @@ from pathlib import Path
 
 import pytest
 
+from openbimagent.assembly.blender_plan import BlenderBuilder
+from openbimagent.assembly.semantic_snapshot import SemanticSnapshot
 from openbimagent.mcp_clients.blender import BlenderMCPClient
+from test_compiled_utility_ir import solved_payload
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ADDON_PATH = PROJECT_ROOT / "mcp_servers" / "blender_mcp" / "addon.py"
@@ -34,6 +39,9 @@ BLENDER_PORT = int(os.environ.get("OPENBIMAGENT_BLENDER_PORT", "9887"))
 BLENDER_HOST = "127.0.0.1"
 LAUNCH_WAIT_S = 120  # 与 run_fork_tests.py 一致;首帧着色器编译 ~19s
 RUN_REAL = os.environ.get("OPENBIMAGENT_RUN_REAL_BLENDER") == "1"
+REAL_AUTHORIZED_ROOT = Path(
+    os.environ.get("OPENBIMAGENT_BLENDER_AUTHORIZED_ROOT", r"D:\devloop\G6_Test")
+).resolve()
 
 requires_real_blender = pytest.mark.skipif(
     not RUN_REAL or not BLENDER_EXE.is_file(),
@@ -67,6 +75,10 @@ def _kill_proc(proc: subprocess.Popen) -> None:
             proc.wait(timeout=10)
 
 
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 @pytest.fixture()
 def headless_blender(tmp_path):
     """起 headless Blender + fork addon,等端口起来;teardown 时杀进程。
@@ -90,6 +102,7 @@ def headless_blender(tmp_path):
     env = dict(os.environ)
     env["OPENBIMAGENT_BLENDER_PORT"] = str(BLENDER_PORT)
     env["OPENBIMAGENT_SNAPSHOT_DIR"] = str(snapshot_dir)
+    env["OPENBIMAGENT_BLENDER_AUTHORIZED_ROOT"] = str(REAL_AUTHORIZED_ROOT)
 
     cmd = [str(BLENDER_EXE), "--background", "--factory-startup", "--python", str(ADDON_PATH)]
     with log_path.open("w", encoding="utf-8") as log_file:
@@ -154,6 +167,59 @@ def test_real_blender_connect_describe_cube_screenshot(headless_blender, tmp_pat
             assert shot_path.is_file() and shot_path.stat().st_size > 1000, "截图文件未落盘或过小"
             # method 应为 render_fallback(background 下无 View3D region,走 bpy.ops.render.render)
             assert shot["method"] == "render_fallback", f"background 下应走 render_fallback,实收 {shot['method']}"
+        finally:
+            await client.close()
+
+    asyncio.run(run())
+
+
+@requires_real_blender
+def test_real_blender_typed_municipal_plan(headless_blender) -> None:
+    """G6 typed path: approved plan -> controlled save -> receipt -> real scene projection."""
+    del headless_blender
+    output = REAL_AUTHORIZED_ROOT / "openbimagent_g6_typed.blend"
+    sidecar = output.with_suffix(output.suffix + ".openbimagent.json")
+    plan = BlenderBuilder().build(solved_payload())
+    existing_receipt = None
+    before_hashes = None
+    if output.exists() or sidecar.exists():
+        assert output.is_file() and sidecar.is_file(), "受控输出与 sidecar 必须同时存在"
+        state = json.loads(sidecar.read_text(encoding="utf-8"))
+        assert state["canonical_sha256"] == plan.canonical_sha256
+        assert state["idempotency_key"] == plan.idempotency_key
+        existing_receipt = state.get("receipt")
+        assert existing_receipt is not None, "已有受控输出必须有 completed receipt"
+        before_hashes = (_sha256(output), _sha256(sidecar))
+    client = BlenderMCPClient.transport_socket(
+        host=BLENDER_HOST,
+        port=BLENDER_PORT,
+        timeout=180.0,
+        authorized_root=REAL_AUTHORIZED_ROOT,
+    )
+
+    async def run() -> None:
+        await client.connect()
+        try:
+            caps = await client.describe_capabilities()
+            typed = caps.get("typed_execution")
+            assert typed and typed["controlled_save"] is True
+            assert typed["idempotent_receipts"] is True
+            receipt = await client.execute_plan(
+                plan,
+                output_path=output,
+                approved=True,
+                capabilities=caps,
+            )
+            assert receipt.status.value == "completed"
+            assert output.is_file() and output.stat().st_size > 0
+            assert sidecar.is_file()
+            snapshot = SemanticSnapshot.model_validate(receipt.semantic_snapshot)
+            assert snapshot.source_ir_sha256 == plan.compiled_ir_sha256
+            assert len(snapshot.objects) == 6
+            if existing_receipt is not None:
+                assert receipt.model_dump(mode="json") == existing_receipt
+                assert before_hashes is not None
+                assert (_sha256(output), _sha256(sidecar)) == before_hashes
         finally:
             await client.close()
 

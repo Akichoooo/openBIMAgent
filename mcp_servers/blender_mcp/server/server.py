@@ -44,6 +44,7 @@ COMMAND_TIMEOUT = float(os.getenv("OPENBIMAGENT_BLENDER_TIMEOUT", "180"))
 FIRST_PACKET_RETRIES = 2          # reconnect+retry budget for a fresh command
 STARTUP_PROBE_RETRIES = 5         # ping attempts right after TCP connect
 STARTUP_PROBE_DELAY = 1.0         # seconds between startup ping attempts
+AUTHORIZED_ROOT = os.getenv("OPENBIMAGENT_BLENDER_AUTHORIZED_ROOT", "")
 
 
 @dataclass
@@ -175,9 +176,8 @@ class BlenderConnection:
                     if not self.connect():
                         last_err = ConnectionError("Reconnect to Blender failed")
                         continue
-            except Exception as e:
-                # Addon-side error (status=error) or bad JSON: not retryable
-                self.sock = self.sock  # keep socket; addon is alive
+            except Exception:
+                # Addon-side error (status=error) or bad JSON: not retryable.
                 raise
         raise Exception(f"Communication error with Blender after retries: {last_err}")
 
@@ -357,6 +357,34 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 800) -> Image:
     except Exception as e:
         logger.error(f"Error capturing screenshot: {str(e)}")
         raise Exception(f"Screenshot failed: {str(e)}")
+
+
+@mcp.tool()
+def execute_plan(
+    ctx: Context,
+    plan: Dict[str, Any],
+    output_path: str,
+    approved: bool = False,
+) -> str:
+    """Execute one approved typed municipal plan; never translates it to Python code."""
+    try:
+        if not AUTHORIZED_ROOT:
+            raise ValueError("OPENBIMAGENT_BLENDER_AUTHORIZED_ROOT is required")
+        target = os.path.abspath(output_path)
+        root = os.path.abspath(AUTHORIZED_ROOT)
+        if os.path.commonpath([root, target]) != root:
+            raise ValueError(f"output_path escaped authorized root: {target}")
+        if not target.lower().endswith(".blend"):
+            raise ValueError("output_path must end with .blend")
+        blender = get_blender_connection()
+        result = blender.send_command(
+            "execute_plan",
+            {"plan": plan, "output_path": target, "approved": approved},
+        )
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error executing typed plan: {str(e)}")
+        raise Exception(f"Typed plan execution failed: {str(e)}")
 
 
 @mcp.tool()

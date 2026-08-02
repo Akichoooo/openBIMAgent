@@ -4,8 +4,14 @@ from __future__ import annotations
 
 from openbimagent.assembly.target_executor import (
     combine_target_executors,
+    make_blender_batch_executor,
     make_vectorworks_batch_executor,
     missing_target_executor,
+)
+from openbimagent.assembly.blender_plan import (
+    BlenderBuilder,
+    BlenderCapabilities,
+    FakeBlenderExecutor,
 )
 from openbimagent.assembly.vectorworks_plan import (
     FakeVectorworksExecutor,
@@ -32,6 +38,106 @@ class FakeVectorworksClient:
     async def close(self) -> None:
         self.is_connected = False
         self.closed += 1
+
+
+def test_typed_async_blender_client_connects_before_capability_probe(tmp_path) -> None:
+    host = FakeBlenderExecutor()
+
+    class AsyncTypedClient:
+        def __init__(self) -> None:
+            self.is_connected = False
+            self.events: list[str] = []
+
+        async def connect(self) -> None:
+            self.events.append("connect")
+            self.is_connected = True
+
+        async def describe_capabilities(self):
+            assert self.is_connected
+            self.events.append("capabilities")
+            return BlenderCapabilities()
+
+        async def execute_plan(
+            self,
+            plan,
+            *,
+            output_path,
+            capabilities=None,
+            approved=False,
+        ):
+            assert self.is_connected and approved is True
+            self.events.append("execute_plan")
+            return host.execute_plan(
+                plan,
+                output_path=output_path,
+                capabilities=capabilities,
+                approved=approved,
+            )
+
+    client = AsyncTypedClient()
+    executor = make_blender_batch_executor(
+        ir=solved_payload(),
+        batch_names=["全部资产"],
+        work_dir=tmp_path / "receipts",
+        client=client,
+        builder_fn=BlenderBuilder(),
+        output_path=tmp_path / "case.blend",
+        auto_approve=True,
+    )
+    report = executor("全部资产", None)
+    assert report.verdict is Verdict.PASS
+    assert client.events == ["connect", "capabilities", "execute_plan"]
+    assert (tmp_path / "receipts" / "batch_01_blender_receipt.json").is_file()
+
+
+def test_typed_blender_partial_is_recoverable_and_never_falls_back(tmp_path) -> None:
+    host = FakeBlenderExecutor(fail_after_operations=4)
+    executor = make_blender_batch_executor(
+        ir=solved_payload(),
+        batch_names=["全部资产"],
+        work_dir=tmp_path / "partial",
+        client=host,
+        builder_fn=BlenderBuilder(),
+        output_path=tmp_path / "case.blend",
+        auto_approve=True,
+    )
+    partial = executor("全部资产", None)
+    assert partial.verdict is Verdict.FIX
+    assert "部分 receipt" in (partial.rework_instruction or "")
+    host.fail_after_operations = None
+    assert executor("全部资产", partial.rework_instruction).verdict is Verdict.PASS
+
+    class LegacyOnlyClient:
+        async def execute_code(self, code: str):
+            raise AssertionError("typed plan 不得调用 execute_code")
+
+    blocked = make_blender_batch_executor(
+        ir=solved_payload(),
+        batch_names=["全部资产"],
+        work_dir=tmp_path / "blocked",
+        client=LegacyOnlyClient(),
+        builder_fn=BlenderBuilder(),
+        output_path=tmp_path / "blocked.blend",
+        auto_approve=True,
+    )
+    report = blocked("全部资产", None)
+    assert report.verdict is Verdict.FIX
+    assert "缺少 execute_plan" in (report.rework_instruction or "")
+
+
+def test_typed_blender_rejected_approval_never_calls_host(tmp_path) -> None:
+    host = FakeBlenderExecutor()
+    executor = make_blender_batch_executor(
+        ir=solved_payload(),
+        batch_names=["全部资产"],
+        work_dir=tmp_path,
+        client=host,
+        builder_fn=BlenderBuilder(),
+        output_path=tmp_path / "case.blend",
+        approval_fn=lambda permission, args: False,
+    )
+    assert executor("全部资产", None).verdict is Verdict.ESCALATE
+    assert host.apply_calls == 0
 
 
 def test_vectorworks_executor_runs_builder_and_writes_result(tmp_path) -> None:

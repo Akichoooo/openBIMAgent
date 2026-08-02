@@ -47,6 +47,16 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
+from openbimagent.assembly.blender_plan import (
+    BlenderCapabilities,
+    BlenderExecutionPlan,
+    BlenderExecutionReceipt,
+    BlenderPlanError,
+    validate_plan_capabilities,
+)
+
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 9876
 """addon socket 默认端口(fork tests 用 9887 区分;server.py 默认 9876,经 BLENDER_PORT 覆盖)。"""
@@ -94,6 +104,8 @@ class BlenderMCPClient:
         server_command: list[str] | None = None,
         server_env: dict[str, str] | None = None,
         timeout: float = COMMAND_TIMEOUT,
+        authorized_root: Path | str | None = None,
+        default_output_path: Path | str | None = None,
     ) -> None:
         """不要直接构造;用 `transport_stdio` / `transport_socket` 工厂。
 
@@ -109,6 +121,10 @@ class BlenderMCPClient:
         self._server_command = server_command or [sys.executable, str(FORK_SERVER_PATH)]
         self._server_env = server_env or {}
         self._timeout = timeout
+        self._authorized_root = Path(authorized_root).resolve() if authorized_root is not None else None
+        self._default_output_path = (
+            Path(default_output_path).resolve() if default_output_path is not None else None
+        )
         self._connected = False
         # stdio 传输层私有状态(lazy import fastmcp,避免测试 mock 时硬依赖)
         self._mcp_client: Any = None
@@ -126,12 +142,16 @@ class BlenderMCPClient:
         server_command: list[str] | None = None,
         server_env: dict[str, str] | None = None,
         timeout: float = COMMAND_TIMEOUT,
+        authorized_root: Path | str | None = None,
+        default_output_path: Path | str | None = None,
     ) -> "BlenderMCPClient":
         """MCP stdio 传输层(主路径):fastmcp Client 起 server.py 子进程并完成 MCP 握手。
 
         server_env 默认注入 BLENDER_PORT/OPENBIMAGENT_BLENDER_TIMEOUT 指向 addon。
         """
         env = {"BLENDER_PORT": str(port), "OPENBIMAGENT_BLENDER_TIMEOUT": str(int(timeout)), **(server_env or {})}
+        if authorized_root is not None:
+            env["OPENBIMAGENT_BLENDER_AUTHORIZED_ROOT"] = str(Path(authorized_root).resolve())
         return cls(
             transport="stdio",
             host=host,
@@ -139,6 +159,8 @@ class BlenderMCPClient:
             server_command=server_command,
             server_env=env,
             timeout=timeout,
+            authorized_root=authorized_root,
+            default_output_path=default_output_path,
         )
 
     @classmethod
@@ -148,9 +170,18 @@ class BlenderMCPClient:
         port: int = DEFAULT_PORT,
         host: str = DEFAULT_HOST,
         timeout: float = COMMAND_TIMEOUT,
+        authorized_root: Path | str | None = None,
+        default_output_path: Path | str | None = None,
     ) -> "BlenderMCPClient":
         """socket 直连传输层(回退):raw TCP 到 addon,JSON 行协议(见 socket_test_client)。"""
-        return cls(transport="socket", host=host, port=port, timeout=timeout)
+        return cls(
+            transport="socket",
+            host=host,
+            port=port,
+            timeout=timeout,
+            authorized_root=authorized_root,
+            default_output_path=default_output_path,
+        )
 
     @property
     def transport(self) -> str:
@@ -218,6 +249,61 @@ class BlenderMCPClient:
         返回 {executed, result, snapshot, scope_checked};失败(addon 抛 error)走 BlenderClientError。
         """
         return await self._call("execute_code", {"code": code})
+
+    async def execute_plan(
+        self,
+        plan: BlenderExecutionPlan | dict[str, Any],
+        *,
+        output_path: Path | str | None = None,
+        approved: bool = False,
+        capabilities: BlenderCapabilities | dict[str, Any] | None = None,
+    ) -> BlenderExecutionReceipt:
+        """Execute a validated typed plan; this path never calls ``execute_code``."""
+        try:
+            typed_plan = (
+                plan
+                if isinstance(plan, BlenderExecutionPlan)
+                else BlenderExecutionPlan.model_validate(plan)
+            )
+            effective_capabilities = capabilities
+            if effective_capabilities is None:
+                effective_capabilities = await self.describe_capabilities()
+            if isinstance(effective_capabilities, dict):
+                typed_payload = effective_capabilities.get("typed_execution", effective_capabilities)
+                effective_capabilities = BlenderCapabilities.model_validate(typed_payload)
+            validate_plan_capabilities(typed_plan, effective_capabilities)
+            target = Path(output_path).resolve() if output_path is not None else self._default_output_path
+            if target is None:
+                raise BlenderPlanError("execute_plan 缺少 output_path")
+            if target.suffix.lower() != ".blend":
+                raise BlenderPlanError("Blender typed output_path 必须使用 .blend 后缀")
+            if self._authorized_root is not None:
+                try:
+                    target.relative_to(self._authorized_root)
+                except ValueError as exc:
+                    raise BlenderPlanError(
+                        f"Blender output_path 超出授权根目录: {target}"
+                    ) from exc
+            result = await self._call(
+                "execute_plan",
+                {
+                    "plan": typed_plan.model_dump(mode="json"),
+                    "output_path": str(target),
+                    "approved": approved,
+                },
+            )
+            receipt = BlenderExecutionReceipt.model_validate(result)
+        except (ValidationError, BlenderPlanError) as exc:
+            raise BlenderClientError(f"Blender typed plan 校验失败: {exc}") from exc
+        if receipt.plan_id != typed_plan.plan_id:
+            raise BlenderClientError("Blender receipt plan_id 与请求不匹配")
+        if receipt.idempotency_key != typed_plan.idempotency_key:
+            raise BlenderClientError("Blender receipt idempotency_key 与请求不匹配")
+        if receipt.canonical_sha256 != typed_plan.canonical_sha256:
+            raise BlenderClientError("Blender receipt canonical_sha256 与请求不匹配")
+        if Path(receipt.output_path).resolve() != target:
+            raise BlenderClientError("Blender receipt output_path 与请求不匹配")
+        return receipt
 
     async def set_editable_scope(
         self,

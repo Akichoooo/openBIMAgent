@@ -28,8 +28,24 @@ import traceback
 import os
 import io
 import hashlib
+import importlib.util
+from pathlib import Path
 from datetime import datetime
 from contextlib import redirect_stdout
+
+# OPENBIMAGENT M1: Blender --python does not guarantee that this script's
+# directory is on sys.path. Load the adjacent self-contained adapter by its
+# absolute file path instead of relying on ambient module-search state.
+_TYPED_PLAN_PATH = Path(__file__).resolve().with_name("typed_plan.py")
+_TYPED_PLAN_SPEC = importlib.util.spec_from_file_location(
+    "openbimagent_blender_typed_plan",
+    _TYPED_PLAN_PATH,
+)
+if _TYPED_PLAN_SPEC is None or _TYPED_PLAN_SPEC.loader is None:
+    raise ImportError(f"cannot load typed Blender adapter: {_TYPED_PLAN_PATH}")
+_TYPED_PLAN_MODULE = importlib.util.module_from_spec(_TYPED_PLAN_SPEC)
+_TYPED_PLAN_SPEC.loader.exec_module(_TYPED_PLAN_MODULE)
+execute_typed_plan = _TYPED_PLAN_MODULE.execute_typed_plan
 
 bl_info = {
     "name": "Blender MCP (openBIMAgent fork)",
@@ -101,6 +117,7 @@ TOOL_MANIFEST = [
     {"name": "get_object_info", "since": "upstream", "desc": "Transform, visibility, materials, mesh stats, AABB of one object."},
     {"name": "get_viewport_screenshot", "since": "upstream+fork(f)", "desc": "Viewport capture (GUI) or render fallback (headless); non-black asserted."},
     {"name": "execute_code", "since": "upstream+fork(c,g)", "desc": "Run Python in Blender. AST-allowlisted, auto-snapshot, scope-locked with rollback."},
+    {"name": "execute_plan", "since": "fork(m1)", "desc": "Execute an approved typed municipal plan with controlled save and receipts."},
     {"name": "batch_render", "since": "fork", "desc": "Render one still per named camera."},
     {"name": "camera_turntable", "since": "fork", "desc": "Orbit a temp camera around a target and render N frames."},
     {"name": "camera_path_render", "since": "fork", "desc": "Move a temp camera through waypoints and render each frame."},
@@ -493,6 +510,7 @@ class BlenderMCPServer:
             "get_object_info": self.get_object_info,
             "get_viewport_screenshot": self.get_viewport_screenshot,
             "execute_code": self.execute_code,
+            "execute_plan": self.execute_plan,
             "batch_render": self.batch_render,
             "camera_turntable": self.camera_turntable,
             "camera_path_render": self.camera_path_render,
@@ -553,6 +571,20 @@ class BlenderMCPServer:
                 "render_engine_selected": pick_render_engine(),
             },
             "tools": TOOL_MANIFEST,
+            "typed_execution": {
+                "protocol_version": "1.0",
+                "host_api_version": "5.2",
+                "units": ["m", "mm"],
+                "operations": ["create_object", "set_properties", "connect_topology"],
+                "object_types": [
+                    "utility_system", "manhole", "inlet", "outlet", "junction",
+                    "valve", "equipment", "terminal", "distribution_port", "pipe_segment",
+                ],
+                "primitives": ["empty", "cylinder", "uv_sphere", "polyline_curve"],
+                "controlled_save": True,
+                "idempotent_receipts": True,
+                "semantic_snapshot": True,
+            },
             "limits": {
                 "max_mcp_tools": 12,
                 "execute_code": {
@@ -954,6 +986,21 @@ class BlenderMCPServer:
             if obj is not None and not self._is_editable(obj):
                 violations.append(f"object '{name}' was created outside the editable scope")
         return violations
+
+    # ------------------------------------------------------------------
+    # OPENBIMAGENT M1: typed execution (never enters execute_code/exec)
+    # ------------------------------------------------------------------
+    def execute_plan(self, plan, output_path, approved=False):
+        root = os.getenv("OPENBIMAGENT_BLENDER_AUTHORIZED_ROOT", "")
+        return execute_typed_plan(
+            plan=plan,
+            output_path=output_path,
+            authorized_root=root,
+            approved=approved,
+            bpy_module=bpy,
+            snapshot_fn=self._save_snapshot,
+            fork_version=FORK_VERSION,
+        )
 
     # ------------------------------------------------------------------
     # OPENBIMAGENT (c)+(g): sandboxed execute_code

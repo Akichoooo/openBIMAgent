@@ -9,6 +9,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from openbimagent.assembly.blender_plan import (
+    BlenderExecutionPlan,
+    BlenderExecutionReceipt,
+    BlenderReceiptStatus,
+)
 from openbimagent.assembly.vectorworks_plan import (
     ReceiptStatus,
     VectorworksExecutionPlan,
@@ -18,7 +23,93 @@ from openbimagent.orchestrator.dispatch import BatchReport, Verdict
 
 LegacyVectorworksBuilder = Callable[[list[str], dict[str, Any], str | None], str]
 VectorworksBuilder = Any
+BlenderBuilder = Any
 TargetExecutor = Callable[[str, str | None], BatchReport]
+
+
+def make_blender_batch_executor(
+    *,
+    ir: dict[str, Any],
+    batch_names: list[str],
+    work_dir: Path,
+    client: Any,
+    builder_fn: BlenderBuilder,
+    output_path: Path | str,
+    approval_fn: Callable[[str, dict[str, Any]], bool] | None = None,
+    auto_approve: bool = False,
+) -> TargetExecutor:
+    """Construct the G6 typed Blender executor; free-code fallback is forbidden."""
+    root = Path(work_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    target = Path(output_path).resolve()
+
+    def execute(batch: str, rework: str | None) -> BatchReport:
+        del rework
+        idx = _batch_index(batch, batch_names)
+        try:
+            if not hasattr(builder_fn, "build"):
+                raise RuntimeError("Blender typed 主链要求 BlenderBuilder.build")
+            plan = builder_fn.build(ir)
+            if not isinstance(plan, BlenderExecutionPlan):
+                raise RuntimeError("Blender builder 未产出 BlenderExecutionPlan")
+        except Exception as exc:
+            return BatchReport(
+                Verdict.FIX,
+                hint=f"target=blender batch={batch} typed builder 失败: {str(exc)[:120]}",
+                rework_instruction=f"修复 Blender typed builder 输入或契约后重跑: {str(exc)[:300]}",
+            )
+        approved = auto_approve
+        if approval_fn is not None:
+            approved = approval_fn(
+                "execute_blender_plan",
+                {
+                    "batch": batch,
+                    "plan_id": plan.plan_id,
+                    "canonical_sha256": plan.canonical_sha256,
+                    "idempotency_key": plan.idempotency_key,
+                    "operation_count": len(plan.operations),
+                    "output_path": str(target),
+                },
+            )
+        if not approved:
+            return BatchReport(
+                Verdict.ESCALATE,
+                hint=f"target=blender batch={batch} execution plan 未获批准",
+            )
+        try:
+            receipt = _run_blender_plan(
+                client,
+                plan,
+                output_path=target,
+                approved=approved,
+            )
+        except Exception as exc:
+            return BatchReport(
+                Verdict.FIX,
+                hint=f"target=blender batch={batch} typed plan 执行失败: {str(exc)[:120]}",
+                rework_instruction=f"依据 Blender receipt/宿主能力恢复 typed plan: {str(exc)[:300]}",
+            )
+        artifact = root / f"batch_{idx + 1:02d}_blender_receipt.json"
+        artifact.write_text(
+            json.dumps(receipt.model_dump(mode="json"), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        verdict = (
+            Verdict.PASS
+            if receipt.status is BlenderReceiptStatus.COMPLETED
+            else Verdict.FIX
+        )
+        return BatchReport(
+            verdict,
+            hint=f"target=blender batch={batch} status={receipt.status.value} receipt={artifact.name}",
+            rework_instruction=(
+                None
+                if verdict is Verdict.PASS
+                else f"从 Blender 部分 receipt 恢复，仅重试未确认操作: {receipt.errors}"
+            ),
+        )
+
+    return execute
 
 
 def make_vectorworks_batch_executor(
@@ -200,6 +291,54 @@ def _build_vectorworks_payload(
     return builder_fn(assets, ir, rework)
 
 
+def _run_blender_plan(
+    client: Any,
+    plan: BlenderExecutionPlan,
+    *,
+    output_path: Path,
+    approved: bool = True,
+) -> BlenderExecutionReceipt:
+    if not hasattr(client, "execute_plan"):
+        raise RuntimeError("Blender typed executor 缺少 execute_plan；不能回退 execute_code")
+    uses_async = any(
+        inspect.iscoroutinefunction(getattr(client, name, None))
+        for name in ("connect", "describe_capabilities", "execute_plan")
+    )
+    if uses_async:
+        async def run() -> BlenderExecutionReceipt:
+            if hasattr(client, "connect") and not getattr(client, "is_connected", False):
+                connection = client.connect()
+                if inspect.isawaitable(connection):
+                    await connection
+            capabilities = client.describe_capabilities()
+            effective_caps = (
+                await capabilities if inspect.isawaitable(capabilities) else capabilities
+            )
+            result = client.execute_plan(
+                plan,
+                output_path=output_path,
+                capabilities=effective_caps,
+                approved=approved,
+            )
+            if inspect.isawaitable(result):
+                result = await result
+            return BlenderExecutionReceipt.model_validate(result)
+
+        return asyncio.run(run())
+    capabilities = client.describe_capabilities()
+    result = client.execute_plan(
+        plan,
+        output_path=output_path,
+        capabilities=capabilities,
+        approved=approved,
+    )
+    return (
+        result
+        if isinstance(result, BlenderExecutionReceipt)
+        else BlenderExecutionReceipt.model_validate(result)
+    )
+
+
 def _run_vectorworks_plan(
     client: Any,
     plan: VectorworksExecutionPlan,
@@ -262,9 +401,11 @@ def _batch_index(batch: str, batch_names: list[str]) -> int:
 
 
 __all__ = [
+    "BlenderBuilder",
     "TargetExecutor",
     "VectorworksBuilder",
     "combine_target_executors",
+    "make_blender_batch_executor",
     "make_vectorworks_batch_executor",
     "missing_target_executor",
 ]

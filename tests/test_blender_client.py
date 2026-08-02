@@ -20,12 +20,14 @@ from typing import Any
 
 import pytest
 
+from openbimagent.assembly.blender_plan import BlenderBuilder, BlenderCapabilities
 from openbimagent.mcp_clients.blender import (
     BlenderClientError,
     BlenderMCPClient,
     _extract_mcp_text,
     _unpack_mcp_result,
 )
+from test_compiled_utility_ir import solved_payload
 
 
 # ---------- TCP 楔子服务端(响应 canned JSON,模拟 addon socket 协议) ----------
@@ -210,6 +212,105 @@ def test_socket_execute_code_returns_snapshot_path(fake_server) -> None:
     asyncio.run(run())
     exec_calls = [c for c in fake_server.received if c["type"] == "execute_code"]
     assert exec_calls[0]["params"] == {"code": "import bpy\nbpy.ops.mesh.primitive_cube_add()"}
+
+
+def test_socket_execute_plan_sends_typed_payload_and_validates_receipt(fake_server, tmp_path) -> None:
+    plan = BlenderBuilder().build(solved_payload())
+    output = tmp_path / "case.blend"
+    fake_server.handlers["ping"] = lambda p: {"status": "success", "result": {"pong": True}}
+    fake_server.handlers["execute_plan"] = lambda p: {
+        "status": "success",
+        "result": {
+            "receipt_id": "receipt-1",
+            "plan_id": p["plan"]["plan_id"],
+            "idempotency_key": p["plan"]["idempotency_key"],
+            "canonical_sha256": p["plan"]["canonical_sha256"],
+            "status": "completed",
+            "output_path": p["output_path"],
+            "snapshot_path": None,
+            "state_path": p["output_path"] + ".openbimagent.json",
+            "applied_operations": [],
+            "confirmed_object_ids": [],
+            "semantic_snapshot": None,
+            "errors": [],
+        },
+    }
+    client = BlenderMCPClient.transport_socket(
+        port=fake_server.port,
+        timeout=3.0,
+        authorized_root=tmp_path,
+    )
+
+    async def run() -> None:
+        await client.connect()
+        try:
+            receipt = await client.execute_plan(
+                plan,
+                output_path=output,
+                approved=True,
+                capabilities=BlenderCapabilities(),
+            )
+            assert receipt.plan_id == plan.plan_id
+        finally:
+            await client.close()
+
+    asyncio.run(run())
+    call = next(item for item in fake_server.received if item["type"] == "execute_plan")
+    assert call["params"] == {
+        "plan": plan.model_dump(mode="json"),
+        "output_path": str(output.resolve()),
+        "approved": True,
+    }
+    assert "code" not in call["params"]
+
+
+def test_socket_execute_plan_rejects_scope_escape_and_receipt_tampering(fake_server, tmp_path) -> None:
+    plan = BlenderBuilder().build(solved_payload())
+    fake_server.handlers["ping"] = lambda p: {"status": "success", "result": {"pong": True}}
+    fake_server.handlers["execute_plan"] = lambda p: {
+        "status": "success",
+        "result": {
+            "receipt_id": "receipt-tampered",
+            "plan_id": "different-plan",
+            "idempotency_key": p["plan"]["idempotency_key"],
+            "canonical_sha256": p["plan"]["canonical_sha256"],
+            "status": "completed",
+            "output_path": p["output_path"],
+            "snapshot_path": None,
+            "state_path": p["output_path"] + ".openbimagent.json",
+            "applied_operations": [],
+            "confirmed_object_ids": [],
+            "semantic_snapshot": None,
+            "errors": [],
+        },
+    }
+    client = BlenderMCPClient.transport_socket(
+        port=fake_server.port,
+        timeout=3.0,
+        authorized_root=tmp_path,
+    )
+
+    async def run() -> None:
+        await client.connect()
+        try:
+            with pytest.raises(BlenderClientError, match="超出授权根目录"):
+                await client.execute_plan(
+                    plan,
+                    output_path=tmp_path.parent / "outside.blend",
+                    approved=True,
+                    capabilities=BlenderCapabilities(),
+                )
+            with pytest.raises(BlenderClientError, match="plan_id"):
+                await client.execute_plan(
+                    plan,
+                    output_path=tmp_path / "inside.blend",
+                    approved=True,
+                    capabilities=BlenderCapabilities(),
+                )
+        finally:
+            await client.close()
+
+    asyncio.run(run())
 
 
 def test_socket_screenshot_or_render_rejects_black_frame(fake_server, tmp_path) -> None:
@@ -463,6 +564,50 @@ def test_stdio_call_unpacks_stringified_result(fake_server_unused=None) -> None:
     asyncio.run(run())
     # 第二次 call_tool 应是 execute_code
     assert fake_mcp.calls[1] == {"name": "execute_code", "arguments": {"code": "import bpy"}}
+
+
+def test_stdio_execute_plan_uses_typed_tool_and_capability_envelope(tmp_path) -> None:
+    plan = BlenderBuilder().build(solved_payload())
+    output = tmp_path / "stdio.blend"
+    receipt = {
+        "receipt_id": "receipt-stdio",
+        "plan_id": plan.plan_id,
+        "idempotency_key": plan.idempotency_key,
+        "canonical_sha256": plan.canonical_sha256,
+        "status": "completed",
+        "output_path": str(output.resolve()),
+        "snapshot_path": None,
+        "state_path": str(output.resolve()) + ".openbimagent.json",
+        "applied_operations": [],
+        "confirmed_object_ids": [],
+        "semantic_snapshot": None,
+        "errors": [],
+    }
+    fake_mcp = _FakeMCPClient([
+        _FakeCallToolResult(structured_content={"result": '{"pong": true}'}),
+        _FakeCallToolResult(structured_content={"result": json.dumps(receipt)}),
+    ])
+    client = BlenderMCPClient.transport_stdio(port=9887, authorized_root=tmp_path)
+    client._mcp_client = fake_mcp  # type: ignore[private-name-access]
+    client._mcp_cm = fake_mcp  # type: ignore[private-name-access]
+
+    async def run() -> None:
+        await client.connect()
+        try:
+            result = await client.execute_plan(
+                plan,
+                output_path=output,
+                approved=True,
+                capabilities={"typed_execution": BlenderCapabilities().model_dump(mode="json")},
+            )
+            assert result.receipt_id == "receipt-stdio"
+        finally:
+            await client.close()
+
+    asyncio.run(run())
+    assert fake_mcp.calls[1]["name"] == "execute_plan"
+    assert fake_mcp.calls[1]["arguments"]["approved"] is True
+    assert "code" not in fake_mcp.calls[1]["arguments"]
 
 
 def test_stdio_call_raises_on_is_error() -> None:
