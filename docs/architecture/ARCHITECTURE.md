@@ -141,6 +141,8 @@ Domain Pack 不是提示词包。提示词和 Playbook 负责语义澄清、角�
 
 **M1 G1 确定性宿主边界**：Agent Core 中的 `VectorworksBuilder` 将 Solver 已验证的完整 `CompiledUtilityIR v1` 编译为 `VectorworksExecutionPlan v1`。计划只允许版本化 typed operations（创建对象、写记录、连接拓扑），携带 canonical SHA-256、稳定对象 ID 和幂等键；宿主适配器执行前必须校验协议/API 版本、单位、operation/object capability 及引用闭合。该主链不允许自然语言或自由 `vs.*` 脚本，缺失 Compiled IR 时失败关闭；旧 `execute_vs_code` 路径仅作兼容，不能作为 G1 验收证据。真实 Vectorworks 适配仍受 G6 审批门约束。
 
+**M1 G2 统一交付协议**：Subagent Runtime 与 Pipeline/Core Loop 共用 `ArtifactManifest v1.1`，不维护第二套交付清单。每个记录包含受控相对路径、媒体类型、生成者、source attempt、依赖、状态、size 和 SHA-256；Manifest 可携带 lineage/attempt/resume、幂等键、canonical 语义摘要与 Domain Gate 状态。交付先限制路径在 workdir 内、重算声明 hash，再复制到不可变目录；同键同语义复用，同键异义冲突，不同键保留独立历史。若工件已原子发布而 Manifest 尚未发布，恢复流程只在 hash 与原语义一致时重建记录。完成态只接受 completed 工件，`FAIL/UNKNOWN` 始终拒绝；`SKIPPED` 仅表示 Playbook 没有启用领域硬门禁，必须与显式 `domain_gate_required=false` 同时成立并原样审计，不能伪装为领域 `PASS`。
+
 ## 6. 子代理、trace 与事件协议
 
 - 子代理 = Markdown + YAML frontmatter;禁嵌套;并发 ≤4;child session;返回 = 摘要 + 工件路径 + <200 字核心提示。

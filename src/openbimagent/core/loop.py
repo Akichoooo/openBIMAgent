@@ -182,11 +182,41 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "type": "function",
         "function": {
             "name": "deliver",
-            "description": "交付门禁(C5):核对交付清单。",
+            "description": "交付门禁(C5):校验 Domain Gate、hash 与路径，提交统一不可变 Artifact Manifest。",
             "parameters": {
                 "type": "object",
-                "properties": {"manifest": {"type": "array", "items": {"type": "string"}}},
-                "required": ["manifest"],
+                "additionalProperties": False,
+                "properties": {
+                    "artifacts": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {
+                                "path": {"type": "string"},
+                                "kind": {"type": "string"},
+                                "media_type": {"type": "string"},
+                                "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                                "dependencies": {"type": "array", "items": {"type": "string"}},
+                                "status": {"const": "completed"},
+                            },
+                            "required": ["path", "kind", "media_type", "sha256"],
+                        },
+                    },
+                    "idempotency_key": {"type": "string"},
+                    "domain_gate_status": {"const": "PASS"},
+                    "source_attempt_id": {"type": "string"},
+                    "lineage_id": {"type": "string"},
+                    "attempt_number": {"type": "integer", "minimum": 1},
+                    "resumed_from_request_id": {"type": "string"},
+                },
+                "required": [
+                    "artifacts",
+                    "idempotency_key",
+                    "domain_gate_status",
+                    "source_attempt_id",
+                ],
             },
         },
     },
@@ -547,8 +577,37 @@ class AgentLoop:
         return _tool_result(status, envelope.llm_summary(), envelope.ui_dict())
 
     def _tool_deliver(self, args: dict[str, Any]) -> dict[str, Any]:
-        """TODO(M0 阶段2+):接 deliver.gate 交付门禁(C5,人审签)。"""
-        raise NotImplementedError("TODO(M0 阶段2+): deliver 接入交付门禁")
+        """G2 确定性交付：统一 Artifact Manifest、路径/hash/Domain Gate 与幂等门禁。"""
+        from openbimagent.deliver.manifest import commit_delivery_manifest
+
+        result = commit_delivery_manifest(
+            workdir=self.workdir,
+            artifacts=list(args["artifacts"]),
+            idempotency_key=str(args["idempotency_key"]),
+            domain_gate_status=str(args["domain_gate_status"]),
+            request_id=self.session.session_id,
+            source_attempt_id=str(args["source_attempt_id"]),
+            lineage_id=args.get("lineage_id"),
+            attempt_number=args.get("attempt_number"),
+            resumed_from_request_id=args.get("resumed_from_request_id"),
+        )
+        manifest = result.manifest
+        return _tool_result(
+            "ok",
+            (
+                f"delivery manifest {'reused' if result.reused else 'committed'}: "
+                f"records={len(manifest.records)} path={result.manifest_path}"
+            ),
+            {
+                "manifest_path": str(result.manifest_path),
+                "manifest_version": manifest.manifest_version,
+                "idempotency_key": manifest.idempotency_key,
+                "semantic_sha256": manifest.semantic_sha256,
+                "record_count": len(manifest.records),
+                "reused": result.reused,
+                "status": manifest.status.value,
+            },
+        )
 
     # ---------- 事件辅助 ----------
 

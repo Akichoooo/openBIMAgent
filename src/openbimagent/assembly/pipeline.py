@@ -13,7 +13,9 @@ Ctrl+C 中断 → 落 checkpoint 事件(MESSAGE 形态)→ 返回 interrupted=Tr
 
 from __future__ import annotations
 
+import hashlib
 import json
+import mimetypes
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,6 +35,7 @@ from openbimagent.assembly.target_executor import (
 )
 from openbimagent.clarify import slots as clarify
 from openbimagent.deliver.gate import DeliveryReport, check_deliverables, make_acceptance_fn
+from openbimagent.deliver.manifest import commit_delivery_manifest
 from openbimagent.domain_gate import DomainGateReport, evaluate_domain_gate
 from openbimagent.orchestrator.dispatch import PlanRunResult, run_plan
 from openbimagent.planner.instantiate import PlanArtifacts, instantiate, load_playbook
@@ -75,6 +78,7 @@ class PipelineResult:
     compiled_utility_ir: Path | None = None
     municipal_rule_set: Path | None = None
     domain_gate_report: Path | None = None
+    artifact_manifest: Path | None = None
     phases_log: tuple[tuple[str, str], ...] = ()  # (phase_name, outcome_note) 序列
 
 
@@ -441,7 +445,35 @@ def run_pipeline(
 
     accepted_fn = make_acceptance_fn(store, playbook["acceptance"])
     delivery = check_deliverables(playbook["deliverables"], out, accepted_fn=accepted_fn)
-    _phase("deliver", f"ok={delivery.ok} accepted={delivery.accepted} missing={delivery.missing}")
+    artifact_manifest_path: Path | None = None
+    if delivery.ok and plan_run is not None and plan_run.ok:
+        resolved_artifacts = [
+            {
+                "path": str(Path(path).resolve().relative_to(out.resolve())),
+                "kind": "deliverable",
+                "media_type": _media_type(Path(path)),
+                "sha256": _file_sha256(Path(path)),
+                "dependencies": [],
+                "status": "completed",
+            }
+            for path in delivery.resolved.values()
+        ]
+        delivery_key = f"pipeline-delivery:{store.session_id}"
+        delivery_result = commit_delivery_manifest(
+            workdir=out,
+            artifacts=resolved_artifacts,
+            idempotency_key=delivery_key,
+            domain_gate_status=domain_report.status.value,
+            request_id=store.session_id,
+            source_attempt_id=store.session_id,
+            domain_gate_required=bool(domain_report.required),
+        )
+        artifact_manifest_path = delivery_result.manifest_path
+    _phase(
+        "deliver",
+        f"ok={delivery.ok} accepted={delivery.accepted} missing={delivery.missing} "
+        f"manifest={artifact_manifest_path.name if artifact_manifest_path else None}",
+    )
 
     return PipelineResult(
         ok=(plan_run.ok if plan_run is not None else False) and delivery.ok,
@@ -455,6 +487,7 @@ def run_pipeline(
         compiled_utility_ir=compiled_utility_ir_path,
         municipal_rule_set=municipal_rule_set_path,
         domain_gate_report=domain_gate_report_path,
+        artifact_manifest=artifact_manifest_path,
         phases_log=tuple(phases_log),
     )
 
@@ -545,6 +578,14 @@ def _load_solver_input(value: dict[str, Any] | Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise TypeError("utility_solver_input JSON 根必须是 object")
     return payload
+
+
+def _file_sha256(path: Path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _media_type(path: Path) -> str:
+    return mimetypes.guess_type(Path(path).name)[0] or "application/octet-stream"
 
 
 def _write_json_artifact(path: Path, payload: dict[str, Any]) -> None:

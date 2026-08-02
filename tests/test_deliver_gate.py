@@ -50,6 +50,7 @@ def test_found_and_missing_by_direct_name(tmp_path) -> None:
     _touch(tmp_path, "asset.blend")
     report = check_deliverables(["asset.blend", "hero.png"], tmp_path, accepted_fn=lambda: True)
     assert report.items == {"asset.blend": True, "hero.png": False}
+    assert report.resolved["asset.blend"].endswith("asset.blend")
     assert report.missing == ("hero.png",)
     assert report.accepted is True  # 判定函数注入:accepted 但缺项仍不放行
     assert report.ok is False

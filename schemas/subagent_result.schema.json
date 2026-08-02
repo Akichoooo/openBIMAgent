@@ -25,9 +25,30 @@
           "artifact_id": { "type": "string", "minLength": 1 },
           "kind": { "type": "string", "minLength": 1, "maxLength": 128 },
           "path": { "type": "string", "minLength": 1 },
+          "relative_path": { "type": ["string", "null"], "minLength": 1, "maxLength": 512 },
+          "media_type": { "type": ["string", "null"], "minLength": 1, "maxLength": 255 },
           "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
           "size_bytes": { "type": "integer", "minimum": 0 },
-          "immutable": { "const": true }
+          "immutable": { "const": true },
+          "generator": {
+            "oneOf": [
+              { "type": "null" },
+              {
+                "type": "object",
+                "required": ["protocol_version", "actor_id", "actor_type"],
+                "additionalProperties": false,
+                "properties": {
+                  "protocol_version": { "type": "string", "pattern": "^1(\\.\\d+)?$" },
+                  "actor_id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:@/-]+$" },
+                  "actor_type": { "enum": ["human", "agent", "service", "runtime", "legacy"] },
+                  "display_name": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 }
+                }
+              }
+            ]
+          },
+          "source_attempt_id": { "type": ["string", "null"], "minLength": 1, "maxLength": 256 },
+          "dependencies": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+          "status": { "enum": ["completed", "partial", "failed"] }
         }
       }
     },

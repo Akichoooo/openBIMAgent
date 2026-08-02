@@ -950,6 +950,7 @@ def test_pipeline_with_mock_blender_full_success(tmp_path) -> None:
     assert result.plan_run.ok is True
     assert result.delivery is not None
     assert result.delivery.ok is True
+    assert result.artifact_manifest is not None and result.artifact_manifest.is_file()
 
 
 def test_pipeline_ctrl_c_drops_checkpoint(tmp_path) -> None:

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://openbimagent.local/schemas/artifact_manifest.schema.json",
-  "title": "ArtifactManifestV1",
+  "title": "ArtifactManifestV1_1",
   "type": "object",
   "required": ["manifest_version", "request_id", "agent_id", "created_at", "records"],
   "additionalProperties": false,
@@ -10,23 +10,59 @@
     "request_id": { "type": "string", "minLength": 1 },
     "agent_id": { "type": "string", "minLength": 1 },
     "created_at": { "type": "string", "format": "date-time" },
+    "generator": { "oneOf": [{ "$ref": "#/$defs/actorRef" }, { "type": "null" }] },
+    "lineage_id": { "type": ["string", "null"], "minLength": 1, "maxLength": 256 },
+    "attempt_number": { "type": ["integer", "null"], "minimum": 1 },
+    "resumed_from_request_id": { "type": ["string", "null"], "minLength": 1, "maxLength": 256 },
+    "status": { "enum": ["completed", "partial", "failed"] },
+    "idempotency_key": { "type": ["string", "null"], "minLength": 1, "maxLength": 256 },
+    "semantic_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+    "domain_gate_status": { "type": ["string", "null"], "enum": ["PASS", "FAIL", "UNKNOWN", "SKIPPED", null] },
     "records": {
       "type": "array",
       "items": { "$ref": "#/$defs/artifactRecord" }
     }
   },
   "$defs": {
+    "actorRef": {
+      "type": "object",
+      "required": ["protocol_version", "actor_id", "actor_type"],
+      "additionalProperties": false,
+      "properties": {
+        "protocol_version": { "type": "string", "pattern": "^1(\\.\\d+)?$" },
+        "actor_id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:@/-]+$" },
+        "actor_type": { "enum": ["human", "agent", "service", "runtime", "legacy"] },
+        "display_name": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 }
+      }
+    },
     "artifactRecord": {
       "type": "object",
-      "required": ["artifact_id", "kind", "path", "sha256", "size_bytes", "immutable"],
+      "required": [
+        "artifact_id",
+        "kind",
+        "path",
+        "sha256",
+        "size_bytes",
+        "immutable"
+      ],
       "additionalProperties": false,
       "properties": {
         "artifact_id": { "type": "string", "minLength": 1 },
         "kind": { "type": "string", "minLength": 1, "maxLength": 128 },
         "path": { "type": "string", "minLength": 1 },
+        "relative_path": { "type": ["string", "null"], "minLength": 1, "maxLength": 512 },
+        "media_type": { "type": ["string", "null"], "minLength": 1, "maxLength": 255 },
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "size_bytes": { "type": "integer", "minimum": 0 },
-        "immutable": { "const": true }
+        "immutable": { "const": true },
+        "generator": { "oneOf": [{ "$ref": "#/$defs/actorRef" }, { "type": "null" }] },
+        "source_attempt_id": { "type": ["string", "null"], "minLength": 1, "maxLength": 256 },
+        "dependencies": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "status": { "enum": ["completed", "partial", "failed"] }
       }
     }
   }

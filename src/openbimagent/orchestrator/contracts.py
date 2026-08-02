@@ -9,14 +9,16 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from pathlib import PurePosixPath
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from openbimagent.orchestrator.actor import ActorRef
 from openbimagent.session.schema import uuid7
 
 SUBAGENT_PROTOCOL_VERSION = "1.1"
-ARTIFACT_MANIFEST_VERSION = "1.0"
+ARTIFACT_MANIFEST_VERSION = "1.1"
 MAX_SUBAGENT_HINT_CHARS = 200
 
 
@@ -120,21 +122,44 @@ class SubagentHandle(BaseModel):
         return self
 
 
+class ArtifactStatus(StrEnum):
+    COMPLETED = "completed"
+    PARTIAL = "partial"
+    FAILED = "failed"
+
+
 class ArtifactRecord(BaseModel):
-    """不可变工件记录；path 指向 Runtime 管理的稳定副本。"""
+    """统一不可变工件记录；path 为稳定副本，relative_path 用于跨机器审计。"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     artifact_id: str = Field(min_length=1)
     kind: str = Field(min_length=1, max_length=128)
     path: str = Field(min_length=1)
+    relative_path: str | None = Field(default=None, min_length=1, max_length=512)
+    media_type: str | None = Field(default=None, min_length=1, max_length=255)
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     size_bytes: int = Field(ge=0)
     immutable: bool = True
+    generator: ActorRef | None = None
+    source_attempt_id: str | None = Field(default=None, min_length=1, max_length=256)
+    dependencies: tuple[str, ...] = ()
+    status: ArtifactStatus = ArtifactStatus.COMPLETED
+
+    @field_validator("relative_path")
+    @classmethod
+    def _relative_path_is_portable(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.replace("\\", "/")
+        path = PurePosixPath(normalized)
+        if path.is_absolute() or ".." in path.parts or normalized.startswith("/"):
+            raise ValueError("artifact relative_path 必须是无越界的 POSIX 相对路径")
+        return str(path)
 
 
 class ArtifactManifest(BaseModel):
-    """一次子代理运行的工件清单。"""
+    """统一 Artifact Manifest；兼容 Subagent Runtime，并可承载通用 deliver。"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -143,6 +168,27 @@ class ArtifactManifest(BaseModel):
     agent_id: str = Field(min_length=1)
     created_at: datetime
     records: tuple[ArtifactRecord, ...] = ()
+    generator: ActorRef | None = None
+    lineage_id: str | None = Field(default=None, min_length=1, max_length=256)
+    attempt_number: int | None = Field(default=None, ge=1)
+    resumed_from_request_id: str | None = Field(default=None, min_length=1, max_length=256)
+    status: ArtifactStatus = ArtifactStatus.COMPLETED
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=256)
+    semantic_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    domain_gate_status: str | None = Field(default=None, pattern=r"^(PASS|FAIL|UNKNOWN|SKIPPED)$")
+
+    @model_validator(mode="after")
+    def _delivery_metadata_is_consistent(self) -> "ArtifactManifest":
+        if self.attempt_number is not None and self.lineage_id is None:
+            raise ValueError("Manifest attempt_number 必须同时携带 lineage_id")
+        if self.status is ArtifactStatus.COMPLETED and any(
+            record.status is not ArtifactStatus.COMPLETED for record in self.records
+        ):
+            raise ValueError("completed Manifest 不能包含 partial/failed Artifact")
+        if self.domain_gate_status is not None and self.status is ArtifactStatus.COMPLETED:
+            if self.domain_gate_status not in {"PASS", "SKIPPED"}:
+                raise ValueError("completed delivery Manifest 要求 Domain Gate PASS 或不适用 SKIPPED")
+        return self
 
 
 class SubagentError(BaseModel):
@@ -214,6 +260,7 @@ __all__ = [
     "SUBAGENT_PROTOCOL_VERSION",
     "ArtifactManifest",
     "ArtifactRecord",
+    "ArtifactStatus",
     "ContextMode",
     "ExecutionMode",
     "SubagentError",

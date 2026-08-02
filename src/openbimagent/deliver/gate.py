@@ -33,6 +33,7 @@ class DeliveryReport:
     ok: bool  # 门禁总判定:全部 found 且 accepted 才放行
     accepted: bool  # C5 验收判定(accepted_fn 结果;无判定函数一律 False)
     items: dict[str, bool] = field(default_factory=dict)  # deliverable → found(True)/missing(False)
+    resolved: dict[str, str] = field(default_factory=dict)  # deliverable → 已解析本地文件路径
     notes: str = ""
 
     @property
@@ -157,8 +158,13 @@ def check_deliverables(
     """
     root = Path(artifacts_dir)
     items: dict[str, bool] = {}
+    resolved: dict[str, str] = {}
     for d in deliverables:
-        items[str(d)] = _find_deliverable(str(d), root) is not None if root.is_dir() else False
+        name = str(d)
+        path = _find_deliverable(name, root) if root.is_dir() else None
+        items[name] = path is not None
+        if path is not None:
+            resolved[name] = str(path.resolve())
     accepted = bool(accepted_fn()) if accepted_fn is not None else False
     missing = [name for name, found in items.items() if not found]
     ok = accepted and not missing
@@ -169,7 +175,7 @@ def check_deliverables(
         parts.append("无 accepted 验收记录(C5):未过双环验收的产物一律拒收")
     if ok:
         parts.append(f"全部 {len(items)} 项齐备且已验收,放行进入人审签")
-    return DeliveryReport(ok=ok, accepted=accepted, items=items, notes=";".join(parts))
+    return DeliveryReport(ok=ok, accepted=accepted, items=items, resolved=resolved, notes=";".join(parts))
 
 
 __all__ = [
