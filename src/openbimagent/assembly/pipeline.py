@@ -315,6 +315,12 @@ def run_pipeline(
     effective_approval = approval_fn if not yes else None
 
     targets = list(playbook.get("targets") or ["blender"])
+    typed_vectorworks_requires_compiled_ir = (
+        "vectorworks" in targets
+        and vectorworks_builder is not None
+        and hasattr(vectorworks_builder, "build")
+        and utility_solver is None
+    )
     executors: dict[str, Any] = {}
     if "blender" in targets:
         if blender_client is None:
@@ -348,21 +354,40 @@ def run_pipeline(
                 "vectorworks", "缺少 vectorworks_builder，不能从语义 IR 伪造 BIM 代码"
             )
         else:
-            executors["vectorworks"] = make_vectorworks_batch_executor(
-                ir=ir,
-                batch_names=batch_names,
-                work_dir=out / "batches" / "vectorworks",
-                client=vectorworks_client,
-                builder_fn=vectorworks_builder,
-                approval_fn=effective_approval,
-                auto_approve=yes,
-            )
+            is_typed_vectorworks_builder = hasattr(vectorworks_builder, "build")
+            if is_typed_vectorworks_builder and utility_solver is None:
+                executors["vectorworks"] = missing_target_executor(
+                    "vectorworks",
+                    "typed VectorworksBuilder 要求受 Solver 验证的 CompiledUtilityIR；禁止回退 Scene Graph IR",
+                )
+            else:
+                vectorworks_ir = (
+                    utility_solver.compiled_ir.model_dump(mode="json")
+                    if is_typed_vectorworks_builder and utility_solver is not None
+                    else ir
+                )
+                executors["vectorworks"] = make_vectorworks_batch_executor(
+                    ir=vectorworks_ir,
+                    batch_names=batch_names,
+                    work_dir=out / "batches" / "vectorworks",
+                    client=vectorworks_client,
+                    builder_fn=vectorworks_builder,
+                    approval_fn=effective_approval,
+                    auto_approve=yes,
+                )
 
     missing_targets = [
         target
         for target in targets
         if (target == "blender" and blender_client is None)
-        or (target == "vectorworks" and (vectorworks_client is None or vectorworks_builder is None))
+        or (
+            target == "vectorworks"
+            and (
+                vectorworks_client is None
+                or vectorworks_builder is None
+                or typed_vectorworks_requires_compiled_ir
+            )
+        )
     ]
     if missing_targets:
         _phase("target_dispatch", f"配置不完整: missing={missing_targets}")

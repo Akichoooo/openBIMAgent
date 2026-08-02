@@ -22,6 +22,7 @@ import pytest
 
 from openbimagent.assembly.batch_executor import make_batch_executor
 from openbimagent.assembly.builder import make_builder_fn
+from openbimagent.assembly.vectorworks_plan import FakeVectorworksExecutor, VectorworksBuilder
 from openbimagent.assembly.pipeline import (
     _resolve_domain_pack_resource,
     _resolve_output_artifact,
@@ -693,6 +694,65 @@ def test_pipeline_complete_collision_context_passes_production_gate_and_dispatch
     assert "orchestrate" in [name for name, _ in result.phases_log]
     assert "target_dispatch" in [name for name, _ in result.phases_log]
 
+
+
+def test_pipeline_typed_vectorworks_uses_compiled_utility_ir(tmp_path) -> None:
+    """G1 typed 主链只消费 Solver 的 CompiledUtilityIR，并以离线 executor 闭环。"""
+    source_pack = Path(__file__).resolve().parents[1] / "domain_packs" / "municipal_utility"
+    temp_pack = tmp_path / "municipal_vectorworks_only"
+    (temp_pack / "knowledge").mkdir(parents=True)
+    playbook = temp_pack / "playbook.md"
+    playbook.write_text(
+        (source_pack / "playbook.md")
+        .read_text(encoding="utf-8")
+        .replace("targets: [blender, vectorworks]", "targets: [vectorworks]"),
+        encoding="utf-8",
+    )
+    (temp_pack / "knowledge" / "constraints.yaml").write_bytes(
+        (source_pack / "knowledge" / "constraints.yaml").read_bytes()
+    )
+    client = FakeVectorworksExecutor()
+
+    result = run_pipeline(
+        playbook_path=playbook,
+        out_dir=tmp_path / "out",
+        utility_solver_input=_municipal_solver_input(
+            collision_context={"coverage": "complete", "obstacles": []}
+        ),
+        vectorworks_client=client,
+        vectorworks_builder=VectorworksBuilder(),
+        input_func=lambda p: "",
+        sessions_dir=tmp_path / "sessions",
+        yes=True,
+    )
+
+    assert result.domain_gate is not None and result.domain_gate.status.value == "PASS"
+    assert result.plan_run is not None and result.plan_run.ok is True
+    assert client.execute_calls == 1
+    assert (tmp_path / "out" / "batches" / "vectorworks" / "batch_01_vectorworks_receipt.json").is_file()
+
+
+def test_pipeline_typed_vectorworks_without_solver_fails_closed(tmp_path) -> None:
+    """typed Builder 缺少 CompiledUtilityIR 时不允许拿 Scene Graph IR 顶替。"""
+    playbook = tmp_path / "vectorworks_without_solver.md"
+    playbook.write_text(
+        SINGLE.read_text(encoding="utf-8").replace("targets: [blender]", "targets: [vectorworks]"),
+        encoding="utf-8",
+    )
+    client = FakeVectorworksExecutor()
+    result = run_pipeline(
+        playbook_path=playbook,
+        out_dir=tmp_path / "out",
+        vectorworks_client=client,
+        vectorworks_builder=VectorworksBuilder(),
+        input_func=lambda p: "",
+        sessions_dir=tmp_path / "sessions",
+        yes=True,
+    )
+
+    assert result.plan_run is not None and result.plan_run.ok is False
+    assert client.execute_calls == 0
+    assert any("配置不完整" in note for name, note in result.phases_log if name == "target_dispatch")
 
 
 def test_pipeline_clash_fail_blocks_before_targets(tmp_path) -> None:

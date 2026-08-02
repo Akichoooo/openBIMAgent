@@ -22,14 +22,15 @@ INVALID_PLAN = {
 
 
 def test_loads_all_schemas() -> None:
-    """schemas/ 目录 21 个 JSON Schema 全部加载，含 Solver、Rule Set 与 compiled IR。"""
+    """schemas/ 目录全部 JSON Schema 均加载，关键版本化协议必须存在。"""
     names = gate.SchemaGate().schema_names()
-    assert len(names) == 21
+    assert len(names) == 22
     assert "plan.schema.json" in names
     assert "scad_scene_ir.schema.json" in names  # 阶段3b 新增:SCAD 环编译 IR
     assert "compiled_utility_ir.schema.json" in names
     assert "utility_solver_input.schema.json" in names
     assert "municipal_rule_set.schema.json" in names
+    assert "vectorworks_execution_plan.schema.json" in names
     assert "subagent_request.schema.json" in names
     assert "subagent_result.schema.json" in names
     assert "artifact_manifest.schema.json" in names

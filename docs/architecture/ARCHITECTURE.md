@@ -139,6 +139,8 @@ Domain Pack 不是提示词包。提示词和 Playbook 负责语义澄清、角�
 5. **AGENTS.md 坑清单** + 官方文档/示例 RAG(渐进披露)。
 6. **能力披露**:同款 `describe_capabilities`(server 版本/VW 宿主版本/工具集/限制/坑)。
 
+**M1 G1 确定性宿主边界**：Agent Core 中的 `VectorworksBuilder` 将 Solver 已验证的完整 `CompiledUtilityIR v1` 编译为 `VectorworksExecutionPlan v1`。计划只允许版本化 typed operations（创建对象、写记录、连接拓扑），携带 canonical SHA-256、稳定对象 ID 和幂等键；宿主适配器执行前必须校验协议/API 版本、单位、operation/object capability 及引用闭合。该主链不允许自然语言或自由 `vs.*` 脚本，缺失 Compiled IR 时失败关闭；旧 `execute_vs_code` 路径仅作兼容，不能作为 G1 验收证据。真实 Vectorworks 适配仍受 G6 审批门约束。
+
 ## 6. 子代理、trace 与事件协议
 
 - 子代理 = Markdown + YAML frontmatter;禁嵌套;并发 ≤4;child session;返回 = 摘要 + 工件路径 + <200 字核心提示。

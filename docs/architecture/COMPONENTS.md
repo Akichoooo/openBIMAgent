@@ -67,7 +67,15 @@
 - 障碍物保持为 Solver Context，不进入 `CompiledUtilityIR` 交付实体集合；Evidence 保存障碍物 ID、实测水平净距、规则键、标准/表号、规范副本 SHA-256、原表定位和 Rule Set hash。安全措施减距尚无独立审批协议，不能自动放宽；水力参数仍缺失，`hydraulics_in_spec=UNKNOWN`。
 - Pipeline 只在 Playbook 声明 Solver 时执行，并把 `rule_source` 限制在当前 Domain Pack 内，拒绝绝对路径、`..` 越界、缺文件、Rule Set Schema/版本漂移。结果落盘 `municipal_rule_set.json`、`compiled_utility_ir.json` 与 `domain_gate_report.json`；Solver 已判定的 PASS/FAIL 不允许被外部 evidence 覆盖，外部检查器只能补齐 UNKNOWN。
 
-### 2.5 orchestrator(子代理调度)
+### 2.5 assembly.vectorworks_plan(G1 typed 宿主边界)
+
+- `VectorworksBuilder` 只接受通过严格模型校验的完整 `CompiledUtilityIR v1`，按 stable ID 排序并生成 `VectorworksExecutionPlan v1`；计划显式包含对象类型、图层、分类、记录、IFC 语义、单位、坐标、尺寸和拓扑，不含自然语言命令或自由脚本。
+- `vectorworks_execution_plan.schema.json` 与 Pydantic 模型共同限制操作 allowlist：`create_object`、`set_record`、`connect_topology`；未知操作、未知对象类型、版本漂移、字段缺失、hash 篡改和引用不闭合均失败关闭。
+- canonical SHA-256 排除其派生的 `plan_id/idempotency_key`，相同 IR 不受集合顺序影响；幂等键固定为 `vw-plan:<sha256>`。宿主执行前必须对协议版本、Vectorworks 2024 API、单位和 capability allowlist 预检。
+- `FakeVectorworksExecutor` 提供离线 receipt、部分成功注入、补偿提示和幂等恢复；重试跳过已应用 operation，完成后同计划复用 receipt，同 stable object ID 不同语义严格冲突。
+- Pipeline 的 typed 主路径只注入 Solver 生成的完整 `CompiledUtilityIR`；缺失时拒绝拿 Scene Graph IR 顶替。旧三参数 `vs.*` Builder 仅保留兼容路径，不能作为 G1 证据，typed executor 也不得回退 `execute_code`。
+
+### 2.6 orchestrator(子代理调度)
 
 - 角色文件 = Markdown + YAML frontmatter。基础字段:`name/model/tools/permissions`;Runtime v1 字段:`context_mode/max_turns/artifact_contract/nesting`;正文为 system prompt。角色文件是受信任的能力上限,调用者不能通过请求提升 model/tools/permissions。
 - 派发:PASS / FIX(带可执行返工指令)/ ESCALATE(升模型或问人);禁嵌套;并发 ≤4。

@@ -18,10 +18,20 @@ MCP 写操作 / execute_code / deliver 前 CLI 审批(y/N,--yes 跳过);Ctrl+C �
 from openbimagent.assembly.batch_executor import make_batch_executor
 from openbimagent.assembly.builder import BuilderError, make_builder_fn
 from openbimagent.assembly.pipeline import PipelineResult, run_pipeline
+from openbimagent.assembly.vectorworks_plan import (
+    FakeVectorworksExecutor,
+    VectorworksBuilder,
+    VectorworksExecutionPlan,
+    VectorworksExecutionReceipt,
+)
 
 __all__ = [
     "BuilderError",
+    "FakeVectorworksExecutor",
     "PipelineResult",
+    "VectorworksBuilder",
+    "VectorworksExecutionPlan",
+    "VectorworksExecutionReceipt",
     "make_batch_executor",
     "make_builder_fn",
     "run_pipeline",
