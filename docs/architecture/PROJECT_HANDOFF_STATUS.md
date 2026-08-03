@@ -152,29 +152,22 @@ docs/architecture/M1_MASTER_PROMPT.md
 outputs/M1_G6真实宿主预检与阻塞报告.md
 ```
 
-T6 提交仅可在明确审查 staged diff 后包含本 Gate 自己新增/修改的代码、Schema、测试、验收报告和实时交接状态；禁止远端推送。不要删除或暂存 `.workbuddy/`，不要绕过 Windows 安全删除失败关闭。
+每个 Gate 仅可在明确审查 staged diff 后提交本 Gate 自己新增或修改的代码、Schema、测试、验收报告和实时交接状态；禁止远端推送。不要删除或暂存 `.workbuddy/`，不要绕过 Windows 安全删除失败关闭。
 
-## 8. 新会话提示词（复制全文）
+## 8. 新会话低上下文入口
+
+完整的后续全阶段执行提示词已独立保存：
 
 ```text
-你现在接管 openBIMAgent 的阶段性长任务，直接进入 Craft 执行模式。工作区：D:\devloop\workSpace\app_codex\GenerativeBIM\openBIMAgent。除非遇到真实宿主、凭据/付费/系统权限、权威规范缺失或不可逆产品取舍，否则不要停在计划或普通确认，持续执行、测试、验收、记录和本地提交；禁止推送远端。
+outputs/openBIMAgent_后续全阶段低上下文执行提示词.txt
+```
 
-先读取 docs/architecture/PROJECT_HANDOFF_STATUS.md、M1_5_EXECUTION_CONTRACT.md、PROJECT_MASTER_WORKFLOW.md、ARCHITECTURE.md、COMPONENTS.md、domain_packs/municipal_utility/knowledge/constraints.yaml 及 .workbuddy/memory/ 最近记录，并重新核对 git status、HEAD、受保护差异、D:\devloop\G6_Test 工件、Schema、pytest、Ruff、compileall。不要盲目重做已通过切片，也不要把历史测试数字当成本轮证据。
+新会话直接复制该文件全文。它覆盖 `T7 → Vectorworks G6 → M1 G7 → M2 → M3 → 最终文档压缩`，并要求以本文实时状态为准、重新实测 Git/测试/Schema/宿主工件，不重复加载或输出长历史总结。
 
-当前准确状态：
-- HEAD 以 `git rev-parse HEAD` 实测为准；分支 main；只允许本地提交，禁止推送远端。
-- M1 G1-G5 已完成；Blender 真实 G6 已通过。
-- Vectorworks G6 GUI、真实 .vwx/sidecar、幂等重放和真实双宿主比较仍 DEFERRED/IN PROGRESS；G7 FINAL BLOCKED。不得用离线结果或模拟器包装为 PASS。
-- M1.5 T1-T6 已 OFFLINE PASS。T6 已完成版本化规则证据、MU-DRAIN-007 production verification、水平/垂直/道路/轨道/河道/构筑物规则、减距审批、T6 路线→网络→水力→Domain Gate→RuleEvidence→typed host/IFC 离线链路。
-- T6 最终全仓门禁为 680 passed、4 skipped、1 warning；后续代码变化后必须重跑，不得复用旧数字。
+最短恢复指令：
 
-当前唯一 Gate：M1.5 T7“规模化 benchmark 与总验收”。先建立正常/边界/冲突/证据缺失/规则歧义场景和 25/100 节点网络，冻结期望状态与 canonical hashes，再执行正确性、确定性、恢复性、性能、离线宿主一致性和总验收。不得修改 `CompiledUtilityIR v1` 或放宽 T6 规则/审批失败关闭边界来迁就 benchmark。
-
-每个 Gate 先负向后正向，严格保持 PASS/FAIL/UNKNOWN/SKIPPED，UNKNOWN 不得包装为 PASS。修改后重跑受影响测试和全仓 pytest、Schema Gate、Ruff、compileall、git diff --check；报告真实结果。提交前逐项审查 staged diff，不得混入 README、既有架构/M1 文档、.workbuddy、旧 G6 报告和其他接管前差异。
-
-若 JY 后续提供真实 Vectorworks 工件，立即暂停 T7 普通工作并先完成 G6 真实验收：文件/SHA、receipt、13/13 operations、6 对象、米制、图层、records、geometry、topology、SemanticSnapshot、幂等重放和与 Blender 的严格比较。工件不存在时保留 DEFERRED，不伪造、不替代。
-
-现在开始：先完成接管审计并直接进入 T7 benchmark 工件设计与负向场景，不要重复输出长历史总结。
+```text
+读取 docs/architecture/PROJECT_HANDOFF_STATUS.md 和 outputs/openBIMAgent_后续全阶段低上下文执行提示词.txt，按提示词直接接管执行；若真实 Vectorworks 工件已到位先做 G6，否则从 M1.5 T7 benchmark 继续。不要复述长历史，不推送远端。
 ```
 
 ## 9. 维护规则
