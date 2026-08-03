@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/hydraulic_solver_result.schema.json",
+  "title": "HydraulicSolverResult",
+  "description": "M1.5 T5 重力污水管网水力 Solver v0.1 结果。容量不足要求返工；最小流速规则未获 production verification 时保持 UNKNOWN；不得携带几何修改。",
+  "type": "object",
+  "required": [
+    "protocol_version", "request_id", "solver_name", "solver_version", "calculation_model",
+    "input_sha256", "source_ir_sha256", "status", "scenarios", "hydraulics_in_spec",
+    "geometry_mutated", "detail"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": {"const": "0.1"},
+    "request_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "solver_name": {"const": "municipal-gravity-hydraulic-solver"},
+    "solver_version": {"const": "0.1.0"},
+    "calculation_model": {"const": "manning_uniform_open_channel_si"},
+    "input_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "source_ir_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "status": {"enum": ["calculated", "rework_required"]},
+    "scenarios": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/scenario"}},
+    "hydraulics_in_spec": {"enum": ["pass", "fail", "unknown"]},
+    "geometry_mutated": {"const": false},
+    "detail": {"type": "string", "minLength": 1, "maxLength": 4096}
+  },
+  "$defs": {
+    "segment": {
+      "type": "object",
+      "required": [
+        "segment_id", "diameter_mm", "slope", "manning_n", "roughness_provenance",
+        "roughness_source_reference", "flow_m3_s",
+        "full_flow_capacity_m3_s", "capacity_margin_m3_s", "capacity_sufficient",
+        "depth_ratio", "flow_area_m2", "hydraulic_radius_m", "velocity_m_s",
+        "minimum_velocity_compliance", "minimum_velocity_rule_id", "minimum_velocity_rule_status"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "segment_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "diameter_mm": {"type": "number", "exclusiveMinimum": 0},
+        "slope": {"type": "number", "exclusiveMinimum": 0},
+        "manning_n": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.1},
+        "roughness_provenance": {"enum": ["designer_input", "approved_catalog", "measured"]},
+        "roughness_source_reference": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "flow_m3_s": {"type": "number", "exclusiveMinimum": 0},
+        "full_flow_capacity_m3_s": {"type": "number", "exclusiveMinimum": 0},
+        "capacity_margin_m3_s": {"type": "number"},
+        "capacity_sufficient": {"type": "boolean"},
+        "depth_ratio": {"type": ["number", "null"], "exclusiveMinimum": 0, "maximum": 1},
+        "flow_area_m2": {"type": ["number", "null"], "exclusiveMinimum": 0},
+        "hydraulic_radius_m": {"type": ["number", "null"], "exclusiveMinimum": 0},
+        "velocity_m_s": {"type": ["number", "null"], "exclusiveMinimum": 0},
+        "minimum_velocity_compliance": {"const": "unknown"},
+        "minimum_velocity_rule_id": {"const": "MU-DRAIN-007"},
+        "minimum_velocity_rule_status": {"const": "review_required"}
+      }
+    },
+    "scenario": {
+      "type": "object",
+      "required": ["scenario_id", "scenario_type", "segments", "capacity_sufficient"],
+      "additionalProperties": false,
+      "properties": {
+        "scenario_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "scenario_type": {"enum": ["design", "check"]},
+        "segments": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/segment"}},
+        "capacity_sufficient": {"type": "boolean"}
+      }
+    }
+  }
+}

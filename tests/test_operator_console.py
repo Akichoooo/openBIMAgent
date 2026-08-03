@@ -67,6 +67,24 @@ def _json_response(response: http.client.HTTPResponse) -> dict[str, Any]:
     return json.loads(response.read().decode("utf-8"))
 
 
+def _request_status(
+    server: OperatorConsoleServer,
+    *,
+    method: str,
+    path: str,
+    body: str,
+    headers: dict[str, str],
+) -> int:
+    connection = _connection(server)
+    try:
+        connection.request(method, path, body=body, headers=headers)
+        response = connection.getresponse()
+        response.read()
+        return response.status
+    finally:
+        connection.close()
+
+
 def test_console_request_contract_rejects_missing_and_unknown_fields() -> None:
     with pytest.raises(ValueError, match="resource_id"):
         ConsoleControlRequest(operation="attempt.cancel", idempotency_key="cancel-1")
@@ -144,38 +162,51 @@ def test_console_write_requires_valid_host_origin_csrf_and_json(tmp_path: Path) 
     body = json.dumps({"operation": "runtime.ping", "idempotency_key": "ping-1"})
     try:
         server.start()
-        connection = _connection(server)
-        connection.request(
-            "POST",
-            "/api/v1/control",
+        assert _request_status(
+            server,
+            method="POST",
+            path="/api/v1/control",
             body=body,
-            headers={"Host": "evil.example", "Origin": next(iter(server.allowed_origins)), "Content-Type": "application/json", "X-OpenBIM-CSRF": server.csrf_token},
-        )
-        assert connection.getresponse().status == 400
-
-        connection.request(
-            "POST",
-            "/api/v1/control",
+            headers={
+                "Host": "evil.example",
+                "Origin": next(iter(server.allowed_origins)),
+                "Content-Type": "application/json",
+                "X-OpenBIM-CSRF": server.csrf_token,
+            },
+        ) == 400
+        assert _request_status(
+            server,
+            method="POST",
+            path="/api/v1/control",
             body=body,
-            headers={"Origin": "http://evil.example", "Content-Type": "application/json", "X-OpenBIM-CSRF": server.csrf_token},
-        )
-        assert connection.getresponse().status == 403
-
-        connection.request(
-            "POST",
-            "/api/v1/control",
+            headers={
+                "Origin": "http://evil.example",
+                "Content-Type": "application/json",
+                "X-OpenBIM-CSRF": server.csrf_token,
+            },
+        ) == 403
+        assert _request_status(
+            server,
+            method="POST",
+            path="/api/v1/control",
             body=body,
-            headers={"Origin": next(iter(server.allowed_origins)), "Content-Type": "application/json", "X-OpenBIM-CSRF": "wrong"},
-        )
-        assert connection.getresponse().status == 403
-
-        connection.request(
-            "POST",
-            "/api/v1/control",
+            headers={
+                "Origin": next(iter(server.allowed_origins)),
+                "Content-Type": "application/json",
+                "X-OpenBIM-CSRF": "wrong",
+            },
+        ) == 403
+        assert _request_status(
+            server,
+            method="POST",
+            path="/api/v1/control",
             body=body,
-            headers={"Origin": next(iter(server.allowed_origins)), "Content-Type": "text/plain", "X-OpenBIM-CSRF": server.csrf_token},
-        )
-        assert connection.getresponse().status == 415
+            headers={
+                "Origin": next(iter(server.allowed_origins)),
+                "Content-Type": "text/plain",
+                "X-OpenBIM-CSRF": server.csrf_token,
+            },
+        ) == 415
     finally:
         server.stop()
 

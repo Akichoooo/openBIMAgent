@@ -19,7 +19,7 @@ from openbimagent.utility import (
     solve_grid_route,
     solve_network_gravity_utility,
 )
-from tests.test_network_utility_solver import network_payload
+from test_network_utility_solver import network_payload
 
 
 def route_payload(*, width: int = 3, height: int = 3) -> dict:

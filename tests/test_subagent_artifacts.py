@@ -36,3 +36,16 @@ def test_artifact_name_cannot_escape_run_directory(tmp_path) -> None:
     record = store.commit_text("agent-1", name="../../outside.txt", kind="output", content="safe")
     assert record.path == str((tmp_path / "artifacts" / "agent-1" / "outside.txt").resolve())
     assert not (tmp_path / "outside.txt").exists()
+
+
+def test_atomic_create_does_not_repeat_long_destination_name_in_temp_path(tmp_path) -> None:
+    artifact_root = tmp_path / ("nested-" + "x" * 10)
+    store = ArtifactStore(artifact_root)
+    record = store.commit_text(
+        "agent-" + "a" * 36,
+        name="checkpoint-" + "b" * 70 + ".bin",
+        kind="side-effect-checkpoint",
+        content="stable",
+    )
+    assert record.size_bytes == len("stable")
+    assert record.sha256 == hashlib.sha256(b"stable").hexdigest()

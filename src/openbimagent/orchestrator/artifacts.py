@@ -196,32 +196,47 @@ def _safe_component(value: str) -> str:
 
 def _atomic_create(path: Path, content: bytes) -> None:
     """在同目录原子创建 path；目标存在时失败，不允许覆盖不可变工件。"""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
+    destination_fs = _filesystem_path(path)
+    parent_fs = _filesystem_path(path.parent)
+    os.makedirs(parent_fs, exist_ok=True)
+    if os.path.exists(destination_fs):
         raise ImmutableArtifactError(f"不可变工件已存在，拒绝覆盖: {path}")
-    temp = path.with_name(f".{path.name}.{uuid7()}.tmp")
+    # 临时文件只需同目录唯一；不要重复目标长文件名，否则 Windows 深层 pytest/
+    # Runtime 路径可能超过常见路径长度边界并以误导性的 FileNotFoundError 失败。
+    temp = path.with_name(f".{uuid7()}.tmp")
+    temp_fs = _filesystem_path(temp)
     published = False
     try:
-        with temp.open("xb") as handle:
+        with open(temp_fs, "xb") as handle:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
         try:
-            os.link(temp, path)
+            os.link(temp_fs, destination_fs)
             published = True
         except FileExistsError as exc:
             raise ImmutableArtifactError(f"不可变工件已存在，拒绝覆盖: {path}") from exc
         except OSError as exc:
             raise ImmutableArtifactError(f"不可变工件原子发布失败: {path}: {exc}") from exc
     finally:
-        if temp.exists():
+        if os.path.exists(temp_fs):
             try:
-                temp.unlink()
+                os.unlink(temp_fs)
             except OSError:
                 # 目标已通过 hard-link 原子发布后，Windows 沙箱/安全软件可能暂时拒绝清理临时链接。
                 # 清理失败不能把已经成功、可校验的不可变工件改判为提交失败。
                 if not published:
                     raise
+
+
+def _filesystem_path(path: Path) -> str:
+    """返回供底层文件 API 使用的路径；Windows 用扩展路径支持深层工件目录。"""
+    value = str(path)
+    if os.name != "nt" or value.startswith("\\\\?\\"):
+        return value
+    if value.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + value[2:]
+    return "\\\\?\\" + value
 
 
 __all__ = ["ArtifactStore", "ImmutableArtifactError"]

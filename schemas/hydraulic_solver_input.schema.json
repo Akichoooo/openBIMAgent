@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/hydraulic_solver_input.schema.json",
+  "title": "HydraulicSolverInput",
+  "description": "M1.5 T5 重力污水管网水力 Solver v0.1 输入。流量和 Manning n 必须显式给出，输入绑定不可变 CompiledUtilityIR canonical SHA-256。",
+  "type": "object",
+  "required": ["protocol_version", "request_id", "source_ir_sha256", "calculation_model", "roughness_inputs", "scenarios"],
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": {"const": "0.1"},
+    "request_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "source_ir_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "calculation_model": {"const": "manning_uniform_open_channel_si"},
+    "roughness_inputs": {"type": "array", "minItems": 1, "maxItems": 10000, "items": {"$ref": "#/$defs/roughness"}},
+    "scenarios": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"$ref": "#/$defs/scenario"}}
+  },
+  "$defs": {
+    "roughness": {
+      "type": "object",
+      "required": ["segment_id", "manning_n", "provenance", "source_reference"],
+      "additionalProperties": false,
+      "properties": {
+        "segment_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "manning_n": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.1},
+        "provenance": {"enum": ["designer_input", "approved_catalog", "measured"]},
+        "source_reference": {"type": "string", "minLength": 1, "maxLength": 1024}
+      }
+    },
+    "segment_flow": {
+      "type": "object",
+      "required": ["segment_id", "flow_m3_s"],
+      "additionalProperties": false,
+      "properties": {
+        "segment_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "flow_m3_s": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "scenario": {
+      "type": "object",
+      "required": ["scenario_id", "scenario_type", "segment_flows"],
+      "additionalProperties": false,
+      "properties": {
+        "scenario_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "scenario_type": {"enum": ["design", "check"]},
+        "segment_flows": {"type": "array", "minItems": 1, "maxItems": 10000, "items": {"$ref": "#/$defs/segment_flow"}}
+      }
+    }
+  }
+}
