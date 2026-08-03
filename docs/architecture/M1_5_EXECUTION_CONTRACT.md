@@ -4,7 +4,7 @@
 
 生效日期：2026-08-03
 
-状态：**ACTIVE — T1–T4 OFFLINE PASS / T5 STARTING**
+状态：**ACTIVE — T1–T5 OFFLINE PASS / T6 STARTING**
 
 > 本文件定义 M1.5 的范围、实施顺序、协议边界、验收证据、权限和停止条件。实时 HEAD、测试数字、阻塞和恢复位置仍以 [`PROJECT_HANDOFF_STATUS.md`](PROJECT_HANDOFF_STATUS.md) 为唯一来源；稳定总路线以 [`PROJECT_MASTER_WORKFLOW.md`](PROJECT_MASTER_WORKFLOW.md) 为唯一来源。
 >
@@ -155,11 +155,14 @@ M1.5 不以“支持数组”或“能生成多个对象”为完成标准，而
 - 路线接入网络 Solver 前校验 source IR、CRS、管径、材质、坡度、表面上下文、端点 XY/地面高程和起点锚点一致；终点锚点首版明确拒绝。
 - 当前规模门禁：批准走廊最多 10,000 cells，搜索最多 250,000 expansions，最多返回 10 个候选。
 
-### T5：水力 Solver
+### T5：水力 Solver（OFFLINE PASS）
 
-- 独立水力输入/结果协议。
-- 设计流量、校核流量、粗糙系数、流速、充满度或压力相关证据。
-- 几何与水力迭代必须通过显式协议，不形成隐式循环。
+- `HydraulicSolverInput v0.1` / `HydraulicSolverResult v0.1` 已版本化并通过 JSON Schema Gate。
+- 输入绑定不可变 `CompiledUtilityIR` canonical SHA-256，逐段显式提供流量、Manning `n`、来源和 source reference；必须同时包含 design/check 工况。
+- 使用 `manning_uniform_open_channel_si` 计算满流能力、容量裕量、圆管部分充满度、水力半径和流速；所有内部节点必须满足流量守恒。
+- 结果不修改几何，`geometry_mutated=false`；路线→网络→水力组合 E2E 证明计算前后 IR hash 不变。
+- 物理容量证据可形成 PASS/FAIL；`MU-DRAIN-007` 缺少结构化 production verification，最小流速与总体规范合规在容量通过时保持 `UNKNOWN / REVIEW_REQUIRED`。
+- 水力 `Domain Gate` / `RuleEvidence` 独立关联结果 hash 与源 IR，不写回 `CompiledUtilityIR.evidence`，避免形成隐式几何—水力循环。
 
 ### T6：规范、例外和宿主表达扩展
 
@@ -230,4 +233,4 @@ M1.5 不以“支持数组”或“能生成多个对象”为完成标准，而
 
 ## 10. 当前启动点
 
-从 **T5：水力 Solver** 继续：先定义独立水力输入/结果协议和几何—水力迭代边界，再建立流量、粗糙系数、流速、充满度及异常工况的负向测试。T4 路线结果只通过显式适配器进入网络 Solver，不得在宿主侧重算。
+从 **T6：规范、例外和宿主表达扩展** 继续：先为 `MU-DRAIN-007` 等水力规则补齐标准状态、官方副本 SHA-256、条款定位、适用性和 production verification 协议，再扩展水平/垂直净距、道路、轨道、河道、构筑物及减距例外审批。T5 水力结果继续保持独立证据，不得隐式改写几何 IR。
