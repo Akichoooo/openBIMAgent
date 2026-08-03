@@ -24,7 +24,7 @@ JY 已明确允许在 Vectorworks GUI 真机验收延期期间继续推进 M1.5 
 ```text
 分支：main
 HEAD：以 `git rev-parse HEAD` 实测为准
-T6 实现提交：e929629ad92acaf95098f14eb4b15de472531692（feat: complete M1.5 T6 rule evidence slice）
+T6 实现提交：e9296294eb35eb22ecca11a7d3322e94a90588c7（feat: complete M1.5 T6 rule evidence slice）
 远端：未推送
 ```
 
