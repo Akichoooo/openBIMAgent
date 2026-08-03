@@ -3,7 +3,7 @@
   "$id": "https://openbimagent.local/schemas/ifc_ids_validation_report.schema.json",
   "title": "IfcIdsValidationReportV1",
   "type": "object",
-  "required": ["validation_version", "ifc_schema", "ids_version", "source_ir_id", "source_ir_sha256", "status", "checked_entity_count", "findings"],
+  "required": ["validation_version", "ifc_schema", "ids_version", "source_ir_id", "source_ir_sha256", "rule_evidence_bundle_sha256", "rule_evaluation_sha256", "rule_decision_status", "production_verification", "status", "checked_entity_count", "findings"],
   "additionalProperties": false,
   "properties": {
     "validation_version": {"type": "string", "pattern": "^1(\\.\\d+)?$"},
@@ -11,6 +11,10 @@
     "ids_version": {"const": "1.0"},
     "source_ir_id": {"type": "string", "minLength": 1, "maxLength": 256},
     "source_ir_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "rule_evidence_bundle_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "rule_evaluation_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "rule_decision_status": {"enum": ["pass", "fail", "unknown", "review_required"]},
+    "production_verification": {"enum": ["eligible", "review_required"]},
     "status": {"enum": ["PASS", "FAIL"]},
     "checked_entity_count": {"type": "integer", "minimum": 0},
     "findings": {

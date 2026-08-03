@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,7 @@ REQUIRED_PLAN_FIELDS = {
     "ir_id",
     "source_ir_sha256",
     "compiled_ir_sha256",
+    "rule_identity",
     "units",
     "collection_name",
     "operations",
@@ -64,6 +66,15 @@ REQUIRED_OPERATION_FIELDS = {
     "properties",
     "references",
 }
+RULE_IDENTITY_FIELDS = {
+    "rule_evidence_bundle_sha256",
+    "rule_evaluation_sha256",
+    "rule_decision_status",
+    "production_verification",
+    "exception_approval_id",
+    "exception_approval_sha256",
+}
+_RULE_HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
 class TypedPlanError(ValueError):
@@ -90,6 +101,56 @@ def canonical_plan_sha256(plan: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _validate_rule_identity(raw: Any) -> dict[str, Any] | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or set(raw) != RULE_IDENTITY_FIELDS:
+        fields = set(raw) if isinstance(raw, dict) else set()
+        raise TypedPlanError(
+            f"rule_identity fields mismatch: missing={sorted(RULE_IDENTITY_FIELDS - fields)} "
+            f"unknown={sorted(fields - RULE_IDENTITY_FIELDS)}"
+        )
+    for field in ("rule_evidence_bundle_sha256", "rule_evaluation_sha256"):
+        value = raw[field]
+        if not isinstance(value, str) or _RULE_HASH_PATTERN.fullmatch(value) is None:
+            raise TypedPlanError(f"invalid rule_identity {field}")
+    if raw["rule_decision_status"] not in {"pass", "fail", "unknown", "review_required"}:
+        raise TypedPlanError("invalid rule_identity rule_decision_status")
+    if raw["production_verification"] not in {"eligible", "review_required"}:
+        raise TypedPlanError("invalid rule_identity production_verification")
+    approval_id = raw["exception_approval_id"]
+    approval_sha = raw["exception_approval_sha256"]
+    if (approval_id is None) is not (approval_sha is None):
+        raise TypedPlanError("exception approval ID and SHA-256 must appear together")
+    if approval_id is not None and (not isinstance(approval_id, str) or not approval_id or len(approval_id) > 256):
+        raise TypedPlanError("invalid rule_identity exception_approval_id")
+    if approval_sha is not None and (
+        not isinstance(approval_sha, str) or _RULE_HASH_PATTERN.fullmatch(approval_sha) is None
+    ):
+        raise TypedPlanError("invalid rule_identity exception_approval_sha256")
+    if (
+        raw["production_verification"] == "review_required"
+        and raw["rule_decision_status"] in {"pass", "fail"}
+    ):
+        raise TypedPlanError("PASS/FAIL requires eligible production verification")
+    return raw
+
+
+def _rule_domain_properties(identity: dict[str, Any] | None) -> dict[str, str]:
+    if identity is None:
+        return {}
+    values = {
+        "rule_evidence_bundle_sha256": identity["rule_evidence_bundle_sha256"],
+        "rule_evaluation_sha256": identity["rule_evaluation_sha256"],
+        "rule_decision_status": identity["rule_decision_status"],
+        "production_verification": identity["production_verification"],
+    }
+    if identity["exception_approval_id"] is not None:
+        values["exception_approval_id"] = identity["exception_approval_id"]
+        values["exception_approval_sha256"] = identity["exception_approval_sha256"]
+    return values
+
+
 def validate_plan(plan: Any) -> dict[str, Any]:
     if not isinstance(plan, dict):
         raise TypedPlanError("plan must be an object")
@@ -105,6 +166,11 @@ def validate_plan(plan: Any) -> dict[str, Any]:
         raise TypedPlanError("unsupported Blender host API version")
     if plan["units"] != "m":
         raise TypedPlanError("unsupported plan units")
+    rule_identity = _validate_rule_identity(plan["rule_identity"])
+    expected_rule_properties = {
+        f"openbim_domain_{name}": value
+        for name, value in _rule_domain_properties(rule_identity).items()
+    }
     if not isinstance(plan["operations"], list) or not plan["operations"]:
         raise TypedPlanError("operations must be a non-empty array")
     digest = canonical_plan_sha256(plan)
@@ -124,6 +190,18 @@ def validate_plan(plan: Any) -> dict[str, Any]:
             if operation["object_id"] in created_ids:
                 raise TypedPlanError(f"duplicate object_id: {operation['object_id']}")
             created_ids.add(operation["object_id"])
+        if operation["operation"] == "set_properties":
+            projected = {
+                item["property_name"]: item["value"]
+                for item in operation["properties"]
+                if item["property_name"].startswith("openbim_domain_rule_")
+                or item["property_name"].startswith("openbim_domain_production_")
+                or item["property_name"].startswith("openbim_domain_exception_")
+            }
+            if projected != expected_rule_properties:
+                raise TypedPlanError(
+                    f"rule identity does not match object properties: {operation['object_id']}"
+                )
     for operation in plan["operations"]:
         if operation["operation"] == "set_properties" and operation["object_id"] not in created_ids:
             raise TypedPlanError(f"set_properties references unknown object: {operation['object_id']}")
@@ -527,6 +605,7 @@ def project_semantic_snapshot(
         "host_adapter": f"blender-typed-plan-{fork_version}",
         "source_ir_id": plan["ir_id"],
         "source_ir_sha256": plan["compiled_ir_sha256"],
+        "rule_identity": plan["rule_identity"],
         "units": "m",
         "objects": sorted(objects, key=lambda item: item["stable_id"]),
         "allowed_host_differences": ["host_handle", "presentation_material"],

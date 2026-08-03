@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from copy import deepcopy
 
+import pytest
+from pydantic import ValidationError
+
 from openbimagent.assembly.semantic_snapshot import (
     FakeBlenderSemanticExecutor,
     FakeVectorworksSemanticExecutor,
+    RuleProjectionIdentity,
     SemanticSnapshot,
     compare_semantic_snapshots,
 )
@@ -15,11 +19,26 @@ from openbimagent.utility import CompiledUtilityIR
 from test_compiled_utility_ir import solved_payload
 
 
-def _snapshots() -> tuple[SemanticSnapshot, SemanticSnapshot]:
+def _rule_identity(**overrides) -> RuleProjectionIdentity:
+    payload = {
+        "rule_evidence_bundle_sha256": "a" * 64,
+        "rule_evaluation_sha256": "b" * 64,
+        "rule_decision_status": "fail",
+        "production_verification": "eligible",
+        "exception_approval_id": None,
+        "exception_approval_sha256": None,
+    }
+    payload.update(overrides)
+    return RuleProjectionIdentity(**payload)
+
+
+def _snapshots(
+    rule_identity: RuleProjectionIdentity | None = None,
+) -> tuple[SemanticSnapshot, SemanticSnapshot]:
     compiled = CompiledUtilityIR.model_validate(solved_payload())
     return (
-        FakeBlenderSemanticExecutor().execute(compiled),
-        FakeVectorworksSemanticExecutor().execute(compiled),
+        FakeBlenderSemanticExecutor().execute(compiled, rule_identity=rule_identity),
+        FakeVectorworksSemanticExecutor().execute(compiled, rule_identity=rule_identity),
     )
 
 
@@ -98,3 +117,50 @@ def test_canonical_snapshot_is_stable_across_object_order() -> None:
     payload["canonical_sha256"] = ""
     reordered = SemanticSnapshot.model_validate(payload).finalized()
     assert reordered.compute_canonical_sha256() == blender.compute_canonical_sha256()
+
+
+def test_exception_approval_identity_must_be_complete() -> None:
+    with pytest.raises(ValidationError, match="exception approval"):
+        _rule_identity(exception_approval_id="EXC-001")
+
+
+def test_review_required_rule_identity_cannot_claim_compliance_pass() -> None:
+    with pytest.raises(ValidationError, match="PASS/FAIL"):
+        _rule_identity(
+            rule_decision_status="pass",
+            production_verification="review_required",
+        )
+
+
+def test_rule_identity_is_projected_identically_to_both_hosts() -> None:
+    identity = _rule_identity()
+    blender, vectorworks = _snapshots(identity)
+    assert blender.rule_identity == vectorworks.rule_identity == identity
+    assert compare_semantic_snapshots(blender, vectorworks).ok is True
+    for snapshot in (blender, vectorworks):
+        assert all(
+            item.domain_properties["rule_evidence_bundle_sha256"]
+            == identity.rule_evidence_bundle_sha256
+            for item in snapshot.objects
+        )
+        assert all(
+            item.domain_properties["rule_evaluation_sha256"]
+            == identity.rule_evaluation_sha256
+            for item in snapshot.objects
+        )
+
+
+def test_cross_host_rule_identity_drift_fails_at_snapshot_scope() -> None:
+    compiled = CompiledUtilityIR.model_validate(solved_payload())
+    blender = FakeBlenderSemanticExecutor().execute(compiled, rule_identity=_rule_identity())
+    vectorworks = FakeVectorworksSemanticExecutor().execute(
+        compiled,
+        rule_identity=_rule_identity(rule_evaluation_sha256="c" * 64),
+    )
+    report = compare_semantic_snapshots(blender, vectorworks)
+    assert report.ok is False
+    assert any(
+        item.object_id == "@snapshot"
+        and item.field_path == "rule_identity.rule_evaluation_sha256"
+        for item in report.differences
+    )

@@ -18,6 +18,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from openbimagent.assembly.rule_projection import RuleProjectionIdentity
 from openbimagent.utility.contracts import CompiledUtilityIR
 
 BLENDER_PLAN_VERSION = "1.0"
@@ -156,6 +157,7 @@ class BlenderExecutionPlan(BaseModel):
     ir_id: str = Field(min_length=1, max_length=256)
     source_ir_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     compiled_ir_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    rule_identity: RuleProjectionIdentity | None = None
     units: str = Field(default=BLENDER_UNIT, pattern=r"^m$")
     collection_name: str = Field(default=BLENDER_COLLECTION, min_length=1, max_length=256)
     operations: tuple[BlenderOperation, ...] = Field(min_length=1)
@@ -173,6 +175,28 @@ class BlenderExecutionPlan(BaseModel):
             for item in self.operations
         ):
             raise ValueError("create_object collection_name 必须匹配计划范围锁")
+        expected_rule_properties = (
+            {
+                f"openbim_domain_{name}": value
+                for name, value in self.rule_identity.domain_properties().items()
+            }
+            if self.rule_identity is not None
+            else {}
+        )
+        for operation in self.operations:
+            if operation.operation is not BlenderOperationKind.SET_PROPERTIES:
+                continue
+            projected = {
+                item.property_name: item.value
+                for item in operation.properties
+                if item.property_name.startswith("openbim_domain_rule_")
+                or item.property_name.startswith("openbim_domain_production_")
+                or item.property_name.startswith("openbim_domain_exception_")
+            }
+            if projected != expected_rule_properties:
+                raise ValueError(
+                    f"Blender plan rule identity 与对象 {operation.object_id!r} 属性不一致"
+                )
         if self.canonical_sha256:
             expected = self.compute_canonical_sha256()
             if self.canonical_sha256 != expected:
@@ -273,6 +297,7 @@ class BlenderBuilder:
         ir: CompiledUtilityIR | dict[str, Any],
         *,
         asset_ids: list[str] | tuple[str, ...] | None = None,
+        rule_identity: RuleProjectionIdentity | None = None,
     ) -> BlenderExecutionPlan:
         compiled = ir if isinstance(ir, CompiledUtilityIR) else CompiledUtilityIR.model_validate(ir)
         selected = set(asset_ids or ())
@@ -280,11 +305,23 @@ class BlenderBuilder:
         for system_index, system in enumerate(sorted(compiled.systems, key=lambda item: item.system_id)):
             if selected and system.system_id not in selected:
                 continue
-            operations.extend(_create_and_properties_system(system, f"/systems/{system_index}"))
+            operations.extend(
+                _create_and_properties_system(
+                    system,
+                    f"/systems/{system_index}",
+                    rule_identity,
+                )
+            )
         for node_index, node in enumerate(sorted(compiled.nodes, key=lambda item: item.node_id)):
             if selected and node.node_id not in selected:
                 continue
-            operations.extend(_create_and_properties_node(node, f"/nodes/{node_index}"))
+            operations.extend(
+                _create_and_properties_node(
+                    node,
+                    f"/nodes/{node_index}",
+                    rule_identity,
+                )
+            )
             for port_index, port in enumerate(sorted(node.ports, key=lambda item: item.port_id)):
                 if selected and port.port_id not in selected and node.node_id not in selected:
                     continue
@@ -293,12 +330,19 @@ class BlenderBuilder:
                         port,
                         node.system_id,
                         f"/nodes/{node_index}/ports/{port_index}",
+                        rule_identity,
                     )
                 )
         for segment_index, segment in enumerate(sorted(compiled.segments, key=lambda item: item.segment_id)):
             if selected and segment.segment_id not in selected:
                 continue
-            operations.extend(_create_and_properties_segment(segment, f"/segments/{segment_index}"))
+            operations.extend(
+                _create_and_properties_segment(
+                    segment,
+                    f"/segments/{segment_index}",
+                    rule_identity,
+                )
+            )
             operations.append(
                 BlenderOperation(
                     operation=BlenderOperationKind.CONNECT_TOPOLOGY,
@@ -315,6 +359,7 @@ class BlenderBuilder:
             ir_id=compiled.ir_id,
             source_ir_sha256=compiled.source_ir_sha256,
             compiled_ir_sha256=compiled.canonical_sha256(),
+            rule_identity=rule_identity,
             operations=tuple(operations),
         ).finalized()
 
@@ -323,8 +368,9 @@ class BlenderBuilder:
         ir: CompiledUtilityIR | dict[str, Any],
         *,
         asset_ids: list[str] | tuple[str, ...] | None = None,
+        rule_identity: RuleProjectionIdentity | None = None,
     ) -> BlenderExecutionPlan:
-        return self.build(ir, asset_ids=asset_ids)
+        return self.build(ir, asset_ids=asset_ids, rule_identity=rule_identity)
 
 
 def validate_plan_capabilities(plan: BlenderExecutionPlan, capabilities: BlenderCapabilities) -> None:
@@ -377,6 +423,7 @@ def _properties(
     source_ir_path: str,
     domain_properties: dict[str, str | float | int | bool | None] | None = None,
     geometry_properties: dict[str, float] | None = None,
+    rule_identity: RuleProjectionIdentity | None = None,
 ) -> BlenderOperation:
     values: dict[str, str | float | int | bool] = {
         "openbim_stable_id": object_id,
@@ -388,7 +435,10 @@ def _properties(
     }
     if ifc_type is not None:
         values["openbim_ifc_predefined_type"] = ifc_type
-    for name, value in sorted((domain_properties or {}).items()):
+    projected_domain = dict(domain_properties or {})
+    if rule_identity is not None:
+        projected_domain.update(rule_identity.domain_properties())
+    for name, value in sorted(projected_domain.items()):
         if value is not None:
             values[f"openbim_domain_{name}"] = value
     for name, value in sorted((geometry_properties or {}).items()):
@@ -405,7 +455,11 @@ def _properties(
     )
 
 
-def _create_and_properties_system(system: Any, source_ir_path: str) -> list[BlenderOperation]:
+def _create_and_properties_system(
+    system: Any,
+    source_ir_path: str,
+    rule_identity: RuleProjectionIdentity | None,
+) -> list[BlenderOperation]:
     object_type = BlenderObjectType.UTILITY_SYSTEM
     return [
         BlenderOperation(
@@ -427,11 +481,16 @@ def _create_and_properties_system(system: Any, source_ir_path: str) -> list[Blen
             system.system_id,
             source_ir_path,
             {"flow_regime": system.flow_regime.value, "system_type": system.system_type.value},
+            rule_identity=rule_identity,
         ),
     ]
 
 
-def _create_and_properties_node(node: Any, source_ir_path: str) -> list[BlenderOperation]:
+def _create_and_properties_node(
+    node: Any,
+    source_ir_path: str,
+    rule_identity: RuleProjectionIdentity | None,
+) -> list[BlenderOperation]:
     object_type = BlenderObjectType(node.node_type.value)
     return [
         BlenderOperation(
@@ -454,11 +513,17 @@ def _create_and_properties_node(node: Any, source_ir_path: str) -> list[BlenderO
             node.system_id,
             source_ir_path,
             {"ground_elevation_m": node.ground_elevation_m, "node_type": node.node_type.value},
+            rule_identity=rule_identity,
         ),
     ]
 
 
-def _create_and_properties_port(port: Any, system_id: str, source_ir_path: str) -> list[BlenderOperation]:
+def _create_and_properties_port(
+    port: Any,
+    system_id: str,
+    source_ir_path: str,
+    rule_identity: RuleProjectionIdentity | None,
+) -> list[BlenderOperation]:
     object_type = BlenderObjectType.DISTRIBUTION_PORT
     return [
         BlenderOperation(
@@ -481,11 +546,16 @@ def _create_and_properties_port(port: Any, system_id: str, source_ir_path: str) 
             system_id,
             source_ir_path,
             {"direction": port.direction.value},
+            rule_identity=rule_identity,
         ),
     ]
 
 
-def _create_and_properties_segment(segment: Any, source_ir_path: str) -> list[BlenderOperation]:
+def _create_and_properties_segment(
+    segment: Any,
+    source_ir_path: str,
+    rule_identity: RuleProjectionIdentity | None,
+) -> list[BlenderOperation]:
     object_type = BlenderObjectType.PIPE_SEGMENT
     return [
         BlenderOperation(
@@ -517,6 +587,7 @@ def _create_and_properties_segment(segment: Any, source_ir_path: str) -> list[Bl
                 "slope": segment.slope,
                 "start_invert_m": segment.start_invert_m,
             },
+            rule_identity=rule_identity,
         ),
     ]
 

@@ -18,6 +18,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from openbimagent.assembly.rule_projection import RuleProjectionIdentity
 from openbimagent.utility.contracts import CompiledUtilityIR
 
 VECTORWORKS_PLAN_VERSION = "1.0"
@@ -146,6 +147,7 @@ class VectorworksExecutionPlan(BaseModel):
     ir_id: str = Field(min_length=1, max_length=256)
     source_ir_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     compiled_ir_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    rule_identity: RuleProjectionIdentity | None = None
     units: str = Field(default=VECTORWORKS_UNIT, pattern=r"^m$")
     operations: tuple[VectorworksOperation, ...] = Field(min_length=1)
     canonical_sha256: str = Field(default="", pattern=r"^(|[0-9a-f]{64})$")
@@ -162,6 +164,28 @@ class VectorworksExecutionPlan(BaseModel):
             for item in self.operations
         ):
             raise ValueError("create_object layer_name 必须匹配固定 Vectorworks 范围锁")
+        expected_rule_fields = (
+            {
+                f"Domain_{name}": value
+                for name, value in self.rule_identity.domain_properties().items()
+            }
+            if self.rule_identity is not None
+            else {}
+        )
+        for operation in self.operations:
+            if operation.operation is not VectorworksOperationKind.SET_RECORD:
+                continue
+            projected = {
+                item.field_name: item.value
+                for item in operation.record_fields
+                if item.field_name.startswith("Domain_rule_")
+                or item.field_name.startswith("Domain_production_")
+                or item.field_name.startswith("Domain_exception_")
+            }
+            if projected != expected_rule_fields:
+                raise ValueError(
+                    f"Vectorworks plan rule identity 与对象 {operation.object_id!r} record 不一致"
+                )
         if self.canonical_sha256:
             expected = self.compute_canonical_sha256()
             if self.canonical_sha256 != expected:
@@ -256,6 +280,7 @@ class VectorworksBuilder:
         ir: CompiledUtilityIR | dict[str, Any],
         *,
         asset_ids: list[str] | tuple[str, ...] | None = None,
+        rule_identity: RuleProjectionIdentity | None = None,
     ) -> VectorworksExecutionPlan:
         compiled = ir if isinstance(ir, CompiledUtilityIR) else CompiledUtilityIR.model_validate(ir)
         selected = set(asset_ids or ())
@@ -266,11 +291,23 @@ class VectorworksBuilder:
         for system_index, system in enumerate(systems):
             if selected and system.system_id not in selected:
                 continue
-            operations.extend(_create_and_record_system(system, f"/systems/{system_index}"))
+            operations.extend(
+                _create_and_record_system(
+                    system,
+                    f"/systems/{system_index}",
+                    rule_identity,
+                )
+            )
         for node_index, node in enumerate(nodes):
             if selected and node.node_id not in selected:
                 continue
-            operations.extend(_create_and_record_node(node, f"/nodes/{node_index}"))
+            operations.extend(
+                _create_and_record_node(
+                    node,
+                    f"/nodes/{node_index}",
+                    rule_identity,
+                )
+            )
             for port_index, port in enumerate(sorted(node.ports, key=lambda item: item.port_id)):
                 if selected and port.port_id not in selected and node.node_id not in selected:
                     continue
@@ -279,12 +316,19 @@ class VectorworksBuilder:
                         port,
                         node.system_id,
                         f"/nodes/{node_index}/ports/{port_index}",
+                        rule_identity,
                     )
                 )
         for segment_index, segment in enumerate(segments):
             if selected and segment.segment_id not in selected:
                 continue
-            operations.extend(_create_and_record_segment(segment, f"/segments/{segment_index}"))
+            operations.extend(
+                _create_and_record_segment(
+                    segment,
+                    f"/segments/{segment_index}",
+                    rule_identity,
+                )
+            )
             operations.append(
                 VectorworksOperation(
                     operation=VectorworksOperationKind.CONNECT_TOPOLOGY,
@@ -301,6 +345,7 @@ class VectorworksBuilder:
             ir_id=compiled.ir_id,
             source_ir_sha256=compiled.source_ir_sha256,
             compiled_ir_sha256=compiled.canonical_sha256(),
+            rule_identity=rule_identity,
             operations=tuple(operations),
         )
         return plan.finalized()
@@ -310,8 +355,9 @@ class VectorworksBuilder:
         ir: CompiledUtilityIR | dict[str, Any],
         *,
         asset_ids: list[str] | tuple[str, ...] | None = None,
+        rule_identity: RuleProjectionIdentity | None = None,
     ) -> VectorworksExecutionPlan:
-        return self.build(ir, asset_ids=asset_ids)
+        return self.build(ir, asset_ids=asset_ids, rule_identity=rule_identity)
 
 
 def validate_plan_capabilities(
@@ -370,6 +416,7 @@ def _record(
     domain_properties: dict[str, str | float | int | bool | None] | None = None,
     geometry_properties: dict[str, tuple[float, str | None]] | None = None,
     material: str | None = None,
+    rule_identity: RuleProjectionIdentity | None = None,
 ) -> VectorworksOperation:
     fields = [
         RecordField(field_name="StableObjectID", value=object_id),
@@ -384,7 +431,10 @@ def _record(
         fields.append(RecordField(field_name="IFCPredefinedType", value=ifc_type))
     if material is not None:
         fields.append(RecordField(field_name="Material", value=material))
-    for name, value in sorted((domain_properties or {}).items()):
+    projected_domain = dict(domain_properties or {})
+    if rule_identity is not None:
+        projected_domain.update(rule_identity.domain_properties())
+    for name, value in sorted(projected_domain.items()):
         if value is not None:
             fields.append(RecordField(field_name=f"Domain_{name}", value=value))
     for name, (value, unit) in sorted((geometry_properties or {}).items()):
@@ -399,7 +449,11 @@ def _record(
     )
 
 
-def _create_and_record_system(system: Any, source_ir_path: str) -> list[VectorworksOperation]:
+def _create_and_record_system(
+    system: Any,
+    source_ir_path: str,
+    rule_identity: RuleProjectionIdentity | None,
+) -> list[VectorworksOperation]:
     obj_type = VectorworksObjectType.UTILITY_SYSTEM
     return [
         VectorworksOperation(
@@ -423,11 +477,16 @@ def _create_and_record_system(system: Any, source_ir_path: str) -> list[Vectorwo
             system.system_id,
             source_ir_path,
             {"flow_regime": system.flow_regime.value, "system_type": system.system_type.value},
+            rule_identity=rule_identity,
         ),
     ]
 
 
-def _create_and_record_node(node: Any, source_ir_path: str) -> list[VectorworksOperation]:
+def _create_and_record_node(
+    node: Any,
+    source_ir_path: str,
+    rule_identity: RuleProjectionIdentity | None,
+) -> list[VectorworksOperation]:
     obj_type = VectorworksObjectType(node.node_type.value)
     return [
         VectorworksOperation(
@@ -452,11 +511,17 @@ def _create_and_record_node(node: Any, source_ir_path: str) -> list[VectorworksO
             node.system_id,
             source_ir_path,
             {"ground_elevation_m": node.ground_elevation_m, "node_type": node.node_type.value},
+            rule_identity=rule_identity,
         ),
     ]
 
 
-def _create_and_record_port(port: Any, system_id: str, source_ir_path: str) -> list[VectorworksOperation]:
+def _create_and_record_port(
+    port: Any,
+    system_id: str,
+    source_ir_path: str,
+    rule_identity: RuleProjectionIdentity | None,
+) -> list[VectorworksOperation]:
     obj_type = VectorworksObjectType.DISTRIBUTION_PORT
     return [
         VectorworksOperation(
@@ -480,11 +545,16 @@ def _create_and_record_port(port: Any, system_id: str, source_ir_path: str) -> l
             system_id,
             source_ir_path,
             {"direction": port.direction.value},
+            rule_identity=rule_identity,
         ),
     ]
 
 
-def _create_and_record_segment(segment: Any, source_ir_path: str) -> list[VectorworksOperation]:
+def _create_and_record_segment(
+    segment: Any,
+    source_ir_path: str,
+    rule_identity: RuleProjectionIdentity | None,
+) -> list[VectorworksOperation]:
     obj_type = VectorworksObjectType.PIPE_SEGMENT
     return [
         VectorworksOperation(
@@ -521,6 +591,7 @@ def _create_and_record_segment(segment: Any, source_ir_path: str) -> list[Vector
                 "StartInvertM": (segment.start_invert_m, "m"),
             },
             material=segment.material,
+            rule_identity=rule_identity,
         ),
     ]
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -14,9 +15,13 @@ from openbimagent.utility import (
     MunicipalRuleSet,
     RouteSolveStatus,
     RouteSolverError,
+    T6RouteObstacleConstraint,
     apply_grid_route_to_network_input,
+    build_clearance_exception_approval,
+    compile_municipal_rule_evidence_bundle,
     compile_municipal_rule_set,
     solve_grid_route,
+    solve_grid_route_t6,
     solve_network_gravity_utility,
 )
 from test_network_utility_solver import network_payload
@@ -97,6 +102,48 @@ def test_grid_route_schema_is_registered() -> None:
     assert gate.validate_artifact("grid_route_solver_result", result.model_dump(mode="json")) == []
 
 
+def test_t6_grid_route_schema_strictly_validates_embedded_route_result() -> None:
+    gate = SchemaGate()
+    bundle = compile_municipal_rule_evidence_bundle()
+    result = solve_grid_route_t6(
+        route_payload(),
+        rule_evidence_bundle=bundle,
+        project_id="project-001",
+        evaluated_at=datetime(2026, 8, 1, tzinfo=UTC),
+    )
+    payload = result.model_dump(mode="json")
+    assert gate.validate_artifact("t6_grid_route_solver_result", payload) == []
+
+    drifted = deepcopy(payload)
+    drifted["route_result"]["unexpected"] = True
+    errors = gate.validate_artifact("t6_grid_route_solver_result", drifted)
+    assert any("$.route_result" in error and "unexpected" in error for error in errors)
+
+
+def test_t6_route_constraint_rejects_unapproved_or_unused_exception_identity() -> None:
+    base = {
+        "obstacle_id": "building-001",
+        "rule_id": "MU-CLEAR-001:building",
+        "rule_sha256": "a" * 64,
+        "rule_evidence_bundle_sha256": "b" * 64,
+        "original_clearance_m": 2.5,
+        "effective_clearance_m": 2.0,
+        "exception_approval_id": None,
+        "exception_approval_sha256": None,
+    }
+    with pytest.raises(ValueError, match="必须绑定例外审批"):
+        T6RouteObstacleConstraint.model_validate(base)
+
+    unchanged = {
+        **base,
+        "effective_clearance_m": 2.5,
+        "exception_approval_id": "EXC-UNUSED",
+        "exception_approval_sha256": "c" * 64,
+    }
+    with pytest.raises(ValueError, match="未发生减距"):
+        T6RouteObstacleConstraint.model_validate(unchanged)
+
+
 def test_grid_route_uses_stable_tie_break_and_profile() -> None:
     first = solve_grid_route(route_payload())
     assert first.status is RouteSolveStatus.FEASIBLE
@@ -134,6 +181,87 @@ def test_grid_route_detours_around_production_rule_obstacle() -> None:
     assert max(cell.y_index for cell in selected.cells) >= 3
     assert selected.constraint_report.applied_rule_keys == ("MU-CLEAR-001:building",)
     assert selected.constraint_report.minimum_clearance_margin_m >= -1e-6
+
+
+def _route_exception(bundle, *, expires_in: timedelta = timedelta(days=30)):
+    rule = bundle.rule("MU-CLEAR-001:building")
+    approved_at = datetime(2026, 8, 1, tzinfo=UTC)
+    return build_clearance_exception_approval(
+        exception_id="EXC-ROUTE-001",
+        rule_set_sha256=bundle.canonical_sha256,
+        rule_sha256=rule.canonical_sha256,
+        original_rule_id=rule.rule_id,
+        original_clearance_m=2.5,
+        approved_clearance_m=2.0,
+        safety_measures=("增设防护套管",),
+        rationale="既有构筑物约束下的专项减距。",
+        risks=("检修空间缩小",),
+        approver_id="engineer-001",
+        approver_role="chief_engineer",
+        approver_authorities=("approve_clearance_reduction",),
+        valid_scope={
+            "project_id": "project-001",
+            "subject_ids": ("building-001",),
+            "rule_ids": (rule.rule_id,),
+        },
+        approved_at=approved_at,
+        expires_at=approved_at + expires_in,
+        approval_status="approved",
+        audit_references=("approval://project-001/EXC-ROUTE-001",),
+    )
+
+
+def _route_with_building() -> dict:
+    payload = route_payload(width=9, height=4)
+    payload["end"]["cell"] = {"x_index": 8, "y_index": 0}
+    payload["obstacles"] = [
+        {
+            "obstacle_id": "building-001",
+            "kind": "aabb",
+            "category": "building",
+            "min_corner": {"x_m": 3.8, "y_m": -0.2, "z_m": 0.0},
+            "max_corner": {"x_m": 4.2, "y_m": 0.2, "z_m": 20.0},
+        }
+    ]
+    return payload
+
+
+def test_t6_route_consumes_exact_clearance_exception_only_when_bound() -> None:
+    payload = _route_with_building()
+    bundle = compile_municipal_rule_evidence_bundle()
+    approval = _route_exception(bundle)
+    t6 = solve_grid_route_t6(
+        payload,
+        rule_evidence_bundle=bundle,
+        project_id="project-001",
+        evaluated_at=approval.approved_at + timedelta(days=1),
+        exception_approvals={"building-001": approval},
+    )
+    assert t6.route_result.status is RouteSolveStatus.FEASIBLE
+    assert t6.obstacle_constraints[0].effective_clearance_m == 2.0
+    assert t6.obstacle_constraints[0].exception_approval_id == approval.exception_id
+
+
+def test_t6_route_rejects_expired_or_unknown_exception_scope() -> None:
+    payload = _route_with_building()
+    bundle = compile_municipal_rule_evidence_bundle()
+    approval = _route_exception(bundle, expires_in=timedelta(hours=1))
+    with pytest.raises(ValueError, match="过期"):
+        solve_grid_route_t6(
+            payload,
+            rule_evidence_bundle=bundle,
+            project_id="project-001",
+            evaluated_at=approval.approved_at + timedelta(days=1),
+            exception_approvals={"building-001": approval},
+        )
+    with pytest.raises(RouteSolverError, match="未知 obstacle_id"):
+        solve_grid_route_t6(
+            payload,
+            rule_evidence_bundle=bundle,
+            project_id="project-001",
+            evaluated_at=approval.approved_at,
+            exception_approvals={"building-999": approval},
+        )
 
 
 def test_grid_route_rejects_untrusted_rule_and_rule_set_hash_drift() -> None:

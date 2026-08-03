@@ -18,13 +18,30 @@ from openbimagent.assembly.blender_plan import (
     BlenderReceiptStatus,
     FakeBlenderExecutor,
 )
+from openbimagent.assembly.semantic_snapshot import RuleProjectionIdentity
 from openbimagent.schema_gate.gate import SchemaGate
 from openbimagent.utility import CompiledUtilityIR
 from test_compiled_utility_ir import solved_payload
 
 
-def _plan() -> BlenderExecutionPlan:
-    return BlenderBuilder().build(CompiledUtilityIR.model_validate(solved_payload()))
+def _rule_identity(**overrides) -> RuleProjectionIdentity:
+    payload = {
+        "rule_evidence_bundle_sha256": "a" * 64,
+        "rule_evaluation_sha256": "b" * 64,
+        "rule_decision_status": "fail",
+        "production_verification": "eligible",
+        "exception_approval_id": None,
+        "exception_approval_sha256": None,
+    }
+    payload.update(overrides)
+    return RuleProjectionIdentity(**payload)
+
+
+def _plan(rule_identity: RuleProjectionIdentity | None = None) -> BlenderExecutionPlan:
+    return BlenderBuilder().build(
+        CompiledUtilityIR.model_validate(solved_payload()),
+        rule_identity=rule_identity,
+    )
 
 
 def test_same_ir_compiles_to_canonical_equivalent_plan() -> None:
@@ -72,6 +89,43 @@ def test_plan_passes_json_schema() -> None:
         "blender_execution_plan",
         _plan().model_dump(mode="json"),
     ) == []
+
+
+def test_rule_identity_is_bound_to_plan_and_typed_properties() -> None:
+    identity = _rule_identity()
+    plan = _plan(identity)
+    assert plan.rule_identity == identity
+    for operation in plan.operations:
+        if operation.operation is not BlenderOperationKind.SET_PROPERTIES:
+            continue
+        values = {item.property_name: item.value for item in operation.properties}
+        assert values["openbim_domain_rule_evidence_bundle_sha256"] == "a" * 64
+        assert values["openbim_domain_rule_evaluation_sha256"] == "b" * 64
+        assert values["openbim_domain_rule_decision_status"] == "fail"
+        assert values["openbim_domain_production_verification"] == "eligible"
+    assert SchemaGate().validate_artifact(
+        "blender_execution_plan",
+        plan.model_dump(mode="json"),
+    ) == []
+
+
+def test_blender_plan_rejects_rule_identity_property_drift() -> None:
+    payload = _plan(_rule_identity()).model_dump(mode="json")
+    properties = next(
+        item
+        for item in payload["operations"]
+        if item["operation"] == "set_properties"
+    )["properties"]
+    rule_hash = next(
+        item
+        for item in properties
+        if item["property_name"] == "openbim_domain_rule_evaluation_sha256"
+    )
+    rule_hash["value"] = "c" * 64
+    payload["canonical_sha256"] = ""
+    payload["idempotency_key"] = ""
+    with pytest.raises(ValidationError, match="rule identity"):
+        BlenderExecutionPlan.model_validate(payload)
 
 
 def test_unknown_field_missing_required_and_protocol_drift_fail_closed() -> None:

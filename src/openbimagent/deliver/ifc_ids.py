@@ -69,6 +69,10 @@ class IfcIdsValidationReport(BaseModel):
     ids_version: str = Field(default="1.0", pattern=r"^1\.0$")
     source_ir_id: str = Field(min_length=1, max_length=256)
     source_ir_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    rule_evidence_bundle_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    rule_evaluation_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    rule_decision_status: str = Field(pattern=r"^(pass|fail|unknown|review_required)$")
+    production_verification: str = Field(pattern=r"^(eligible|review_required)$")
     status: ValidationStatus
     checked_entity_count: int = Field(ge=0)
     findings: tuple[IfcIdsFinding, ...] = ()
@@ -193,6 +197,24 @@ def validate_ifc_against_ids(ifc_path: Path, ids_path: Path) -> IfcIdsValidation
     source_ir_sha256 = str(project_metadata.get("SourceIRSHA256") or "")
     if not source_ir_id or len(source_ir_sha256) != 64:
         raise ValueError(f"IFC {PROJECT_PSET_NAME} 缺少合法 SourceIRID/SourceIRSHA256")
+    rule_evidence_bundle_sha256 = str(
+        project_metadata.get("RuleEvidenceBundleSHA256") or ""
+    )
+    rule_evaluation_sha256 = str(project_metadata.get("RuleEvaluationSHA256") or "")
+    rule_decision_status = str(project_metadata.get("RuleDecisionStatus") or "")
+    production_verification = str(project_metadata.get("ProductionVerification") or "")
+    if (
+        len(rule_evidence_bundle_sha256) != 64
+        or len(rule_evaluation_sha256) != 64
+        or rule_decision_status not in {"pass", "fail", "unknown", "review_required"}
+        or production_verification not in {"eligible", "review_required"}
+    ):
+        raise ValueError(f"IFC {PROJECT_PSET_NAME} 缺少完整规则证据身份")
+    if (
+        production_verification == "review_required"
+        and rule_decision_status in {"pass", "fail"}
+    ):
+        raise ValueError("IFC review_required 规则证据身份不得声明规范 PASS/FAIL")
     findings: list[IfcIdsFinding] = []
     checked_ids: set[str] = set()
 
@@ -311,6 +333,10 @@ def validate_ifc_against_ids(ifc_path: Path, ids_path: Path) -> IfcIdsValidation
         ifc_schema=model.schema,
         source_ir_id=source_ir_id,
         source_ir_sha256=source_ir_sha256,
+        rule_evidence_bundle_sha256=rule_evidence_bundle_sha256,
+        rule_evaluation_sha256=rule_evaluation_sha256,
+        rule_decision_status=rule_decision_status,
+        production_verification=production_verification,
         status=status,
         checked_entity_count=len(checked_ids),
         findings=tuple(findings),
@@ -323,10 +349,16 @@ def _build_ifc_model(snapshot: SemanticSnapshot) -> ifcopenshell.file:
     model.header.file_name.time_stamp = "1970-01-01T00:00:00"
     project = ifcopenshell.api.root.create_entity(model, ifc_class="IfcProject", name="openBIMAgent M1 Municipal Utility")
     project_pset = ifcopenshell.api.pset.add_pset(model, product=project, name=PROJECT_PSET_NAME)
+    project_properties = {
+        "SourceIRID": snapshot.source_ir_id,
+        "SourceIRSHA256": snapshot.source_ir_sha256,
+    }
+    if snapshot.rule_identity is not None:
+        project_properties.update(_ifc_rule_identity_properties(snapshot.rule_identity))
     ifcopenshell.api.pset.edit_pset(
         model,
         pset=project_pset,
-        properties={"SourceIRID": snapshot.source_ir_id, "SourceIRSHA256": snapshot.source_ir_sha256},
+        properties=project_properties,
     )
     site = ifcopenshell.api.root.create_entity(model, ifc_class="IfcSite", name="Municipal Utility Site")
     ifcopenshell.api.aggregate.assign_object(model, products=[site], relating_object=project)
@@ -402,6 +434,18 @@ def _attach_properties(model: ifcopenshell.file, entity: Any, item: Any) -> None
     for name, value in sorted(item.domain_properties.items()):
         if value is not None:
             properties[f"Domain_{name}"] = value
+    if item.domain_properties.get("rule_evidence_bundle_sha256") is not None:
+        properties.update(
+            {
+                "RuleEvidenceBundleSHA256": item.domain_properties["rule_evidence_bundle_sha256"],
+                "RuleEvaluationSHA256": item.domain_properties["rule_evaluation_sha256"],
+                "RuleDecisionStatus": item.domain_properties["rule_decision_status"],
+                "ProductionVerification": item.domain_properties["production_verification"],
+            }
+        )
+        if item.domain_properties.get("exception_approval_id") is not None:
+            properties["ExceptionApprovalID"] = item.domain_properties["exception_approval_id"]
+            properties["ExceptionApprovalSHA256"] = item.domain_properties["exception_approval_sha256"]
     pset = ifcopenshell.api.pset.add_pset(model, product=entity, name=PSET_NAME)
     ifcopenshell.api.pset.edit_pset(model, pset=pset, properties=properties)
 
@@ -463,6 +507,11 @@ def _write_ids(snapshot: SemanticSnapshot, path: Path) -> None:
             ("SourceIRPath", item.source_ir_path),
         ):
             _property_requirement(requirements, property_name, expected)
+        if snapshot.rule_identity is not None:
+            for property_name, expected in sorted(
+                _ifc_rule_identity_properties(snapshot.rule_identity).items()
+            ):
+                _property_requirement(requirements, property_name, expected)
         if item.object_kind is SemanticObjectKind.SEGMENT:
             for property_name, expected in (
                 ("DiameterMM", item.diameter_mm),
@@ -662,6 +711,19 @@ def _port_owner_id(source_ir_path: str, snapshot: SemanticSnapshot) -> str:
         if item.object_kind is SemanticObjectKind.NODE and item.source_ir_path == node_path:
             return item.stable_id
     raise ValueError(f"port source_ir_path 无法定位所属 node: {source_ir_path}")
+
+
+def _ifc_rule_identity_properties(identity: Any) -> dict[str, str]:
+    properties = {
+        "RuleEvidenceBundleSHA256": identity.rule_evidence_bundle_sha256,
+        "RuleEvaluationSHA256": identity.rule_evaluation_sha256,
+        "RuleDecisionStatus": identity.rule_decision_status,
+        "ProductionVerification": identity.production_verification,
+    }
+    if identity.exception_approval_id is not None:
+        properties["ExceptionApprovalID"] = identity.exception_approval_id
+        properties["ExceptionApprovalSHA256"] = str(identity.exception_approval_sha256)
+    return properties
 
 
 def _property_name(field: str) -> str:

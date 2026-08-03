@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+from openbimagent.assembly.rule_projection import RuleProjectionIdentity
 from openbimagent.assembly.semantic_snapshot import (
     FakeBlenderSemanticExecutor,
     SemanticSnapshot,
@@ -76,11 +77,24 @@ def test_execute_command_unknown() -> None:
         runner.execute_command("unknown_cmd", {})
 
 
-def _typed_plan() -> dict[str, Any]:
+def _typed_plan(*, with_rule_identity: bool = False) -> dict[str, Any]:
     from openbimagent.assembly.vectorworks_plan import VectorworksBuilder
     from test_compiled_utility_ir import solved_payload
 
-    return VectorworksBuilder().build(solved_payload()).model_dump(mode="json")
+    identity = (
+        RuleProjectionIdentity(
+            rule_evidence_bundle_sha256="a" * 64,
+            rule_evaluation_sha256="b" * 64,
+            rule_decision_status="fail",
+            production_verification="eligible",
+        )
+        if with_rule_identity
+        else None
+    )
+    return VectorworksBuilder().build(
+        solved_payload(),
+        rule_identity=identity,
+    ).model_dump(mode="json")
 
 
 def _typed_gate(runner: Any, params: dict[str, Any]) -> dict[str, Any]:
@@ -538,6 +552,57 @@ def test_execute_typed_plan_rejects_missing_or_tampered_runner_gate(
             params,
             gate={"requires_approval": True, "approved": True, "params_hash": "tampered"},
         )
+
+
+def test_execute_typed_plan_projects_and_validates_rule_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = _load_runner_module()
+    fake_vs = _fake_typed_vs()
+    monkeypatch.setitem(sys.modules, "vs", fake_vs)
+    plan = _typed_plan(with_rule_identity=True)
+    params = {
+        "plan": plan,
+        "output_path": str(tmp_path / "rule-identity.vwx"),
+        "authorized_root": str(tmp_path),
+    }
+    receipt = runner.execute_command(
+        "execute_plan",
+        params,
+        gate=_typed_gate(runner, params),
+    )
+    snapshot = SemanticSnapshot.model_validate(receipt["semantic_snapshot"])
+    assert snapshot.rule_identity is not None
+    assert snapshot.rule_identity.rule_evaluation_sha256 == "b" * 64
+    assert all(
+        item.domain_properties["rule_decision_status"] == "fail"
+        for item in snapshot.objects
+    )
+
+    missing_approval = json.loads(json.dumps(plan))
+    missing_approval["rule_identity"]["exception_approval_id"] = "approval-1"
+    with pytest.raises(ValueError, match="例外审批"):
+        runner._validate_typed_plan(missing_approval)
+
+    false_pass = json.loads(json.dumps(plan))
+    false_pass["rule_identity"]["rule_decision_status"] = "pass"
+    false_pass["rule_identity"]["production_verification"] = "review_required"
+    with pytest.raises(ValueError, match="PASS/FAIL"):
+        runner._validate_typed_plan(false_pass)
+
+    drifted = json.loads(json.dumps(plan))
+    field = next(
+        item
+        for operation in drifted["operations"]
+        if operation["operation"] == "set_record"
+        for item in operation["record_fields"]
+        if item["field_name"] == "Domain_rule_evaluation_sha256"
+    )
+    field["value"] = "c" * 64
+    drifted["canonical_sha256"] = runner._canonical_plan_sha256(drifted)
+    drifted["idempotency_key"] = f"vw-plan:{drifted['canonical_sha256']}"
+    with pytest.raises(ValueError, match="rule_identity"):
+        runner._validate_typed_plan(drifted)
 
 
 def test_execute_typed_plan_rejects_escape_overwrite_and_tampering(

@@ -4,8 +4,9 @@
 Manning 粗糙系数。首版只计算 DN300 混凝土正坡重力污水管的均匀流满流能力、
 部分充满度、流速和容量裕量；不优化或改写管径、坡度、坐标和管底标高。
 
-``MU-DRAIN-007`` 当前只有旧知识源记录，尚无结构化 production verification，
-因此最小流速规范合规保持 UNKNOWN。物理流量超过满流能力则确定性要求返工。
+``MU-DRAIN-007`` 通过版本化规则证据包绑定 production verification；只有完整、
+一致且 eligible 的规则证据才能产生 PASS/FAIL，review-required 规则保持 UNKNOWN。
+物理流量超过满流能力则确定性要求返工。
 """
 
 from __future__ import annotations
@@ -25,6 +26,16 @@ from openbimagent.utility.contracts import (
     EvidenceSubjectType,
     RuleEvidence,
     StrictFrozenModel,
+)
+from openbimagent.utility.rule_evidence import (
+    MunicipalRuleEvidenceBundle,
+    ProductionVerificationStatus,
+    RuleDecisionStatus,
+    RuleEnforcement,
+    RuleEvaluation,
+    VerifiedMunicipalRule,
+    build_rule_evaluation,
+    compile_municipal_rule_evidence_bundle,
 )
 from openbimagent.utility.solver import MIN_SEWAGE_DIAMETER_MM
 
@@ -83,6 +94,7 @@ class HydraulicSolverInput(StrictFrozenModel):
     protocol_version: str = Field(default=HYDRAULIC_SOLVER_INPUT_VERSION, pattern=r"^0\.1$")
     request_id: str = Field(min_length=1, max_length=256)
     source_ir_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    rule_evidence_bundle_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     calculation_model: Literal["manning_uniform_open_channel_si"] = HYDRAULIC_CALCULATION_MODEL
     roughness_inputs: tuple[RoughnessInput, ...] = Field(
         min_length=1,
@@ -135,7 +147,11 @@ class HydraulicSegmentResult(StrictFrozenModel):
     velocity_m_s: float | None = Field(default=None, gt=0.0)
     minimum_velocity_compliance: HydraulicComplianceStatus
     minimum_velocity_rule_id: Literal["MU-DRAIN-007"] = "MU-DRAIN-007"
-    minimum_velocity_rule_status: Literal["review_required"] = "review_required"
+    minimum_velocity_rule_status: Literal["production", "review_required"]
+    minimum_velocity_limit_m_s: float | None = Field(default=None, gt=0.0)
+    rule_set_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    rule_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    verification_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
     @model_validator(mode="after")
     def _validate_capacity_result(self) -> "HydraulicSegmentResult":
@@ -155,8 +171,25 @@ class HydraulicSegmentResult(StrictFrozenModel):
             raise ValueError("容量满足时必须包含部分充满度、面积、水力半径和流速")
         if not self.capacity_sufficient and any(value is not None for value in hydraulic_values):
             raise ValueError("超容量时不得伪造部分充满度或流速")
-        if self.minimum_velocity_compliance is not HydraulicComplianceStatus.UNKNOWN:
-            raise ValueError("v0.1 最小流速规则未获 production verification，必须保持 unknown")
+        if self.minimum_velocity_rule_status == "production":
+            if self.minimum_velocity_limit_m_s is None:
+                raise ValueError("production 最小流速规则必须包含 limit")
+            if self.velocity_m_s is None:
+                expected_compliance = HydraulicComplianceStatus.UNKNOWN
+            else:
+                expected_compliance = (
+                    HydraulicComplianceStatus.PASS
+                    if self.velocity_m_s + HYDRAULIC_TOLERANCE
+                    >= self.minimum_velocity_limit_m_s
+                    else HydraulicComplianceStatus.FAIL
+                )
+            if self.minimum_velocity_compliance is not expected_compliance:
+                raise ValueError("minimum_velocity_compliance 与 production rule/velocity 不一致")
+        else:
+            if self.minimum_velocity_limit_m_s is not None:
+                raise ValueError("review_required 最小流速规则不得输出 production limit")
+            if self.minimum_velocity_compliance is not HydraulicComplianceStatus.UNKNOWN:
+                raise ValueError("review_required 最小流速规则必须保持 unknown")
         return self
 
 
@@ -182,6 +215,7 @@ class HydraulicSolverResult(StrictFrozenModel):
     calculation_model: Literal["manning_uniform_open_channel_si"] = HYDRAULIC_CALCULATION_MODEL
     input_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     source_ir_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    rule_evidence_bundle_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     status: HydraulicSolveStatus
     scenarios: tuple[HydraulicScenarioResult, ...] = Field(min_length=1)
     hydraulics_in_spec: HydraulicComplianceStatus
@@ -221,10 +255,17 @@ class HydraulicSolverResult(StrictFrozenModel):
         )
         if self.status is not expected_status:
             raise ValueError("solver status 与容量结果不一致")
+        segment_compliances = {
+            segment.minimum_velocity_compliance
+            for scenario in self.scenarios
+            for segment in scenario.segments
+        }
         expected_compliance = (
-            HydraulicComplianceStatus.UNKNOWN
-            if all_capacity
-            else HydraulicComplianceStatus.FAIL
+            HydraulicComplianceStatus.FAIL
+            if not all_capacity or HydraulicComplianceStatus.FAIL in segment_compliances
+            else HydraulicComplianceStatus.UNKNOWN
+            if HydraulicComplianceStatus.UNKNOWN in segment_compliances
+            else HydraulicComplianceStatus.PASS
         )
         if self.hydraulics_in_spec is not expected_compliance:
             raise ValueError("hydraulics_in_spec 与容量/规则证据不一致")
@@ -241,6 +282,79 @@ class HydraulicSolverResult(StrictFrozenModel):
 
     def canonical_sha256(self) -> str:
         return _canonical_sha256(self.canonical_dict())
+
+    def rule_evaluation(
+        self,
+        *,
+        compiled_ir: CompiledUtilityIR,
+        rule_evidence_bundle: MunicipalRuleEvidenceBundle,
+    ) -> RuleEvaluation:
+        """聚合全部工况和管段，形成单一、稳定的网络级最小流速规则评估。"""
+        if compiled_ir.canonical_sha256() != self.source_ir_sha256:
+            raise HydraulicSolverError("hydraulic RuleEvaluation 的 CompiledUtilityIR 身份不匹配")
+        if rule_evidence_bundle.canonical_sha256 != self.rule_evidence_bundle_sha256:
+            raise HydraulicSolverError("hydraulic RuleEvaluation 的规则证据包身份不匹配")
+        known_segment_ids = {segment.segment_id for segment in compiled_ir.segments}
+        evaluated_segments = {
+            segment.segment_id
+            for scenario in self.scenarios
+            for segment in scenario.segments
+        }
+        if evaluated_segments != known_segment_ids:
+            raise HydraulicSolverError("hydraulic RuleEvaluation 的 segment 集合与源 IR 不一致")
+        rule = rule_evidence_bundle.rule("MU-DRAIN-007")
+        segments = tuple(
+            segment
+            for scenario in sorted(self.scenarios, key=lambda item: item.scenario_id)
+            for segment in sorted(scenario.segments, key=lambda item: item.segment_id)
+        )
+        for segment in segments:
+            if (
+                segment.rule_set_sha256 != rule_evidence_bundle.canonical_sha256
+                or segment.rule_sha256 != rule.canonical_sha256
+                or segment.verification_sha256 != rule.verification.canonical_sha256
+            ):
+                raise HydraulicSolverError("hydraulic RuleEvaluation 的逐段规则身份发生漂移")
+        measured_values = [
+            segment.velocity_m_s
+            for segment in segments
+            if segment.velocity_m_s is not None
+        ]
+        measured_value = min(measured_values) if measured_values else None
+        production_verification = rule.verification.production_verification
+        velocity_statuses = {
+            segment.minimum_velocity_compliance
+            for segment in segments
+        }
+        if production_verification is ProductionVerificationStatus.REVIEW_REQUIRED:
+            status = RuleDecisionStatus.UNKNOWN
+            limit_value = None
+        else:
+            status = RuleDecisionStatus(
+                HydraulicComplianceStatus.FAIL.value
+                if HydraulicComplianceStatus.FAIL in velocity_statuses
+                else HydraulicComplianceStatus.UNKNOWN.value
+                if HydraulicComplianceStatus.UNKNOWN in velocity_statuses
+                else HydraulicComplianceStatus.PASS.value
+            )
+            limit_value = float(rule.value)
+        return build_rule_evaluation(
+            evaluation_id=f"{self.request_id}-network-minimum-velocity",
+            rule_set_sha256=rule_evidence_bundle.canonical_sha256,
+            rule_sha256=rule.canonical_sha256,
+            verification_sha256=rule.verification.canonical_sha256,
+            production_verification=production_verification,
+            rule_id=rule.rule_id,
+            subject_type=EvidenceSubjectType.NETWORK,
+            subject_id=compiled_ir.ir_id,
+            measured_value=measured_value,
+            limit_value=limit_value,
+            unit="m/s",
+            status=status,
+            review_reason=None,
+            exception_approval_id=None,
+            exception_approval_sha256=None,
+        )
 
     def rule_evidence(self, *, compiled_ir: CompiledUtilityIR) -> tuple[RuleEvidence, ...]:
         """导出独立、可散列的水力证据，并校验全部 subject 属于绑定的源 IR。"""
@@ -288,16 +402,18 @@ class HydraulicSolverResult(StrictFrozenModel):
                         ),
                         rule_id=segment.minimum_velocity_rule_id,
                         check_name="hydraulics_in_spec",
-                        status=EvidenceStatus.UNKNOWN,
+                        status=EvidenceStatus(segment.minimum_velocity_compliance.value),
                         subject_type=EvidenceSubjectType.SEGMENT,
                         subject_id=segment.segment_id,
                         detail=(
                             f"scenario={scenario.scenario_id}; calculated velocity="
                             f"{segment.velocity_m_s!r}; rule_status="
-                            f"{segment.minimum_velocity_rule_status}; production verification incomplete"
+                            f"{segment.minimum_velocity_rule_status}; rule_set="
+                            f"{segment.rule_set_sha256}; rule={segment.rule_sha256}; "
+                            f"verification={segment.verification_sha256}"
                         ),
                         measured_value=segment.velocity_m_s,
-                        limit_value=None,
+                        limit_value=segment.minimum_velocity_limit_m_s,
                         unit="m/s",
                         source_clause=None,
                     )
@@ -338,8 +454,7 @@ class HydraulicSolverResult(StrictFrozenModel):
                     else None
                 ),
                 "detail": (
-                    "physical capacity passed, but MU-DRAIN-007 minimum velocity remains "
-                    "review_required because production verification is incomplete"
+                    "minimum velocity compliance remains unknown because bound rule evidence requires review"
                     if self.hydraulics_in_spec is HydraulicComplianceStatus.UNKNOWN
                     else self.detail
                 )
@@ -352,6 +467,7 @@ def solve_hydraulic_network(
     compiled_ir: CompiledUtilityIR | dict[str, Any],
     solver_input: HydraulicSolverInput | dict[str, Any],
     *,
+    rule_evidence_bundle: MunicipalRuleEvidenceBundle | None = None,
     schema_gate: SchemaGate | None = None,
 ) -> HydraulicSolverResult:
     """校核不可变重力污水几何；不返回或应用任何几何修改。"""
@@ -371,6 +487,13 @@ def solve_hydraulic_network(
     except (ValidationError, SchemaGateError) as exc:
         raise HydraulicSolverError(f"hydraulic Solver v0.1 输入未通过门禁: {exc}") from exc
 
+    bundle = rule_evidence_bundle or compile_municipal_rule_evidence_bundle()
+    if request.rule_evidence_bundle_sha256 != bundle.canonical_sha256:
+        raise HydraulicSolverError(
+            "hydraulic rule_evidence_bundle_sha256 与规则证据包 canonical SHA-256 不一致: "
+            f"input={request.rule_evidence_bundle_sha256}, actual={bundle.canonical_sha256}"
+        )
+    velocity_rule = bundle.rule("MU-DRAIN-007")
     ir_sha256 = ir.canonical_sha256()
     if request.source_ir_sha256 != ir_sha256:
         raise HydraulicSolverError(
@@ -405,6 +528,8 @@ def solve_hydraulic_network(
                 roughness_provenance=roughness[segment_id].provenance,
                 roughness_source_reference=roughness[segment_id].source_reference,
                 flow_m3_s=flows[segment_id],
+                rule_set_sha256=bundle.canonical_sha256,
+                velocity_rule=velocity_rule,
             )
             for segment_id in sorted(segment_ids)
         )
@@ -422,6 +547,7 @@ def solve_hydraulic_network(
         request_id=request.request_id,
         input_sha256=request.canonical_sha256(),
         source_ir_sha256=ir_sha256,
+        rule_evidence_bundle_sha256=bundle.canonical_sha256,
         status=(
             HydraulicSolveStatus.CALCULATED
             if all_capacity
@@ -429,14 +555,25 @@ def solve_hydraulic_network(
         ),
         scenarios=tuple(scenario_results),
         hydraulics_in_spec=(
-            HydraulicComplianceStatus.UNKNOWN
-            if all_capacity
-            else HydraulicComplianceStatus.FAIL
+            HydraulicComplianceStatus.FAIL
+            if not all_capacity
+            or any(
+                segment.minimum_velocity_compliance is HydraulicComplianceStatus.FAIL
+                for scenario in scenario_results
+                for segment in scenario.segments
+            )
+            else HydraulicComplianceStatus.UNKNOWN
+            if any(
+                segment.minimum_velocity_compliance is HydraulicComplianceStatus.UNKNOWN
+                for scenario in scenario_results
+                for segment in scenario.segments
+            )
+            else HydraulicComplianceStatus.PASS
         ),
         geometry_mutated=False,
         detail=(
             "满流能力、部分充满度和流速已按显式 Manning n 计算；"
-            "MU-DRAIN-007 尚无结构化 production verification，最小流速合规保持 UNKNOWN。"
+            "MU-DRAIN-007 已绑定版本化规则证据包并确定性计算最小流速合规。"
             if all_capacity
             else "至少一个工况的管段流量超过满流能力；仅返回返工要求，不隐式修改几何。"
         ),
@@ -514,6 +651,8 @@ def _solve_segment(
     roughness_provenance: Literal["designer_input", "approved_catalog", "measured"],
     roughness_source_reference: str,
     flow_m3_s: float,
+    rule_set_sha256: str,
+    velocity_rule: VerifiedMunicipalRule,
 ) -> HydraulicSegmentResult:
     diameter_m = diameter_mm / 1000.0
     radius_m = diameter_m / 2.0
@@ -546,6 +685,13 @@ def _solve_segment(
         area_m2 = None
         hydraulic_radius_m = None
         velocity_m_s = None
+    velocity_compliance = (
+        HydraulicComplianceStatus.UNKNOWN
+        if velocity_rule.enforcement is RuleEnforcement.REVIEW_REQUIRED or velocity_m_s is None
+        else HydraulicComplianceStatus.PASS
+        if velocity_m_s + HYDRAULIC_TOLERANCE >= float(velocity_rule.value)
+        else HydraulicComplianceStatus.FAIL
+    )
     return HydraulicSegmentResult(
         segment_id=segment_id,
         diameter_mm=diameter_mm,
@@ -561,7 +707,20 @@ def _solve_segment(
         flow_area_m2=area_m2,
         hydraulic_radius_m=hydraulic_radius_m,
         velocity_m_s=velocity_m_s,
-        minimum_velocity_compliance=HydraulicComplianceStatus.UNKNOWN,
+        minimum_velocity_compliance=velocity_compliance,
+        minimum_velocity_rule_status=(
+            "production"
+            if velocity_rule.enforcement is RuleEnforcement.PRODUCTION
+            else "review_required"
+        ),
+        minimum_velocity_limit_m_s=(
+            float(velocity_rule.value)
+            if velocity_rule.enforcement is RuleEnforcement.PRODUCTION
+            else None
+        ),
+        rule_set_sha256=rule_set_sha256,
+        rule_sha256=velocity_rule.canonical_sha256,
+        verification_sha256=velocity_rule.verification.canonical_sha256,
     )
 
 

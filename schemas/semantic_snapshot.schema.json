@@ -3,7 +3,7 @@
   "$id": "https://openbimagent.local/schemas/semantic_snapshot.schema.json",
   "title": "SemanticSnapshotV1",
   "type": "object",
-  "required": ["snapshot_version", "host", "host_adapter", "source_ir_id", "source_ir_sha256", "units", "objects", "allowed_host_differences", "canonical_sha256"],
+  "required": ["snapshot_version", "host", "host_adapter", "source_ir_id", "source_ir_sha256", "rule_identity", "units", "objects", "allowed_host_differences", "canonical_sha256"],
   "additionalProperties": false,
   "properties": {
     "snapshot_version": {"type": "string", "pattern": "^1(\\.\\d+)?$"},
@@ -11,12 +11,26 @@
     "host_adapter": {"type": "string", "minLength": 1, "maxLength": 128},
     "source_ir_id": {"type": "string", "minLength": 1, "maxLength": 256},
     "source_ir_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "rule_identity": {"oneOf": [{"$ref": "#/$defs/ruleIdentity"}, {"type": "null"}]},
     "units": {"const": "m"},
     "objects": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/semanticObject"}},
     "allowed_host_differences": {"const": ["host_handle", "presentation_material"]},
     "canonical_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
   },
   "$defs": {
+    "ruleIdentity": {
+      "type": "object",
+      "required": ["rule_evidence_bundle_sha256", "rule_evaluation_sha256", "rule_decision_status", "production_verification", "exception_approval_id", "exception_approval_sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "rule_evidence_bundle_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "rule_evaluation_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "rule_decision_status": {"enum": ["pass", "fail", "unknown", "review_required"]},
+        "production_verification": {"enum": ["eligible", "review_required"]},
+        "exception_approval_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 256},
+        "exception_approval_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
     "coordinate": {
       "type": "object",
       "required": ["x_m", "y_m", "z_m"],

@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/municipal_rule_evidence_bundle.schema.json",
+  "title": "MunicipalRuleEvidenceBundle",
+  "description": "T6 多标准市政规则证据包；规则、规范证据和规则集均由 canonical SHA-256 绑定。",
+  "type": "object",
+  "required": ["protocol_version", "bundle_id", "source_path", "source_sha256", "compiler_name", "compiler_version", "rules", "canonical_sha256"],
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": {"const": "1.0"},
+    "bundle_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "source_path": {"type": "string", "minLength": 1, "maxLength": 1024},
+    "source_sha256": {"$ref": "#/$defs/hash"},
+    "compiler_name": {"type": "string", "minLength": 1, "maxLength": 256},
+    "compiler_version": {"type": "string", "minLength": 1, "maxLength": 128},
+    "rules": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/rule"}},
+    "canonical_sha256": {"$ref": "#/$defs/hash"}
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "url": {"type": ["string", "null"], "pattern": "^https?://[^\\s]+$", "maxLength": 2048},
+    "applicability": {
+      "type": "object",
+      "required": ["field", "operator", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "field": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$", "maxLength": 128},
+        "operator": {"enum": ["eq", "in", "le", "lt", "ge", "gt"]},
+        "value": {
+          "oneOf": [
+            {"type": ["string", "number", "boolean"]},
+            {"type": "array", "minItems": 1, "items": {"type": ["string", "number", "boolean"]}}
+          ]
+        }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "required": ["protocol_version", "status", "source_tier", "standard_id", "standard_title", "standard_status", "status_checked_at", "status_source_url", "clause", "table", "content_checked_at", "official_copy_url", "official_copy_sha256", "secondary_source_url", "secondary_source_sha256", "evidence_locator", "applicability_complete", "production_verification", "canonical_sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "protocol_version": {"const": "1.0"},
+        "status": {"enum": ["verified", "unverified"]},
+        "source_tier": {"enum": ["official", "secondary", "legacy"]},
+        "standard_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "standard_title": {"type": "string", "minLength": 1, "maxLength": 512},
+        "standard_status": {"enum": ["current", "superseded", "unknown"]},
+        "status_checked_at": {"type": ["string", "null"], "format": "date"},
+        "status_source_url": {"$ref": "#/$defs/url"},
+        "clause": {"type": "string", "minLength": 1, "maxLength": 128},
+        "table": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+        "content_checked_at": {"type": ["string", "null"], "format": "date"},
+        "official_copy_url": {"$ref": "#/$defs/url"},
+        "official_copy_sha256": {"oneOf": [{"$ref": "#/$defs/hash"}, {"type": "null"}]},
+        "secondary_source_url": {"$ref": "#/$defs/url"},
+        "secondary_source_sha256": {"oneOf": [{"$ref": "#/$defs/hash"}, {"type": "null"}]},
+        "evidence_locator": {"type": "string", "minLength": 1, "maxLength": 2048},
+        "applicability_complete": {"type": "boolean"},
+        "production_verification": {"enum": ["eligible", "review_required"]},
+        "canonical_sha256": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "rule": {
+      "type": "object",
+      "required": ["protocol_version", "rule_id", "source_rule_id", "rule_type", "parameter", "operator", "value", "unit", "source_clause", "applicability", "confidence", "verification", "enforcement", "canonical_sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "protocol_version": {"const": "1.0"},
+        "rule_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "source_rule_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "rule_type": {"enum": ["horizontal_clearance", "vertical_clearance", "road_crossing", "rail_crossing", "river_crossing", "structure_clearance", "hydraulics"]},
+        "parameter": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$", "maxLength": 256},
+        "operator": {"enum": ["minimum", "maximum", "exact", "required", "prohibited"]},
+        "value": {"type": ["number", "string", "boolean"]},
+        "unit": {"type": "string", "minLength": 1, "maxLength": 64},
+        "source_clause": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "applicability": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/applicability"}},
+        "confidence": {"enum": ["high", "medium", "low"]},
+        "verification": {"$ref": "#/$defs/verification"},
+        "enforcement": {"enum": ["production", "review_required"]},
+        "canonical_sha256": {"$ref": "#/$defs/hash"}
+      }
+    }
+  }
+}

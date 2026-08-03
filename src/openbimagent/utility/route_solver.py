@@ -12,14 +12,24 @@ import hashlib
 import heapq
 import json
 import math
+from datetime import datetime
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
 
 from pydantic import Field, ValidationError, model_validator
 
 from openbimagent.schema_gate.gate import SchemaGate, SchemaGateError
 from openbimagent.utility.contracts import CoordinateReference, StrictFrozenModel
 from openbimagent.utility.network_solver import NetworkGravitySolverInput
+from openbimagent.utility.rule_evidence import (
+    ClearanceExceptionApproval,
+    EvidenceRuleSelectionStatus,
+    MunicipalRuleEvidenceBundle,
+    RuleDecisionStatus,
+    RuleType,
+    evaluate_municipal_rule,
+    select_municipal_rule,
+)
 from openbimagent.utility.rules import (
     MunicipalRuleSet,
     RuleSelectionStatus,
@@ -185,6 +195,36 @@ class RoutePoint(StrictFrozenModel):
     cover_depth_m: float
 
 
+class T6RouteObstacleConstraint(StrictFrozenModel):
+    obstacle_id: str = Field(min_length=1, max_length=256)
+    rule_id: str = Field(min_length=1, max_length=256)
+    rule_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    rule_evidence_bundle_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    original_clearance_m: float = Field(gt=0)
+    effective_clearance_m: float = Field(gt=0)
+    exception_approval_id: str | None = Field(default=None, min_length=1, max_length=256)
+    exception_approval_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def _validate_approval_pair(self) -> "T6RouteObstacleConstraint":
+        if (self.exception_approval_id is None) is not (self.exception_approval_sha256 is None):
+            raise ValueError("T6 route 例外审批 ID/SHA 必须同时存在或同时缺失")
+        reduced = self.effective_clearance_m < self.original_clearance_m - _GRID_TOLERANCE_M
+        unchanged = math.isclose(
+            self.effective_clearance_m,
+            self.original_clearance_m,
+            rel_tol=0.0,
+            abs_tol=_GRID_TOLERANCE_M,
+        )
+        if not reduced and not unchanged:
+            raise ValueError("T6 route effective_clearance_m 不得高于原规则净距")
+        if reduced and self.exception_approval_id is None:
+            raise ValueError("T6 route 减距结果必须绑定例外审批 ID/SHA")
+        if unchanged and self.exception_approval_id is not None:
+            raise ValueError("T6 route 未发生减距时不得携带例外审批身份")
+        return self
+
+
 class RouteConstraintReport(StrictFrozenModel):
     cover_depth_in_spec: bool
     clearance_in_spec: bool
@@ -261,11 +301,30 @@ class GridRouteSolverResult(StrictFrozenModel):
         return _canonical_sha256(self.canonical_dict())
 
 
+class T6GridRouteSolverResult(StrictFrozenModel):
+    route_result: GridRouteSolverResult
+    rule_evidence_bundle_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    obstacle_constraints: tuple[T6RouteObstacleConstraint, ...]
+
+    @model_validator(mode="after")
+    def _validate_t6_route_result(self) -> "T6GridRouteSolverResult":
+        obstacle_ids = [item.obstacle_id for item in self.obstacle_constraints]
+        if obstacle_ids != sorted(obstacle_ids) or len(obstacle_ids) != len(set(obstacle_ids)):
+            raise ValueError("T6 route obstacle_constraints 必须按 obstacle_id 排序且不得重复")
+        if any(
+            item.rule_evidence_bundle_sha256 != self.rule_evidence_bundle_sha256
+            for item in self.obstacle_constraints
+        ):
+            raise ValueError("T6 route 规则决策与规则包 SHA-256 不一致")
+        return self
+
+
 def solve_grid_route(
     solver_input: GridRouteSolverInput | dict[str, Any],
     *,
     municipal_rule_set: MunicipalRuleSet | None = None,
     schema_gate: SchemaGate | None = None,
+    _t6_obstacle_constraints: tuple[tuple[AxisAlignedBoxObstacle | ExistingPipeObstacle, float, str], ...] | None = None,
 ) -> GridRouteSolverResult:
     """求解批准走廊中的稳定四邻接路线与逐 cell 纵断面。"""
     gate = schema_gate or SchemaGate()
@@ -291,7 +350,11 @@ def solve_grid_route(
             f"input={request.municipal_rule_set_sha256}, actual={rule_set.canonical_sha256}"
         )
 
-    obstacle_constraints = _compile_obstacle_constraints(request, rule_set)
+    obstacle_constraints = (
+        _compile_obstacle_constraints(request, rule_set)
+        if _t6_obstacle_constraints is None
+        else _t6_obstacle_constraints
+    )
     allowed = {cell.identity() for cell in request.allowed_cells}
     start = request.start.cell.identity()
     end = request.end.cell.identity()
@@ -377,6 +440,116 @@ def solve_grid_route(
     return _gated_result(gate, result)
 
 
+def solve_grid_route_t6(
+    solver_input: GridRouteSolverInput | dict[str, Any],
+    *,
+    rule_evidence_bundle: MunicipalRuleEvidenceBundle,
+    project_id: str,
+    evaluated_at: datetime,
+    exception_approvals: Mapping[str, ClearanceExceptionApproval] | None = None,
+    municipal_rule_set: MunicipalRuleSet | None = None,
+    schema_gate: SchemaGate | None = None,
+) -> T6GridRouteSolverResult:
+    """使用 T6 规则包和按 obstacle_id 显式给出的减距审批求解路线。"""
+    try:
+        request = (
+            solver_input
+            if isinstance(solver_input, GridRouteSolverInput)
+            else GridRouteSolverInput.model_validate(solver_input)
+        )
+        bundle = MunicipalRuleEvidenceBundle.model_validate(
+            rule_evidence_bundle.model_dump(mode="json")
+        )
+    except ValidationError as exc:
+        raise RouteSolverError(f"T6 route 输入或规则包未通过门禁: {exc}") from exc
+    approvals = dict(exception_approvals or {})
+    obstacle_ids = {item.obstacle_id for item in request.obstacles}
+    unknown_approvals = sorted(set(approvals) - obstacle_ids)
+    if unknown_approvals:
+        raise RouteSolverError(f"T6 route 审批引用未知 obstacle_id: {unknown_approvals}")
+
+    compiled: list[tuple[AxisAlignedBoxObstacle | ExistingPipeObstacle, float, str]] = []
+    decisions: list[T6RouteObstacleConstraint] = []
+    pipe_radius_m = request.diameter_mm / 2000.0
+    for obstacle in sorted(request.obstacles, key=lambda item: item.obstacle_id):
+        rule_type, facts = _t6_obstacle_facts(obstacle)
+        approval = approvals.get(obstacle.obstacle_id)
+        selection, evaluation = evaluate_municipal_rule(
+            bundle,
+            evaluation_id=f"{request.request_id}:{obstacle.obstacle_id}:clearance",
+            rule_type=rule_type,
+            facts=facts,
+            subject_type="segment",
+            subject_id=obstacle.obstacle_id,
+            measured_value=(
+                approval.approved_clearance_m if approval is not None else _selected_rule_value(
+                    bundle,
+                    rule_type=rule_type,
+                    facts=facts,
+                    obstacle_id=obstacle.obstacle_id,
+                )
+            ),
+            project_id=project_id,
+            evaluated_at=evaluated_at,
+            exception_approval=approval,
+        )
+        if (
+            selection.status is not EvidenceRuleSelectionStatus.SELECTED
+            or selection.rule is None
+            or evaluation is None
+            or evaluation.status is not RuleDecisionStatus.PASS
+        ):
+            raise RouteSolverError(
+                f"障碍物 {obstacle.obstacle_id!r} T6 净距规则未获生产执行资格: "
+                f"selection={selection.status.value}; {selection.detail}"
+            )
+        if isinstance(selection.rule.value, bool) or not isinstance(selection.rule.value, int | float):
+            raise RouteSolverError(f"障碍物 {obstacle.obstacle_id!r} T6 净距规则不是数值")
+        effective_clearance_m = float(evaluation.limit_value)
+        obstacle_radius_m = (
+            obstacle.outer_diameter_mm / 2000.0
+            if isinstance(obstacle, ExistingPipeObstacle)
+            else 0.0
+        )
+        compiled.append(
+            (
+                obstacle,
+                effective_clearance_m + pipe_radius_m + obstacle_radius_m,
+                selection.rule.rule_id,
+            )
+        )
+        decisions.append(
+            T6RouteObstacleConstraint(
+                obstacle_id=obstacle.obstacle_id,
+                rule_id=selection.rule.rule_id,
+                rule_sha256=selection.rule.canonical_sha256,
+                rule_evidence_bundle_sha256=bundle.canonical_sha256,
+                original_clearance_m=float(selection.rule.value),
+                effective_clearance_m=effective_clearance_m,
+                exception_approval_id=evaluation.exception_approval_id,
+                exception_approval_sha256=evaluation.exception_approval_sha256,
+            )
+        )
+    route_result = solve_grid_route(
+        request,
+        municipal_rule_set=municipal_rule_set,
+        schema_gate=schema_gate,
+        _t6_obstacle_constraints=tuple(compiled),
+    )
+    result = T6GridRouteSolverResult(
+        route_result=route_result,
+        rule_evidence_bundle_sha256=bundle.canonical_sha256,
+        obstacle_constraints=tuple(decisions),
+    )
+    try:
+        (schema_gate or SchemaGate()).gate_or_fix(
+            "t6_grid_route_solver_result", result.model_dump(mode="json")
+        )
+    except SchemaGateError as exc:
+        raise RouteSolverError(f"T6 route 结果未通过 Schema Gate: {exc}") from exc
+    return result
+
+
 def apply_grid_route_to_network_input(
     network_input: NetworkGravitySolverInput | dict[str, Any],
     *,
@@ -384,6 +557,7 @@ def apply_grid_route_to_network_input(
     route_input: GridRouteSolverInput | dict[str, Any],
     route_result: GridRouteSolverResult,
     municipal_rule_set: MunicipalRuleSet | None = None,
+    _expected_route_result: GridRouteSolverResult | None = None,
 ) -> NetworkGravitySolverInput:
     """将已选择折线路线展开为网络节点/管段；网络 Solver 仍负责最终标高传播。"""
     try:
@@ -406,7 +580,7 @@ def apply_grid_route_to_network_input(
     if route.coordinate_reference != network.coordinate_reference:
         raise RouteSolverError("route coordinate_reference 与 network coordinate_reference 不一致")
     candidate = route_result.selected_candidate()
-    expected_result = solve_grid_route(
+    expected_result = _expected_route_result or solve_grid_route(
         route,
         municipal_rule_set=municipal_rule_set,
     )
@@ -500,6 +674,80 @@ def apply_grid_route_to_network_input(
         return NetworkGravitySolverInput.model_validate(payload)
     except ValidationError as exc:
         raise RouteSolverError(f"路线展开后的 network input 未通过门禁: {exc}") from exc
+
+
+def apply_grid_route_t6_to_network_input(
+    network_input: NetworkGravitySolverInput | dict[str, Any],
+    *,
+    segment_id: str,
+    route_input: GridRouteSolverInput | dict[str, Any],
+    route_result: T6GridRouteSolverResult,
+    rule_evidence_bundle: MunicipalRuleEvidenceBundle,
+    project_id: str,
+    evaluated_at: datetime,
+    exception_approvals: Mapping[str, ClearanceExceptionApproval] | None = None,
+    municipal_rule_set: MunicipalRuleSet | None = None,
+) -> NetworkGravitySolverInput:
+    """按同一 T6 规则与审批上下文重算路线，再安全展开到网络输入。"""
+    expected = solve_grid_route_t6(
+        route_input,
+        rule_evidence_bundle=rule_evidence_bundle,
+        project_id=project_id,
+        evaluated_at=evaluated_at,
+        exception_approvals=exception_approvals,
+        municipal_rule_set=municipal_rule_set,
+    )
+    if route_result.rule_evidence_bundle_sha256 != rule_evidence_bundle.canonical_sha256:
+        raise RouteSolverError("T6 route_result 与 rule_evidence_bundle SHA-256 不一致")
+    if route_result.obstacle_constraints != expected.obstacle_constraints:
+        raise RouteSolverError("T6 route obstacle 规则或审批决策与确定性重算不一致")
+    return apply_grid_route_to_network_input(
+        network_input,
+        segment_id=segment_id,
+        route_input=route_input,
+        route_result=route_result.route_result,
+        municipal_rule_set=municipal_rule_set,
+        _expected_route_result=expected.route_result,
+    )
+
+
+def _t6_obstacle_facts(
+    obstacle: AxisAlignedBoxObstacle | ExistingPipeObstacle,
+) -> tuple[RuleType, dict[str, Any]]:
+    if isinstance(obstacle, AxisAlignedBoxObstacle):
+        return RuleType.STRUCTURE_CLEARANCE, {"obstacle_category": obstacle.category}
+    facts: dict[str, Any] = {"obstacle_category": obstacle.category}
+    if obstacle.category == "water":
+        facts["outer_diameter_class"] = (
+            "d_le_200" if obstacle.outer_diameter_mm <= 200.0 else "d_gt_200"
+        )
+    elif obstacle.category == "gas":
+        facts["pressure_class"] = obstacle.pressure_class
+    elif obstacle.category == "telecom":
+        facts["burial_method"] = obstacle.burial_method
+    elif obstacle.category == "power":
+        facts["burial_method"] = obstacle.burial_method
+    else:
+        raise RouteSolverError(f"T6 route 不支持 obstacle category={obstacle.category!r}")
+    return RuleType.HORIZONTAL_CLEARANCE, facts
+
+
+def _selected_rule_value(
+    bundle: MunicipalRuleEvidenceBundle,
+    *,
+    rule_type: RuleType,
+    facts: Mapping[str, Any],
+    obstacle_id: str,
+) -> float:
+    selection = select_municipal_rule(bundle, rule_type=rule_type, facts=facts)
+    if selection.status is not EvidenceRuleSelectionStatus.SELECTED or selection.rule is None:
+        raise RouteSolverError(
+            f"障碍物 {obstacle_id!r} T6 净距规则无法唯一选择: "
+            f"status={selection.status.value}; {selection.detail}"
+        )
+    if isinstance(selection.rule.value, bool) or not isinstance(selection.rule.value, int | float):
+        raise RouteSolverError(f"障碍物 {obstacle_id!r} T6 净距规则不是数值")
+    return float(selection.rule.value)
 
 
 def _compile_obstacle_constraints(
@@ -914,6 +1162,10 @@ __all__ = [
     "RouteSolveStatus",
     "RouteSolverError",
     "SurfaceSample",
+    "T6GridRouteSolverResult",
+    "T6RouteObstacleConstraint",
+    "apply_grid_route_t6_to_network_input",
     "apply_grid_route_to_network_input",
     "solve_grid_route",
+    "solve_grid_route_t6",
 ]

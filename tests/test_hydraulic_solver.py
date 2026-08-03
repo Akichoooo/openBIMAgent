@@ -12,7 +12,10 @@ from openbimagent.utility import (
     HydraulicSolveStatus,
     HydraulicSolverError,
     HydraulicSolverInput,
+    ProductionVerificationStatus,
+    RuleDecisionStatus,
     apply_grid_route_to_network_input,
+    compile_municipal_rule_evidence_bundle,
     compile_municipal_rule_set,
     solve_grid_route,
     solve_hydraulic_network,
@@ -80,6 +83,7 @@ def hydraulic_payload() -> dict:
         "protocol_version": "0.1",
         "request_id": "hydraulic-case-001",
         "source_ir_sha256": compiled.canonical_sha256(),
+        "rule_evidence_bundle_sha256": compile_municipal_rule_evidence_bundle().canonical_sha256,
         "calculation_model": "manning_uniform_open_channel_si",
         "roughness_inputs": [
             {
@@ -142,8 +146,59 @@ def test_hydraulic_solver_computes_capacity_partial_depth_and_velocity() -> None
     assert pipe.roughness_source_reference == "benchmark explicit input"
     assert pipe.flow_m3_s == pytest.approx(0.010)
     assert pipe.capacity_margin_m3_s == pytest.approx(pipe.full_flow_capacity_m3_s - pipe.flow_m3_s)
-    assert pipe.minimum_velocity_compliance == "unknown"
-    assert result.hydraulics_in_spec == "unknown"
+    assert pipe.minimum_velocity_compliance == "fail"
+    assert pipe.minimum_velocity_rule_status == "production"
+    assert pipe.minimum_velocity_limit_m_s == pytest.approx(0.6)
+    assert result.hydraulics_in_spec == "fail"
+
+
+def test_hydraulic_solver_passes_minimum_velocity_with_sufficient_verified_flow() -> None:
+    compiled = compiled_network()
+    payload = hydraulic_payload()
+    for scenario in payload["scenarios"]:
+        scenario["segment_flows"] = [
+                {"segment_id": "pipe-001", "flow_m3_s": 0.024},
+                {"segment_id": "pipe-002", "flow_m3_s": 0.012},
+                {"segment_id": "pipe-003", "flow_m3_s": 0.012},
+        ]
+    result = solve_hydraulic_network(compiled, payload)
+    assert result.hydraulics_in_spec == "pass"
+    assert all(
+        segment.minimum_velocity_compliance == "pass"
+        for scenario in result.scenarios
+        for segment in scenario.segments
+    )
+
+
+def test_hydraulic_solver_builds_network_rule_evaluation_from_all_scenarios() -> None:
+    compiled = compiled_network()
+    bundle = compile_municipal_rule_evidence_bundle()
+    result = solve_hydraulic_network(
+        compiled,
+        hydraulic_payload(),
+        rule_evidence_bundle=bundle,
+    )
+    evaluation = result.rule_evaluation(
+        compiled_ir=compiled,
+        rule_evidence_bundle=bundle,
+    )
+    rule = bundle.rule("MU-DRAIN-007")
+    assert evaluation.subject_type.value == "network"
+    assert evaluation.subject_id == compiled.ir_id
+    assert evaluation.rule_set_sha256 == bundle.canonical_sha256
+    assert evaluation.rule_sha256 == rule.canonical_sha256
+    assert evaluation.verification_sha256 == rule.verification.canonical_sha256
+    assert evaluation.production_verification is ProductionVerificationStatus.ELIGIBLE
+    assert evaluation.status is RuleDecisionStatus.FAIL
+    assert evaluation.measured_value < evaluation.limit_value
+    assert len(evaluation.canonical_sha256) == 64
+
+
+def test_hydraulic_solver_rejects_rule_evidence_bundle_hash_drift() -> None:
+    payload = hydraulic_payload()
+    payload["rule_evidence_bundle_sha256"] = "0" * 64
+    with pytest.raises(HydraulicSolverError, match="rule_evidence_bundle_sha256"):
+        solve_hydraulic_network(compiled_network(), payload)
 
 
 def test_hydraulic_solver_reports_over_capacity_without_mutating_geometry() -> None:
@@ -161,8 +216,39 @@ def test_hydraulic_solver_reports_over_capacity_without_mutating_geometry() -> N
     assert pipe.velocity_m_s is None
     assert result.status is HydraulicSolveStatus.REWORK_REQUIRED
     assert result.hydraulics_in_spec == "fail"
+    assert pipe.minimum_velocity_compliance == "unknown"
+    evaluation = result.rule_evaluation(
+        compiled_ir=compiled,
+        rule_evidence_bundle=compile_municipal_rule_evidence_bundle(),
+    )
+    assert evaluation.status is RuleDecisionStatus.FAIL
+    assert evaluation.measured_value is not None
     assert compiled.canonical_sha256() == before
     assert result.geometry_mutated is False
+
+
+def test_network_velocity_rule_evaluation_does_not_relabel_capacity_failure() -> None:
+    compiled = compiled_network()
+    bundle = compile_municipal_rule_evidence_bundle()
+    payload = hydraulic_payload()
+    payload["scenarios"][0]["segment_flows"] = [
+        {"segment_id": "pipe-001", "flow_m3_s": 0.024},
+        {"segment_id": "pipe-002", "flow_m3_s": 0.012},
+        {"segment_id": "pipe-003", "flow_m3_s": 0.012},
+    ]
+    payload["scenarios"][1]["segment_flows"] = [
+        {"segment_id": "pipe-001", "flow_m3_s": 0.1},
+        {"segment_id": "pipe-002", "flow_m3_s": 0.06},
+        {"segment_id": "pipe-003", "flow_m3_s": 0.04},
+    ]
+    result = solve_hydraulic_network(compiled, payload, rule_evidence_bundle=bundle)
+    evaluation = result.rule_evaluation(
+        compiled_ir=compiled,
+        rule_evidence_bundle=bundle,
+    )
+    assert result.hydraulics_in_spec == "fail"
+    assert evaluation.status is RuleDecisionStatus.UNKNOWN
+    assert evaluation.measured_value is not None
 
 
 def test_hydraulic_solver_rejects_ir_hash_and_segment_set_drift() -> None:
@@ -270,7 +356,7 @@ def test_hydraulic_result_exposes_independent_domain_evidence() -> None:
     capacity = evaluate_domain_gate({"hydraulic_capacity_in_spec": True}, evidence)
     overall = evaluate_domain_gate({"hydraulics_in_spec": True}, evidence)
     assert capacity.status is GateStatus.PASS
-    assert overall.status is GateStatus.UNKNOWN
+    assert overall.status is GateStatus.FAIL
     assert compiled.canonical_sha256() == before
     assert result.source_ir_sha256 == before
     assert result.canonical_sha256() in evidence["hydraulics_in_spec"]["detail"]
@@ -281,7 +367,7 @@ def test_hydraulic_result_exposes_independent_domain_evidence() -> None:
     velocity_items = [item for item in rule_evidence if item.check_name == "hydraulics_in_spec"]
     assert len(capacity_items) == len(compiled.segments) * len(result.scenarios)
     assert all(item.status.value == "pass" for item in capacity_items)
-    assert all(item.status.value == "unknown" for item in velocity_items)
+    assert any(item.status.value == "fail" for item in velocity_items)
     assert all(item.subject_type.value == "segment" for item in rule_evidence)
     other_compiled = compiled.model_copy(update={"ir_id": "different-network"})
     with pytest.raises(HydraulicSolverError, match="身份不匹配"):
@@ -344,6 +430,7 @@ def test_route_network_hydraulic_e2e_preserves_compiled_geometry_identity() -> N
         "protocol_version": "0.1",
         "request_id": "route-network-hydraulic-e2e",
         "source_ir_sha256": before,
+        "rule_evidence_bundle_sha256": compile_municipal_rule_evidence_bundle().canonical_sha256,
         "calculation_model": "manning_uniform_open_channel_si",
         "roughness_inputs": [
             {

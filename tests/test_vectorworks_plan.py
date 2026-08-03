@@ -17,13 +17,30 @@ from openbimagent.assembly.vectorworks_plan import (
     VectorworksOperationKind,
     VectorworksPlanError,
 )
+from openbimagent.assembly.semantic_snapshot import RuleProjectionIdentity
 from openbimagent.schema_gate.gate import SchemaGate
 from openbimagent.utility import CompiledUtilityIR
 from test_compiled_utility_ir import solved_payload
 
 
-def _plan() -> VectorworksExecutionPlan:
-    return VectorworksBuilder().build(CompiledUtilityIR.model_validate(solved_payload()))
+def _rule_identity(**overrides) -> RuleProjectionIdentity:
+    payload = {
+        "rule_evidence_bundle_sha256": "a" * 64,
+        "rule_evaluation_sha256": "b" * 64,
+        "rule_decision_status": "fail",
+        "production_verification": "eligible",
+        "exception_approval_id": None,
+        "exception_approval_sha256": None,
+    }
+    payload.update(overrides)
+    return RuleProjectionIdentity(**payload)
+
+
+def _plan(rule_identity: RuleProjectionIdentity | None = None) -> VectorworksExecutionPlan:
+    return VectorworksBuilder().build(
+        CompiledUtilityIR.model_validate(solved_payload()),
+        rule_identity=rule_identity,
+    )
 
 
 def test_same_ir_compiles_to_canonical_equivalent_plan() -> None:
@@ -75,6 +92,43 @@ def test_plan_passes_json_schema() -> None:
     compiled = CompiledUtilityIR.model_validate(solved_payload())
     assert plan.compiled_ir_sha256 == compiled.canonical_sha256()
     assert SchemaGate().validate_artifact("vectorworks_execution_plan", plan.model_dump(mode="json")) == []
+
+
+def test_rule_identity_is_bound_to_plan_and_typed_records() -> None:
+    identity = _rule_identity()
+    plan = _plan(identity)
+    assert plan.rule_identity == identity
+    for operation in plan.operations:
+        if operation.operation is not VectorworksOperationKind.SET_RECORD:
+            continue
+        values = {item.field_name: item.value for item in operation.record_fields}
+        assert values["Domain_rule_evidence_bundle_sha256"] == "a" * 64
+        assert values["Domain_rule_evaluation_sha256"] == "b" * 64
+        assert values["Domain_rule_decision_status"] == "fail"
+        assert values["Domain_production_verification"] == "eligible"
+    assert SchemaGate().validate_artifact(
+        "vectorworks_execution_plan",
+        plan.model_dump(mode="json"),
+    ) == []
+
+
+def test_vectorworks_plan_rejects_rule_identity_record_drift() -> None:
+    payload = _plan(_rule_identity()).model_dump(mode="json")
+    fields = next(
+        item
+        for item in payload["operations"]
+        if item["operation"] == "set_record"
+    )["record_fields"]
+    rule_hash = next(
+        item
+        for item in fields
+        if item["field_name"] == "Domain_rule_evaluation_sha256"
+    )
+    rule_hash["value"] = "c" * 64
+    payload["canonical_sha256"] = ""
+    payload["idempotency_key"] = ""
+    with pytest.raises(ValidationError, match="rule identity"):
+        VectorworksExecutionPlan.model_validate(payload)
 
 
 def test_missing_compiled_ir_identity_fails_closed() -> None:

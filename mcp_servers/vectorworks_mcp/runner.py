@@ -164,6 +164,66 @@ def _canonical_plan_sha256(plan: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _validate_rule_identity(raw: Any) -> dict[str, Any] | None:
+    if raw is None:
+        return None
+    required = {
+        "rule_evidence_bundle_sha256",
+        "rule_evaluation_sha256",
+        "rule_decision_status",
+        "production_verification",
+        "exception_approval_id",
+        "exception_approval_sha256",
+    }
+    if not isinstance(raw, dict) or set(raw) != required:
+        fields = set(raw) if isinstance(raw, dict) else set()
+        raise ValueError(
+            f"rule_identity 字段不匹配: missing={sorted(required - fields)} "
+            f"unknown={sorted(fields - required)}"
+        )
+    for field in ("rule_evidence_bundle_sha256", "rule_evaluation_sha256"):
+        value = raw[field]
+        if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+            raise ValueError(f"rule_identity {field} 无效")
+    if raw["rule_decision_status"] not in {"pass", "fail", "unknown", "review_required"}:
+        raise ValueError("rule_identity rule_decision_status 无效")
+    if raw["production_verification"] not in {"eligible", "review_required"}:
+        raise ValueError("rule_identity production_verification 无效")
+    approval_id = raw["exception_approval_id"]
+    approval_sha = raw["exception_approval_sha256"]
+    if (approval_id is None) is not (approval_sha is None):
+        raise ValueError("rule_identity 例外审批 ID 与 SHA-256 必须同时存在")
+    if approval_id is not None and (
+        not isinstance(approval_id, str) or not approval_id or len(approval_id) > 256
+    ):
+        raise ValueError("rule_identity exception_approval_id 无效")
+    if approval_sha is not None and (
+        not isinstance(approval_sha, str) or re.fullmatch(r"[0-9a-f]{64}", approval_sha) is None
+    ):
+        raise ValueError("rule_identity exception_approval_sha256 无效")
+    if (
+        raw["production_verification"] == "review_required"
+        and raw["rule_decision_status"] in {"pass", "fail"}
+    ):
+        raise ValueError("PASS/FAIL 只允许绑定 eligible production verification")
+    return raw
+
+
+def _rule_domain_fields(identity: dict[str, Any] | None) -> dict[str, str]:
+    if identity is None:
+        return {}
+    fields = {
+        "rule_evidence_bundle_sha256": identity["rule_evidence_bundle_sha256"],
+        "rule_evaluation_sha256": identity["rule_evaluation_sha256"],
+        "rule_decision_status": identity["rule_decision_status"],
+        "production_verification": identity["production_verification"],
+    }
+    if identity["exception_approval_id"] is not None:
+        fields["exception_approval_id"] = identity["exception_approval_id"]
+        fields["exception_approval_sha256"] = identity["exception_approval_sha256"]
+    return fields
+
+
 def _validate_typed_plan(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ValueError("execution plan 必须是对象")
@@ -175,6 +235,7 @@ def _validate_typed_plan(raw: Any) -> dict[str, Any]:
         "ir_id",
         "source_ir_sha256",
         "compiled_ir_sha256",
+        "rule_identity",
         "units",
         "operations",
         "canonical_sha256",
@@ -195,6 +256,11 @@ def _validate_typed_plan(raw: Any) -> dict[str, Any]:
         value = raw[hash_field]
         if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
             raise ValueError(f"execution plan {hash_field} 无效")
+    rule_identity = _validate_rule_identity(raw["rule_identity"])
+    expected_rule_fields = {
+        f"Domain_{name}": value
+        for name, value in _rule_domain_fields(rule_identity).items()
+    }
     operations = raw["operations"]
     if not isinstance(operations, list) or not operations:
         raise ValueError("execution plan operations 不能为空")
@@ -220,8 +286,24 @@ def _validate_typed_plan(raw: Any) -> dict[str, Any]:
             if operation.get("layer_name") != _AUTHORIZED_LAYER:
                 raise ValueError("create_object escaped authorized Vectorworks layer")
             created.add(object_id)
-        elif kind == "set_record" and object_id not in created:
-            raise ValueError(f"set_record 引用未知对象: {object_id}")
+        elif kind == "set_record":
+            if object_id not in created:
+                raise ValueError(f"set_record 引用未知对象: {object_id}")
+            record_fields = operation.get("record_fields")
+            if not isinstance(record_fields, list):
+                raise ValueError(f"set_record 缺少 record_fields: {object_id}")
+            projected = {
+                item.get("field_name"): item.get("value")
+                for item in record_fields
+                if isinstance(item, dict)
+                and (
+                    str(item.get("field_name", "")).startswith("Domain_rule_")
+                    or str(item.get("field_name", "")).startswith("Domain_production_")
+                    or str(item.get("field_name", "")).startswith("Domain_exception_")
+                )
+            }
+            if projected != expected_rule_fields:
+                raise ValueError(f"rule_identity 与对象 {object_id!r} record 不一致")
         elif kind == "connect_topology":
             references = operation.get("references")
             if (
@@ -630,6 +712,7 @@ def _project_semantic_snapshot(plan: dict[str, Any], vs: Any) -> dict[str, Any]:
         "host_adapter": "vectorworks-typed-plan-1.0.0-m1",
         "source_ir_id": plan["ir_id"],
         "source_ir_sha256": plan["compiled_ir_sha256"],
+        "rule_identity": plan["rule_identity"],
         "units": "m",
         "objects": sorted(objects, key=lambda item: item["stable_id"]),
         "allowed_host_differences": ["host_handle", "presentation_material"],

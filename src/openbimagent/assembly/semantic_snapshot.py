@@ -9,6 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from openbimagent.assembly.rule_projection import RuleProjectionIdentity
 from openbimagent.assembly.vectorworks_plan import (
     FakeVectorworksExecutor,
     ReceiptStatus,
@@ -84,6 +85,7 @@ class SemanticSnapshot(BaseModel):
     host_adapter: str = Field(min_length=1, max_length=128)
     source_ir_id: str = Field(min_length=1, max_length=256)
     source_ir_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    rule_identity: RuleProjectionIdentity | None = None
     units: str = Field(default="m", pattern=r"^m$")
     objects: tuple[SemanticObject, ...] = Field(min_length=1)
     allowed_host_differences: tuple[str, ...] = ("host_handle", "presentation_material")
@@ -96,6 +98,26 @@ class SemanticSnapshot(BaseModel):
             raise ValueError("semantic snapshot stable_id 必须唯一")
         if self.allowed_host_differences != ("host_handle", "presentation_material"):
             raise ValueError("G3 只允许 host_handle 和 presentation_material 作为宿主差异")
+        expected_rule_properties = (
+            self.rule_identity.domain_properties() if self.rule_identity is not None else {}
+        )
+        for item in self.objects:
+            projected = {
+                key: value
+                for key, value in item.domain_properties.items()
+                if key in {
+                    "rule_evidence_bundle_sha256",
+                    "rule_evaluation_sha256",
+                    "rule_decision_status",
+                    "production_verification",
+                    "exception_approval_id",
+                    "exception_approval_sha256",
+                }
+            }
+            if projected != expected_rule_properties:
+                raise ValueError(
+                    f"semantic snapshot rule identity 与对象 {item.stable_id!r} 投影不一致"
+                )
         if self.canonical_sha256 and self.canonical_sha256 != self.compute_canonical_sha256():
             raise ValueError("semantic snapshot canonical_sha256 不匹配")
         return self
@@ -158,14 +180,24 @@ class SemanticComparisonReport(BaseModel):
 class FakeBlenderSemanticExecutor:
     """Offline Blender boundary: materialize validated IR into host-independent semantics."""
 
-    def execute(self, ir: CompiledUtilityIR | dict[str, Any]) -> SemanticSnapshot:
+    def execute(
+        self,
+        ir: CompiledUtilityIR | dict[str, Any],
+        *,
+        rule_identity: RuleProjectionIdentity | None = None,
+    ) -> SemanticSnapshot:
         compiled = ir if isinstance(ir, CompiledUtilityIR) else CompiledUtilityIR.model_validate(ir)
-        objects = _objects_from_ir(compiled, host=SnapshotHost.BLENDER)
+        objects = _objects_from_ir(
+            compiled,
+            host=SnapshotHost.BLENDER,
+            rule_identity=rule_identity,
+        )
         return SemanticSnapshot(
             host=SnapshotHost.BLENDER,
             host_adapter="fake-blender-semantic-v1",
             source_ir_id=compiled.ir_id,
             source_ir_sha256=compiled.canonical_sha256(),
+            rule_identity=rule_identity,
             objects=objects,
         ).finalized()
 
@@ -177,9 +209,14 @@ class FakeVectorworksSemanticExecutor:
         self.executor = FakeVectorworksExecutor()
         self.plan: VectorworksExecutionPlan | None = None
 
-    def execute(self, ir: CompiledUtilityIR | dict[str, Any]) -> SemanticSnapshot:
+    def execute(
+        self,
+        ir: CompiledUtilityIR | dict[str, Any],
+        *,
+        rule_identity: RuleProjectionIdentity | None = None,
+    ) -> SemanticSnapshot:
         compiled = ir if isinstance(ir, CompiledUtilityIR) else CompiledUtilityIR.model_validate(ir)
-        plan = VectorworksBuilder().build(compiled)
+        plan = VectorworksBuilder().build(compiled, rule_identity=rule_identity)
         receipt = self.executor.execute_plan(plan)
         if receipt.status is not ReceiptStatus.COMPLETED:
             raise ValueError(f"Vectorworks 模拟执行未完成: {receipt.status.value}")
@@ -193,6 +230,7 @@ class FakeVectorworksSemanticExecutor:
             host_adapter="fake-vectorworks-plan-v1",
             source_ir_id=compiled.ir_id,
             source_ir_sha256=compiled.canonical_sha256(),
+            rule_identity=rule_identity,
             objects=objects,
         ).finalized()
 
@@ -208,6 +246,15 @@ def compare_semantic_snapshots(
         differences.append(SemanticDifference(object_id="@snapshot", field_path="source_ir_id", left_value=left_snapshot.source_ir_id, right_value=right_snapshot.source_ir_id))
     if left_snapshot.source_ir_sha256 != right_snapshot.source_ir_sha256:
         differences.append(SemanticDifference(object_id="@snapshot", field_path="source_ir_sha256", left_value=left_snapshot.source_ir_sha256, right_value=right_snapshot.source_ir_sha256))
+    _diff_values(
+        "@snapshot",
+        "rule_identity",
+        left_snapshot.rule_identity.model_dump(mode="json") if left_snapshot.rule_identity else None,
+        right_snapshot.rule_identity.model_dump(mode="json") if right_snapshot.rule_identity else None,
+        "@snapshot",
+        "@snapshot",
+        differences,
+    )
 
     left_objects = {item.stable_id: item for item in left_snapshot.objects}
     right_objects = {item.stable_id: item for item in right_snapshot.objects}
@@ -244,7 +291,13 @@ def compare_semantic_snapshots(
     )
 
 
-def _objects_from_ir(compiled: CompiledUtilityIR, *, host: SnapshotHost) -> tuple[SemanticObject, ...]:
+def _objects_from_ir(
+    compiled: CompiledUtilityIR,
+    *,
+    host: SnapshotHost,
+    rule_identity: RuleProjectionIdentity | None = None,
+) -> tuple[SemanticObject, ...]:
+    rule_properties = rule_identity.domain_properties() if rule_identity is not None else {}
     objects: list[SemanticObject] = []
     for index, system in enumerate(sorted(compiled.systems, key=lambda item: item.system_id)):
         objects.append(SemanticObject(
@@ -253,7 +306,11 @@ def _objects_from_ir(compiled: CompiledUtilityIR, *, host: SnapshotHost) -> tupl
             system_id=system.system_id,
             ifc_class=system.ifc_class,
             ifc_predefined_type=system.ifc_predefined_type,
-            domain_properties={"system_type": system.system_type.value, "flow_regime": system.flow_regime.value},
+            domain_properties={
+                "system_type": system.system_type.value,
+                "flow_regime": system.flow_regime.value,
+                **rule_properties,
+            },
             source_ir_path=f"/systems/{index}",
             host_handle=f"{host.value}:{system.system_id}",
         ))
@@ -265,7 +322,11 @@ def _objects_from_ir(compiled: CompiledUtilityIR, *, host: SnapshotHost) -> tupl
             position=Coordinate(**node.position.model_dump()),
             ifc_class=node.ifc_class,
             ifc_predefined_type=node.ifc_predefined_type,
-            domain_properties={"node_type": node.node_type.value, "ground_elevation_m": node.ground_elevation_m},
+            domain_properties={
+                "node_type": node.node_type.value,
+                "ground_elevation_m": node.ground_elevation_m,
+                **rule_properties,
+            },
             source_ir_path=f"/nodes/{node_index}",
             host_handle=f"{host.value}:{node.node_id}",
         ))
@@ -276,7 +337,7 @@ def _objects_from_ir(compiled: CompiledUtilityIR, *, host: SnapshotHost) -> tupl
                 system_id=node.system_id,
                 position=Coordinate(**port.position.model_dump()),
                 ifc_class=port.ifc_class,
-                domain_properties={"direction": port.direction.value},
+                domain_properties={"direction": port.direction.value, **rule_properties},
                 source_ir_path=f"/nodes/{node_index}/ports/{port_index}",
                 host_handle=f"{host.value}:{port.port_id}",
             ))
@@ -295,7 +356,7 @@ def _objects_from_ir(compiled: CompiledUtilityIR, *, host: SnapshotHost) -> tupl
             material=segment.material,
             ifc_class=segment.ifc_class,
             ifc_predefined_type=segment.ifc_predefined_type,
-            domain_properties={"min_cover_depth_m": segment.min_cover_depth_m},
+            domain_properties={"min_cover_depth_m": segment.min_cover_depth_m, **rule_properties},
             source_ir_path=f"/segments/{index}",
             host_handle=f"{host.value}:{segment.segment_id}",
             presentation_material=f"{host.value}:{segment.material}",
@@ -374,6 +435,7 @@ __all__ = [
     "ComparisonStatus",
     "FakeBlenderSemanticExecutor",
     "FakeVectorworksSemanticExecutor",
+    "RuleProjectionIdentity",
     "SemanticComparisonReport",
     "SemanticDifference",
     "SemanticObject",

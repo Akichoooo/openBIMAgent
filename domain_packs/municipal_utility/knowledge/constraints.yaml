@@ -63,9 +63,27 @@ constraints:
     value: 0.6
     unit: m/s
     source_clause: GB 50014-2021 §5.2.7 第 1 款
-    verified_by: original_text
+    verified_by: official_scan_crosscheck
     confidence: high
-    note: 污水管道在设计充满度下最小设计流速 0.6m/s(防淤积)。
+    verification: &gb50014_527_verification
+      status: verified
+      source_tier: official
+      standard_id: GB 50014-2021
+      standard_title: 室外排水设计标准
+      standard_status: current
+      status_checked_at: "2026-08-04"
+      status_source_url: https://www.mohurd.gov.cn/gongkai/zc/wjk/art/2021/art_17339_250183.html
+      clause: 5.2.7 第 1 款
+      table: null
+      content_checked_at: "2026-08-04"
+      official_copy_url: https://www.mohurd.gov.cn/api-gateway/jpaas-web-server/front/document/download?fileUrl=YW5UzzlvCwcM%2FNHHX%2FtT6BJ6yM%2FAU1LVtmOVIvNjcuqxaLMLAlBp0EDqzYTeRbwVuSWra5aDF4xKlSWKa7zIByetXIQtz%2Fzl%2Fi64U7tbTYdvWe9zlZg2pMHDmGIXEqcw&fileName=%E5%AE%A4%E5%A4%96%E6%8E%92%E6%B0%B4%E8%AE%BE%E8%AE%A1%E6%A0%87%E5%87%86
+      official_copy_sha256: c3c3df5ae9ca5bb77c34ee4506e194e4e588c8d5d0e14a3d43704ae710fdf9b1
+      secondary_source_url: null
+      secondary_source_sha256: null
+      evidence_locator: PDF page 29; printed page 21; §5.2.7 item 1
+      applicability_complete: true
+      production_verification: eligible
+    note: 污水管道在设计充满度下最小设计流速 0.6m/s；已直接核对住建部官方扫描正文。
 
   - rule_id: MU-DRAIN-008
     category: hydraulics
@@ -214,7 +232,122 @@ constraints:
     confidence: high
     note: "5 条避让原则按优先级排序;用词为'宜'(推荐)。原 yaml MU-AVOID-001 只列第 1 条,现补全 5 条。条款号(§3.0.4)置信度 medium,内容置信度 high。"
 
-  # ============ 六、管线最小水平净距(GB 50289-2016 第 4.1.9 条 / 表 4.1.9)============
+  # ============ 六、道路、轨道、河道与垂直净距(GB 50289-2016 §4.1)============
+  - rule_id: MU-ROAD-001
+    category: road_crossing
+    parameter: min_crossing_angle_limited
+    value: 60
+    unit: degree
+    source_clause: GB 50289-2016 §4.1.7
+    verified_by: official_scan_crosscheck
+    confidence: high
+    verification: &gb50289_417_verification
+      status: verified
+      source_tier: official
+      standard_id: GB 50289-2016
+      standard_title: 城市工程管线综合规划规范
+      standard_status: current
+      status_checked_at: "2026-08-01"
+      status_source_url: https://www.gongbiaoku.com/book/tb617154atk
+      clause: 4.1.7
+      table: null
+      content_checked_at: "2026-08-04"
+      official_copy_url: https://www.yichang.gov.cn/uploadfile/2017/0522/20170522065729162.pdf
+      official_copy_sha256: ddb68a18b81146fba4443962ce94f641abeb3d9914e1aeb0c69cc21bd5e3a426
+      secondary_source_url: null
+      secondary_source_sha256: null
+      evidence_locator: PDF page 12; printed page 5; §4.1.7
+      applicability_complete: true
+      production_verification: eligible
+    note: 工程管线与铁路、公路宜垂直交叉；受条件限制时交叉角宜大于 60°。
+
+  - rule_id: MU-RAIL-001
+    category: vertical_clearance
+    parameter: min_vertical_clearance_wastewater_to_rail
+    values:
+      conventional: 1.2
+      passenger_200_plus: 1.5
+    unit: m
+    source_clause: GB 50289-2016 §4.1.14 表 4.1.14
+    verified_by: official_table_crosscheck
+    confidence: high
+    verification: &gb50289_table4114_verification
+      status: verified
+      source_tier: official
+      standard_id: GB 50289-2016
+      standard_title: 城市工程管线综合规划规范
+      standard_status: current
+      status_checked_at: "2026-08-01"
+      status_source_url: https://www.gongbiaoku.com/book/tb617154atk
+      clause: 4.1.14
+      table: 4.1.14
+      content_checked_at: "2026-08-04"
+      official_copy_url: https://www.yichang.gov.cn/uploadfile/2017/0522/20170522065729162.pdf
+      official_copy_sha256: ddb68a18b81146fba4443962ce94f641abeb3d9914e1aeb0c69cc21bd5e3a426
+      secondary_source_url: null
+      secondary_source_sha256: null
+      evidence_locator: PDF pages 16-17; printed pages 9-10; row railway track bottom; column wastewater/rainwater
+      applicability_complete: true
+      production_verification: eligible
+    note: 普速铁路轨底至污水、雨水管线 1.20m；时速≥200km/h 客运专线统一为 1.50m。
+
+  - rule_id: MU-RIVER-001
+    category: river_crossing
+    parameter: min_depth_below_channel_bottom
+    values:
+      navigation_i_to_v: 2.0
+      navigation_vi_to_vii: 1.0
+      other_river: 0.5
+    unit: m
+    source_clause: GB 50289-2016 §4.1.8
+    verified_by: official_scan_crosscheck
+    confidence: high
+    verification: &gb50289_418_verification
+      status: verified
+      source_tier: official
+      standard_id: GB 50289-2016
+      standard_title: 城市工程管线综合规划规范
+      standard_status: current
+      status_checked_at: "2026-08-01"
+      status_source_url: https://www.gongbiaoku.com/book/tb617154atk
+      clause: 4.1.8
+      table: null
+      content_checked_at: "2026-08-04"
+      official_copy_url: https://www.yichang.gov.cn/uploadfile/2017/0522/20170522065729162.pdf
+      official_copy_sha256: ddb68a18b81146fba4443962ce94f641abeb3d9914e1aeb0c69cc21bd5e3a426
+      secondary_source_url: null
+      secondary_source_sha256: null
+      evidence_locator: PDF page 12; printed page 5; §4.1.8 items 1-3
+      applicability_complete: true
+      production_verification: eligible
+    note: 河底敷设应位于稳定河段；按航道等级分别低于规划航道底或设计河底 2.0m/1.0m/0.5m。
+
+  - rule_id: MU-VERTICAL-001
+    category: vertical_clearance
+    parameter: min_vertical_clearance_wastewater_to_utility
+    values:
+      water: 0.4
+      wastewater_rainwater: 0.15
+      heat: 0.15
+      gas: 0.15
+      telecom_direct_buried: 0.5
+      telecom_protected: 0.15
+      power_direct_buried: 0.5
+      power_protected: 0.25
+      reclaimed_water: 0.4
+      utility_tunnel: 0.15
+      culvert_base: 0.15
+      tram_track_bottom: 1.0
+    unit: m
+    source_clause: GB 50289-2016 §4.1.14 表 4.1.14
+    verified_by: official_table_crosscheck
+    confidence: high
+    verification:
+      <<: *gb50289_table4114_verification
+      evidence_locator: PDF pages 16-17; printed pages 9-10; row/column wastewater and rainwater
+    note: 污水、雨水管线与其他工程管线、管沟、涵洞和电车轨底的最小垂直净距。
+
+  # ============ 七、管线最小水平净距(GB 50289-2016 第 4.1.9 条 / 表 4.1.9)============
   # 内容核验:2026-08-01 直接核对政府域名 PDF 第 13-15 页横向原表,并用独立 PDF 版面交叉复核。
   # 标准状态与表格数值分别取证；本表 4.1.9 为一般条文，不属于本规范黑体强制性条文。
   # 4.1.9 允许在受限条件下采取安全措施后减小净距，但当前系统没有例外审批协议，故不允许调用方覆写减距。

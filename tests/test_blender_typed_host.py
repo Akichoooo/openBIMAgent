@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from openbimagent.assembly.blender_plan import BlenderBuilder
+from openbimagent.assembly.rule_projection import RuleProjectionIdentity
 from openbimagent.assembly.semantic_snapshot import SemanticSnapshot
 from test_compiled_utility_ir import solved_payload
 
@@ -233,8 +234,20 @@ class _FakeBpy:
         return {"FINISHED"}
 
 
-def _plan() -> dict[str, Any]:
-    return BlenderBuilder().build(solved_payload()).model_dump(mode="json")
+def _rule_identity() -> RuleProjectionIdentity:
+    return RuleProjectionIdentity(
+        rule_evidence_bundle_sha256="a" * 64,
+        rule_evaluation_sha256="b" * 64,
+        rule_decision_status="fail",
+        production_verification="eligible",
+    )
+
+
+def _plan(*, with_rule_identity: bool = False) -> dict[str, Any]:
+    return BlenderBuilder().build(
+        solved_payload(),
+        rule_identity=_rule_identity() if with_rule_identity else None,
+    ).model_dump(mode="json")
 
 
 def _execute(module: Any, fake: _FakeBpy, tmp_path: Path, **kwargs: Any) -> dict[str, Any]:
@@ -360,6 +373,45 @@ def test_typed_host_recovers_save_before_sidecar_ack_crash(tmp_path) -> None:
     assert completed["status"] == "completed"
     assert restarted.open_calls == [str((tmp_path / "case.blend").resolve())]
     assert len(restarted.data.objects.values) == 6
+
+
+def test_typed_host_projects_and_validates_rule_identity(tmp_path: Path) -> None:
+    module = _load_typed_module()
+    fake = _FakeBpy()
+    plan = _plan(with_rule_identity=True)
+    receipt = _execute(module, fake, tmp_path, plan=plan)
+    snapshot = SemanticSnapshot.model_validate(receipt["semantic_snapshot"])
+    assert snapshot.rule_identity is not None
+    assert snapshot.rule_identity.rule_evaluation_sha256 == "b" * 64
+    assert all(
+        item.domain_properties["rule_decision_status"] == "fail"
+        for item in snapshot.objects
+    )
+
+    missing_approval = json.loads(json.dumps(plan))
+    missing_approval["rule_identity"]["exception_approval_id"] = "approval-1"
+    with pytest.raises(module.TypedPlanError, match="exception approval"):
+        module.validate_plan(missing_approval)
+
+    false_pass = json.loads(json.dumps(plan))
+    false_pass["rule_identity"]["rule_decision_status"] = "pass"
+    false_pass["rule_identity"]["production_verification"] = "review_required"
+    with pytest.raises(module.TypedPlanError, match="PASS/FAIL"):
+        module.validate_plan(false_pass)
+
+    drifted = json.loads(json.dumps(plan))
+    property_item = next(
+        item
+        for operation in drifted["operations"]
+        if operation["operation"] == "set_properties"
+        for item in operation["properties"]
+        if item["property_name"] == "openbim_domain_rule_evaluation_sha256"
+    )
+    property_item["value"] = "c" * 64
+    drifted["canonical_sha256"] = module.canonical_plan_sha256(drifted)
+    drifted["idempotency_key"] = f"blender-plan:{drifted['canonical_sha256']}"
+    with pytest.raises(module.TypedPlanError, match="rule identity"):
+        module.validate_plan(drifted)
 
 
 def test_typed_host_rejects_hash_tampering_and_broken_topology(tmp_path) -> None:

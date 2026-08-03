@@ -12,11 +12,12 @@ import ifcopenshell.api.pset
 import ifcopenshell.util.element
 import pytest
 
-from openbimagent.assembly.semantic_snapshot import FakeBlenderSemanticExecutor
+from openbimagent.assembly.semantic_snapshot import FakeBlenderSemanticExecutor, RuleProjectionIdentity
 from openbimagent.deliver.ifc_ids import (
     IDS_NS,
     IDS_XSD_PATH,
     IDS_XSD_SHA256,
+    PROJECT_PSET_NAME,
     PSET_NAME,
     build_ifc_ids_package,
     commit_ifc_ids_package,
@@ -29,9 +30,23 @@ from openbimagent.utility import CompiledUtilityIR
 from test_compiled_utility_ir import solved_payload
 
 
-def _package(tmp_path):
+def _rule_identity() -> RuleProjectionIdentity:
+    return RuleProjectionIdentity(
+        rule_evidence_bundle_sha256="a" * 64,
+        rule_evaluation_sha256="b" * 64,
+        rule_decision_status="fail",
+        production_verification="eligible",
+        exception_approval_id=None,
+        exception_approval_sha256=None,
+    )
+
+
+def _package(tmp_path, *, with_rule_identity: bool = True):
     compiled = CompiledUtilityIR.model_validate(solved_payload())
-    snapshot = FakeBlenderSemanticExecutor().execute(compiled)
+    snapshot = FakeBlenderSemanticExecutor().execute(
+        compiled,
+        rule_identity=_rule_identity() if with_rule_identity else None,
+    )
     return build_ifc_ids_package(snapshot, output_dir=tmp_path / "delivery")
 
 
@@ -83,6 +98,32 @@ def test_baseline_ifc4x3_ids_validation_and_rule_evidence_pass(tmp_path) -> None
     assert all(item.status.value == "pass" for item in package.evidence)
     assert validate_artifact("ifc_ids_validation_report", package.report.model_dump(mode="json")) == []
     assert json.loads(package.evidence_path.read_text(encoding="utf-8"))
+
+
+def test_rule_identity_is_written_to_ifc_project_and_objects_and_ids(tmp_path) -> None:
+    package = _package(tmp_path, with_rule_identity=True)
+    model = ifcopenshell.open(str(package.ifc_path))
+    project = next(iter(model.by_type("IfcProject")))
+    project_pset = ifcopenshell.util.element.get_psets(project)[PROJECT_PSET_NAME]
+    assert project_pset["RuleEvidenceBundleSHA256"] == "a" * 64
+    assert project_pset["RuleEvaluationSHA256"] == "b" * 64
+    assert project_pset["RuleDecisionStatus"] == "fail"
+    assert project_pset["ProductionVerification"] == "eligible"
+    segment = next(
+        item
+        for item in model.by_type("IfcPipeSegment")
+        if (ifcopenshell.util.element.get_psets(item).get(PSET_NAME) or {}).get("StableObjectID") == "pipe-001"
+    )
+    object_pset = ifcopenshell.util.element.get_psets(segment)[PSET_NAME]
+    assert object_pset["RuleEvidenceBundleSHA256"] == "a" * 64
+    ids_text = package.ids_path.read_text(encoding="utf-8")
+    assert "RuleEvidenceBundleSHA256" in ids_text
+    assert "RuleEvaluationSHA256" in ids_text
+
+
+def test_missing_rule_identity_fails_closed_before_ifc_delivery(tmp_path) -> None:
+    with pytest.raises(ValueError, match="规则证据身份"):
+        _package(tmp_path, with_rule_identity=False)
 
 
 def test_missing_required_property_fails_with_object_and_ir_location(tmp_path) -> None:

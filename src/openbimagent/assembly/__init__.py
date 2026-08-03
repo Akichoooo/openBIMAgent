@@ -24,6 +24,7 @@ from openbimagent.assembly.blender_plan import (
 )
 from openbimagent.assembly.builder import BuilderError, make_builder_fn
 from openbimagent.assembly.pipeline import PipelineResult, run_pipeline
+from openbimagent.assembly.rule_projection import RuleProjectionIdentity
 from openbimagent.assembly.semantic_snapshot import (
     FakeBlenderSemanticExecutor,
     FakeVectorworksSemanticExecutor,
@@ -48,6 +49,7 @@ __all__ = [
     "FakeVectorworksExecutor",
     "FakeVectorworksSemanticExecutor",
     "PipelineResult",
+    "RuleProjectionIdentity",
     "SemanticComparisonReport",
     "SemanticSnapshot",
     "VectorworksBuilder",
