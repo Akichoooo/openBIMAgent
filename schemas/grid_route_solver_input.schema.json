@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/grid_route_solver_input.schema.json",
+  "title": "GridRouteSolverInput",
+  "description": "M1.5 T4 受约束规则网格路线 Solver v0.1 输入。路线只能在显式批准走廊内搜索，地表高程逐 cell 给出，障碍物净距绑定 MunicipalRuleSet SHA-256。",
+  "type": "object",
+  "required": [
+    "protocol_version", "request_id", "source_ir_sha256", "municipal_rule_set_sha256",
+    "coordinate_reference", "grid", "start", "end", "allowed_cells", "surface_samples",
+    "obstacles", "diameter_mm", "material", "design_slope", "surface_context",
+    "max_candidates", "max_search_expansions"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": {"const": "0.1"},
+    "request_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "source_ir_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "municipal_rule_set_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "coordinate_reference": {"$ref": "#/$defs/coordinate_reference"},
+    "grid": {"$ref": "#/$defs/grid"},
+    "start": {"$ref": "#/$defs/start_endpoint"},
+    "end": {"$ref": "#/$defs/end_endpoint"},
+    "allowed_cells": {"type": "array", "minItems": 2, "maxItems": 10000, "items": {"$ref": "#/$defs/cell"}},
+    "surface_samples": {"type": "array", "minItems": 2, "maxItems": 10000, "items": {"$ref": "#/$defs/surface_sample"}},
+    "obstacles": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {"$ref": "#/$defs/aabb_obstacle"},
+          {"$ref": "#/$defs/existing_pipe_obstacle"}
+        ]
+      }
+    },
+    "diameter_mm": {"const": 300.0},
+    "material": {"const": "concrete"},
+    "design_slope": {"type": "number", "minimum": 0},
+    "surface_context": {"enum": ["driveway", "sidewalk"]},
+    "max_candidates": {"type": "integer", "minimum": 1, "maximum": 10},
+    "max_search_expansions": {"type": "integer", "minimum": 1, "maximum": 250000}
+  },
+  "$defs": {
+    "coordinate": {
+      "type": "object",
+      "required": ["x_m", "y_m", "z_m"],
+      "additionalProperties": false,
+      "properties": {
+        "x_m": {"type": "number"},
+        "y_m": {"type": "number"},
+        "z_m": {"type": "number"}
+      }
+    },
+    "coordinate_reference": {
+      "type": "object",
+      "required": ["crs_id", "origin", "horizontal_unit", "vertical_unit", "vertical_datum"],
+      "additionalProperties": false,
+      "properties": {
+        "crs_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "origin": {"$ref": "#/$defs/coordinate"},
+        "horizontal_unit": {"const": "m"},
+        "vertical_unit": {"const": "m"},
+        "vertical_datum": {"type": ["string", "null"], "maxLength": 256}
+      }
+    },
+    "cell": {
+      "type": "object",
+      "required": ["x_index", "y_index"],
+      "additionalProperties": false,
+      "properties": {
+        "x_index": {"type": "integer", "minimum": 0},
+        "y_index": {"type": "integer", "minimum": 0}
+      }
+    },
+    "grid": {
+      "type": "object",
+      "required": ["origin_x_m", "origin_y_m", "resolution_m", "width", "height"],
+      "additionalProperties": false,
+      "properties": {
+        "origin_x_m": {"type": "number"},
+        "origin_y_m": {"type": "number"},
+        "resolution_m": {"type": "number", "exclusiveMinimum": 0},
+        "width": {"type": "integer", "minimum": 1, "maximum": 1000},
+        "height": {"type": "integer", "minimum": 1, "maximum": 1000}
+      }
+    },
+    "start_endpoint": {
+      "type": "object",
+      "required": ["node_id", "cell", "invert_anchor_m"],
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "cell": {"$ref": "#/$defs/cell"},
+        "invert_anchor_m": {"type": "number"}
+      }
+    },
+    "end_endpoint": {
+      "type": "object",
+      "required": ["node_id", "cell"],
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "cell": {"$ref": "#/$defs/cell"},
+        "invert_anchor_m": {"type": "null", "default": null}
+      }
+    },
+    "surface_sample": {
+      "type": "object",
+      "required": ["cell", "ground_elevation_m"],
+      "additionalProperties": false,
+      "properties": {
+        "cell": {"$ref": "#/$defs/cell"},
+        "ground_elevation_m": {"type": "number"}
+      }
+    },
+    "aabb_obstacle": {
+      "type": "object",
+      "required": ["obstacle_id", "kind", "category", "min_corner", "max_corner"],
+      "additionalProperties": false,
+      "properties": {
+        "obstacle_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "kind": {"const": "aabb"},
+        "category": {"const": "building"},
+        "min_corner": {"$ref": "#/$defs/coordinate"},
+        "max_corner": {"$ref": "#/$defs/coordinate"}
+      }
+    },
+    "existing_pipe_obstacle": {
+      "type": "object",
+      "required": [
+        "obstacle_id", "kind", "category", "start_center", "end_center",
+        "outer_diameter_mm", "pressure_class", "burial_method", "voltage_kv"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "obstacle_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "kind": {"const": "existing_pipe"},
+        "category": {"enum": ["water", "gas", "power", "telecom"]},
+        "start_center": {"$ref": "#/$defs/coordinate"},
+        "end_center": {"$ref": "#/$defs/coordinate"},
+        "outer_diameter_mm": {"type": "number", "exclusiveMinimum": 0},
+        "pressure_class": {
+          "type": ["string", "null"],
+          "enum": ["low", "medium_b", "medium_a", "sub_high_b", "sub_high_a", null]
+        },
+        "burial_method": {
+          "type": ["string", "null"],
+          "enum": ["direct_buried", "protective_conduit", "duct", "tunnel", null]
+        },
+        "voltage_kv": {"type": ["number", "null"], "exclusiveMinimum": 0}
+      }
+    }
+  }
+}

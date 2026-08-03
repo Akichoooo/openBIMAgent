@@ -27,8 +27,11 @@ from openbimagent.session.schema import EventType
 from openbimagent.session.store import SessionStore
 from openbimagent.vision.rubric import SCAD_DIMENSIONS, Critic, CritiqueResult, check_score_payload
 
-DEFAULT_OPENSCAD = Path(r"C:/Program Files/OpenSCAD/openscad.exe")
-"""OpenSCAD 2021.01 CLI 默认路径(openscad_spike.md 实测环境)。"""
+DEFAULT_OPENSCAD = Path(r"C:/Program Files/OpenSCAD/openscad.com")
+"""OpenSCAD 2021.01 Windows 控制台入口；避免 ``openscad.exe`` 的 GUI 子系统行为差异。"""
+
+DEFAULT_RENDER_TIMEOUT_SECONDS = 120.0
+"""单视角真实渲染上限；当前基准机 512x512 首视角实测可能超过 70 秒。"""
 
 IMAGE_SIZE: tuple[int, int] = (512, 512)
 
@@ -142,7 +145,7 @@ def render_views(
     tag: str,
     openscad: Path | None = None,
     imgsize: tuple[int, int] = IMAGE_SIZE,
-    timeout: float = 60.0,
+    timeout: float = DEFAULT_RENDER_TIMEOUT_SECONDS,
 ) -> dict[str, Path]:
     """openscad CLI 三视角渲染(--viewall 常驻),返回 {view: png 路径}。
 

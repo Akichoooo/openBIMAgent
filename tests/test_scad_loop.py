@@ -16,6 +16,7 @@ from openbimagent.vision.rubric import MockCritic
 from openbimagent.vision.scad_loop import (
     CAMERA_VIEWS,
     DEFAULT_OPENSCAD,
+    DEFAULT_RENDER_TIMEOUT_SECONDS,
     PatchRejectedError,
     PatchValidationError,
     apply_ir_patch,
@@ -96,6 +97,11 @@ def test_ir_to_scad_rejects_bad_ir() -> None:
 
 
 # ---------- openscad CLI 真实渲染 ----------
+
+
+def test_windows_default_uses_console_entry_and_measured_timeout() -> None:
+    assert DEFAULT_OPENSCAD.name == "openscad.com"
+    assert DEFAULT_RENDER_TIMEOUT_SECONDS >= 120.0
 
 
 @requires_openscad

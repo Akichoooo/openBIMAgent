@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/grid_route_solver_result.schema.json",
+  "title": "GridRouteSolverResult",
+  "description": "M1.5 T4 受约束规则网格路线 Solver v0.1 结果。明确区分可行、无可行路线和未知，不把无证据状态包装为 PASS。",
+  "type": "object",
+  "required": [
+    "protocol_version", "request_id", "solver_name", "solver_version", "input_sha256",
+    "municipal_rule_set_sha256", "status", "candidates", "selected_candidate_id",
+    "failure_reason", "detail"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": {"const": "0.1"},
+    "request_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "solver_name": {"const": "municipal-grid-route-solver"},
+    "solver_version": {"const": "0.1.0"},
+    "input_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "municipal_rule_set_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "status": {"enum": ["feasible", "no_feasible_route", "unknown"]},
+    "candidates": {"type": "array", "items": {"$ref": "#/$defs/candidate"}},
+    "selected_candidate_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 256},
+    "failure_reason": {
+      "type": ["string", "null"],
+      "enum": ["corridor_disconnected", "obstacle_blocked", "cover_conflict", "search_limit_exceeded", null]
+    },
+    "detail": {"type": "string", "minLength": 1, "maxLength": 4096}
+  },
+  "$defs": {
+    "cell": {
+      "type": "object",
+      "required": ["x_index", "y_index"],
+      "additionalProperties": false,
+      "properties": {
+        "x_index": {"type": "integer", "minimum": 0},
+        "y_index": {"type": "integer", "minimum": 0}
+      }
+    },
+    "point": {
+      "type": "object",
+      "required": ["cell", "x_m", "y_m", "ground_elevation_m", "invert_m", "cover_depth_m"],
+      "additionalProperties": false,
+      "properties": {
+        "cell": {"$ref": "#/$defs/cell"},
+        "x_m": {"type": "number"},
+        "y_m": {"type": "number"},
+        "ground_elevation_m": {"type": "number"},
+        "invert_m": {"type": "number"},
+        "cover_depth_m": {"type": "number"}
+      }
+    },
+    "constraint_report": {
+      "type": "object",
+      "required": [
+        "cover_depth_in_spec", "clearance_in_spec", "minimum_cover_depth_m",
+        "required_cover_depth_m", "minimum_clearance_margin_m", "applied_rule_keys",
+        "municipal_rule_set_sha256"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "cover_depth_in_spec": {"type": "boolean"},
+        "clearance_in_spec": {"type": "boolean"},
+        "minimum_cover_depth_m": {"type": "number"},
+        "required_cover_depth_m": {"type": "number"},
+        "minimum_clearance_margin_m": {"type": ["number", "null"]},
+        "applied_rule_keys": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1, "maxLength": 256}
+        },
+        "municipal_rule_set_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "required": [
+        "candidate_id", "rank", "cells", "points", "horizontal_length_m",
+        "turn_count", "constraint_report"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "candidate_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "rank": {"type": "integer", "minimum": 1},
+        "cells": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/cell"}},
+        "points": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/point"}},
+        "horizontal_length_m": {"type": "number", "exclusiveMinimum": 0},
+        "turn_count": {"type": "integer", "minimum": 0},
+        "constraint_report": {"$ref": "#/$defs/constraint_report"}
+      }
+    }
+  }
+}

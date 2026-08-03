@@ -4,7 +4,7 @@
 
 生效日期：2026-08-03
 
-状态：**ACTIVE — T1–T3 OFFLINE PASS / T4 STARTING**
+状态：**ACTIVE — T1–T4 OFFLINE PASS / T5 STARTING**
 
 > 本文件定义 M1.5 的范围、实施顺序、协议边界、验收证据、权限和停止条件。实时 HEAD、测试数字、阻塞和恢复位置仍以 [`PROJECT_HANDOFF_STATUS.md`](PROJECT_HANDOFF_STATUS.md) 为唯一来源；稳定总路线以 [`PROJECT_MASTER_WORKFLOW.md`](PROJECT_MASTER_WORKFLOW.md) 为唯一来源。
 >
@@ -145,11 +145,15 @@ M1.5 不以“支持数组”或“能生成多个对象”为完成标准，而
 
 完成标准：离线双宿主 E2E、语义差异注入、IFC/IDS 和 Manifest 验收通过。该 Gate 不等于真实宿主 PASS。
 
-### T4：路线与复杂标高
+### T4：路线与复杂标高（OFFLINE PASS）
 
-- 版本化路线候选和走廊约束。
-- 平面避障、纵断面协调、连续坡度与覆土联合约束。
-- 冲突后的可解释重算、候选排序和人工选择边界。
+- `GridRouteSolverInput v0.1` / `GridRouteSolverResult v0.1` 已版本化并通过 JSON Schema Gate。
+- 路线只在显式批准的四邻接规则网格中搜索；地表高程逐 cell 给出，障碍物仅使用 SHA-256 绑定且获 production 资格的净距规则膨胀。
+- 候选按水平长度、转折数和完整 cell 序列稳定排序，允许人工从未篡改的候选集中选择；适配器会确定性重算并拒绝候选篡改。
+- 连续坡度按累计路线长度传播，逐 cell 检查覆土；走廊断裂、障碍封堵和覆土冲突返回结构化无解原因。
+- 搜索预算耗尽返回 `UNKNOWN / search_limit_exceeded`，不得包装为已证明无可行路线。
+- 路线接入网络 Solver 前校验 source IR、CRS、管径、材质、坡度、表面上下文、端点 XY/地面高程和起点锚点一致；终点锚点首版明确拒绝。
+- 当前规模门禁：批准走廊最多 10,000 cells，搜索最多 250,000 expansions，最多返回 10 个候选。
 
 ### T5：水力 Solver
 
@@ -226,4 +230,4 @@ M1.5 不以“支持数组”或“能生成多个对象”为完成标准，而
 
 ## 10. 当前启动点
 
-从 **T1：多节点拓扑契约** 开始：先建立负向测试，再补足 `CompiledUtilityIR` 的网络级失败关闭门禁；随后进入 T2 独立网络 Solver 输入与实现。
+从 **T5：水力 Solver** 继续：先定义独立水力输入/结果协议和几何—水力迭代边界，再建立流量、粗糙系数、流速、充满度及异常工况的负向测试。T4 路线结果只通过显式适配器进入网络 Solver，不得在宿主侧重算。
