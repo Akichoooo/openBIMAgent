@@ -192,7 +192,7 @@ def run_all_cases(client, out_dir):
             "import bpy\nimport bmesh\nimport mathutils\nfrom math import sqrt\n"
             "print('allowed-ok', sqrt(4))\n"})
         expect("allowed-ok" in r.get("result", ""), f"whitelisted imports failed: {r}")
-        return f"11 hostile snippets rejected, whitelisted imports ok"
+        return "11 hostile snippets rejected, whitelisted imports ok"
     s.run(t5, "T5", "AST allowlist blocks os/subprocess/open/eval (c)")
 
     # -- T6: screenshot non-black (f) -------------------------------------------

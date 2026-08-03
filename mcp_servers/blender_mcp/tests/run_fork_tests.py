@@ -10,9 +10,7 @@ Retries: if Blender fails to start / accept connections / hangs on the first
 probe, the process is killed and relaunched, at most 2 retries.
 """
 
-import json
 import os
-import shutil
 import socket
 import subprocess
 import sys

@@ -2,12 +2,11 @@
 from mcp.server.fastmcp import FastMCP, Context, Image
 import socket
 import json
-import asyncio
 import logging
 import tempfile
 from dataclasses import dataclass
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Dict, Any, List
+from typing import AsyncIterator, Dict, Any
 import os
 import sys
 from pathlib import Path
@@ -130,7 +129,7 @@ class BlenderConnection:
             
             # Send the command
             self.sock.sendall(json.dumps(command).encode('utf-8'))
-            logger.info(f"Command sent, waiting for response...")
+            logger.info("Command sent, waiting for response...")
             
             # Set a timeout for receiving - use the same timeout as in receive_full_response
             self.sock.settimeout(180.0)  # Match the addon's timeout
@@ -188,7 +187,7 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
         # Try to connect to Blender on startup to verify it's available
         try:
             # This will initialize the global connection if needed
-            blender = get_blender_connection()
+            get_blender_connection()
             logger.info("Successfully connected to Blender on startup")
         except Exception as e:
             logger.warning(f"Could not connect to Blender on startup: {str(e)}")
@@ -234,7 +233,7 @@ def get_blender_connection():
             logger.warning(f"Existing connection is no longer valid: {str(e)}")
             try:
                 _blender_connection.disconnect()
-            except:
+            except Exception:
                 pass
             _blender_connection = None
     
@@ -809,7 +808,7 @@ def download_sketchfab_model(
             imported_objects = result.get("imported_objects", [])
             object_names = ", ".join(imported_objects) if imported_objects else "none"
             
-            output = f"Successfully imported model.\n"
+            output = "Successfully imported model.\n"
             output += f"Created objects: {object_names}\n"
             
             # Add dimension info if available
@@ -902,9 +901,9 @@ def generate_hyper3d_model_via_images(
     Returns a message indicating success or failure.
     """
     if input_image_paths is not None and input_image_urls is not None:
-        return f"Error: Conflict parameters given!"
+        return "Error: Conflict parameters given!"
     if input_image_paths is None and input_image_urls is None:
-        return f"Error: No image given!"
+        return "Error: No image given!"
     if input_image_paths is not None:
         if not all(os.path.exists(i) for i in input_image_paths):
             return "Error: not all image paths are valid!"
