@@ -18,6 +18,15 @@ from openbimagent.utility.contracts import (
     UtilitySystem,
     UtilitySystemType,
 )
+from openbimagent.utility.network_solver import (
+    NETWORK_UTILITY_SOLVER_INPUT_VERSION,
+    NETWORK_UTILITY_SOLVER_NAME,
+    NETWORK_UTILITY_SOLVER_VERSION,
+    NetworkGravitySolverInput,
+    NetworkSolverNode,
+    NetworkSolverSegment,
+    solve_network_gravity_utility,
+)
 from openbimagent.utility.rules import (
     CompiledClearanceRule,
     DEFAULT_MUNICIPAL_CONSTRAINTS_PATH,
@@ -72,12 +81,18 @@ __all__ = [
     "MIN_COVER_BY_SURFACE_M",
     "MIN_DN300_CONCRETE_SLOPE",
     "MIN_SEWAGE_DIAMETER_MM",
+    "NETWORK_UTILITY_SOLVER_INPUT_VERSION",
+    "NETWORK_UTILITY_SOLVER_NAME",
+    "NETWORK_UTILITY_SOLVER_VERSION",
     "EvidenceStatus",
     "EvidenceSubjectType",
     "ExistingPipeObstacle",
     "FlowRegime",
     "MunicipalRuleError",
     "MunicipalRuleSet",
+    "NetworkGravitySolverInput",
+    "NetworkSolverNode",
+    "NetworkSolverSegment",
     "NodeType",
     "PipeSegment",
     "PortDirection",
@@ -104,5 +119,6 @@ __all__ = [
     "compile_municipal_rule_set",
     "compile_solved_utility_ir",
     "select_clearance_rule",
+    "solve_network_gravity_utility",
     "solve_straight_gravity_utility",
 ]

@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/network_utility_solver_input.schema.json",
+  "title": "NetworkGravitySolverInput",
+  "description": "市政多节点重力管网 Solver v0.1 输入。节点 XY、地面标高、拓扑和源节点管底锚点均为显式工程事实；Solver 确定性传播各管段标高。",
+  "type": "object",
+  "required": [
+    "protocol_version", "request_id", "source_ir_sha256", "coordinate_reference",
+    "system_id", "system_name", "nodes", "segments", "collision_context"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": {"const": "0.1"},
+    "request_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "source_ir_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "coordinate_reference": {"$ref": "#/$defs/coordinate_reference"},
+    "system_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "system_name": {"type": "string", "minLength": 1, "maxLength": 512},
+    "nodes": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/node"}},
+    "segments": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/segment"}},
+    "collision_context": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/collision_context"}]}
+  },
+  "$defs": {
+    "coordinate": {
+      "type": "object",
+      "required": ["x_m", "y_m", "z_m"],
+      "additionalProperties": false,
+      "properties": {
+        "x_m": {"type": "number"},
+        "y_m": {"type": "number"},
+        "z_m": {"type": "number"}
+      }
+    },
+    "coordinate_reference": {
+      "type": "object",
+      "required": ["crs_id", "origin", "horizontal_unit", "vertical_unit", "vertical_datum"],
+      "additionalProperties": false,
+      "properties": {
+        "crs_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "origin": {"$ref": "#/$defs/coordinate"},
+        "horizontal_unit": {"const": "m"},
+        "vertical_unit": {"const": "m"},
+        "vertical_datum": {"type": ["string", "null"], "maxLength": 256}
+      }
+    },
+    "node": {
+      "type": "object",
+      "required": ["node_id", "node_type", "x_m", "y_m", "ground_elevation_m", "invert_anchor_m"],
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "node_type": {"enum": ["manhole", "junction", "inlet", "outlet", "terminal"]},
+        "x_m": {"type": "number"},
+        "y_m": {"type": "number"},
+        "ground_elevation_m": {"type": "number"},
+        "invert_anchor_m": {"type": ["number", "null"]}
+      }
+    },
+    "segment": {
+      "type": "object",
+      "required": [
+        "segment_id", "start_node_id", "end_node_id", "diameter_mm", "material",
+        "design_slope", "surface_context"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "segment_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "start_node_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "end_node_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "diameter_mm": {"const": 300.0},
+        "material": {"const": "concrete"},
+        "design_slope": {"type": "number", "minimum": 0},
+        "surface_context": {"enum": ["driveway", "sidewalk"]}
+      }
+    },
+    "aabb_obstacle": {
+      "type": "object",
+      "required": ["obstacle_id", "kind", "category", "min_corner", "max_corner"],
+      "additionalProperties": false,
+      "properties": {
+        "obstacle_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "kind": {"const": "aabb"},
+        "category": {"const": "building"},
+        "min_corner": {"$ref": "#/$defs/coordinate"},
+        "max_corner": {"$ref": "#/$defs/coordinate"}
+      }
+    },
+    "existing_pipe_obstacle": {
+      "type": "object",
+      "required": [
+        "obstacle_id", "kind", "category", "start_center", "end_center",
+        "outer_diameter_mm", "pressure_class", "burial_method", "voltage_kv"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "obstacle_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "kind": {"const": "existing_pipe"},
+        "category": {"enum": ["water", "gas", "power", "telecom"]},
+        "start_center": {"$ref": "#/$defs/coordinate"},
+        "end_center": {"$ref": "#/$defs/coordinate"},
+        "outer_diameter_mm": {"type": "number", "exclusiveMinimum": 0},
+        "pressure_class": {
+          "type": ["string", "null"],
+          "enum": ["low", "medium_b", "medium_a", "sub_high_b", "sub_high_a", null]
+        },
+        "burial_method": {
+          "type": ["string", "null"],
+          "enum": ["direct_buried", "protective_conduit", "duct", "tunnel", null]
+        },
+        "voltage_kv": {"type": ["number", "null"], "exclusiveMinimum": 0}
+      }
+    },
+    "collision_context": {
+      "type": "object",
+      "required": ["coverage", "obstacles"],
+      "additionalProperties": false,
+      "properties": {
+        "coverage": {"const": "complete"},
+        "obstacles": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {"$ref": "#/$defs/aabb_obstacle"},
+              {"$ref": "#/$defs/existing_pipe_obstacle"}
+            ]
+          }
+        }
+      }
+    }
+  }
+}

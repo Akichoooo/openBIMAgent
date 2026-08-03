@@ -179,6 +179,16 @@ class CompiledUtilityIR(StrictFrozenModel):
                 ports[port.port_id] = (node, port)
 
         connected_ports: set[str] = set()
+        system_node_ids: dict[str, set[str]] = {system_id: set() for system_id in systems}
+        system_segment_ids: dict[str, set[str]] = {system_id: set() for system_id in systems}
+        undirected_adjacency: dict[str, set[str]] = {node_id: set() for node_id in nodes}
+        directed_adjacency: dict[str, set[str]] = {node_id: set() for node_id in nodes}
+        incident_segment_ids: dict[str, set[str]] = {node_id: set() for node_id in nodes}
+        incoming_segment_ids: dict[str, set[str]] = {node_id: set() for node_id in nodes}
+        outgoing_segment_ids: dict[str, set[str]] = {node_id: set() for node_id in nodes}
+        for node in self.nodes:
+            system_node_ids[node.system_id].add(node.node_id)
+
         for segment in self.segments:
             if segment.system_id not in systems:
                 raise ValueError(f"segment {segment.segment_id!r} 引用未知 system {segment.system_id!r}")
@@ -204,6 +214,26 @@ class CompiledUtilityIR(StrictFrozenModel):
             _validate_segment_geometry(segment, start_port, end_port)
             if systems[segment.system_id].flow_regime is FlowRegime.GRAVITY and segment.slope < -SLOPE_TOLERANCE:
                 raise ValueError(f"gravity segment {segment.segment_id!r} 不允许逆坡")
+            system_segment_ids[segment.system_id].add(segment.segment_id)
+            undirected_adjacency[start_node.node_id].add(end_node.node_id)
+            undirected_adjacency[end_node.node_id].add(start_node.node_id)
+            directed_adjacency[start_node.node_id].add(end_node.node_id)
+            incident_segment_ids[start_node.node_id].add(segment.segment_id)
+            incident_segment_ids[end_node.node_id].add(segment.segment_id)
+            outgoing_segment_ids[start_node.node_id].add(segment.segment_id)
+            incoming_segment_ids[end_node.node_id].add(segment.segment_id)
+
+        _validate_network_topology(
+            systems=systems,
+            nodes=nodes,
+            system_node_ids=system_node_ids,
+            system_segment_ids=system_segment_ids,
+            undirected_adjacency=undirected_adjacency,
+            directed_adjacency=directed_adjacency,
+            incident_segment_ids=incident_segment_ids,
+            incoming_segment_ids=incoming_segment_ids,
+            outgoing_segment_ids=outgoing_segment_ids,
+        )
 
         known_subjects: dict[EvidenceSubjectType, set[str]] = {
             EvidenceSubjectType.NETWORK: {self.ir_id},
@@ -272,6 +302,87 @@ def _unique_by(items: tuple[Any, ...], field: str, label: str) -> dict[str, Any]
             raise ValueError(f"{label} id 重复: {identity!r}")
         result[identity] = item
     return result
+
+
+def _validate_network_topology(
+    *,
+    systems: dict[str, UtilitySystem],
+    nodes: dict[str, UtilityNode],
+    system_node_ids: dict[str, set[str]],
+    system_segment_ids: dict[str, set[str]],
+    undirected_adjacency: dict[str, set[str]],
+    directed_adjacency: dict[str, set[str]],
+    incident_segment_ids: dict[str, set[str]],
+    incoming_segment_ids: dict[str, set[str]],
+    outgoing_segment_ids: dict[str, set[str]],
+) -> None:
+    for system_id, system in systems.items():
+        node_ids = system_node_ids[system_id]
+        if not node_ids:
+            raise ValueError(f"system {system_id!r} 没有 node")
+        if not system_segment_ids[system_id]:
+            raise ValueError(f"system {system_id!r} 没有 segment")
+
+        for node_id in sorted(node_ids):
+            degree = len(incident_segment_ids[node_id])
+            if degree == 0:
+                raise ValueError(f"system {system_id!r} 存在孤立 node {node_id!r}")
+            node = nodes[node_id]
+            if degree >= 3 and node.node_type is not NodeType.JUNCTION:
+                raise ValueError(
+                    f"node {node_id!r} 连接 {degree} 个 segment，分支或汇流节点必须声明为 junction"
+                )
+            if node.node_type is NodeType.JUNCTION and degree < 3:
+                raise ValueError(f"junction node {node_id!r} 至少连接 3 个 segment，实际 {degree}")
+            if node.node_type is NodeType.JUNCTION and (
+                not incoming_segment_ids[node_id] or not outgoing_segment_ids[node_id]
+            ):
+                raise ValueError(f"junction node {node_id!r} 必须同时具有入流和出流 segment")
+
+        visited = _reachable_nodes(min(node_ids), undirected_adjacency, allowed=node_ids)
+        if visited != node_ids:
+            missing = sorted(node_ids - visited)
+            raise ValueError(f"system {system_id!r} 存在不连通子图，未连通 nodes={missing}")
+
+        if system.flow_regime is FlowRegime.GRAVITY and _has_directed_cycle(node_ids, directed_adjacency):
+            raise ValueError(f"gravity system {system_id!r} 不允许有向环路")
+
+
+def _reachable_nodes(
+    start: str,
+    adjacency: dict[str, set[str]],
+    *,
+    allowed: set[str],
+) -> set[str]:
+    visited: set[str] = set()
+    pending = [start]
+    while pending:
+        current = pending.pop()
+        if current in visited:
+            continue
+        visited.add(current)
+        pending.extend(sorted(adjacency[current] & allowed - visited, reverse=True))
+    return visited
+
+
+def _has_directed_cycle(node_ids: set[str], adjacency: dict[str, set[str]]) -> bool:
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(node_id: str) -> bool:
+        if node_id in visiting:
+            return True
+        if node_id in visited:
+            return False
+        visiting.add(node_id)
+        for neighbor in sorted(adjacency[node_id] & node_ids):
+            if visit(neighbor):
+                return True
+        visiting.remove(node_id)
+        visited.add(node_id)
+        return False
+
+    return any(visit(node_id) for node_id in sorted(node_ids) if node_id not in visited)
 
 
 def _validate_segment_geometry(segment: PipeSegment, start_port: UtilityPort, end_port: UtilityPort) -> None:
