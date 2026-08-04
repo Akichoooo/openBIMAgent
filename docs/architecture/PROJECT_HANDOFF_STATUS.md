@@ -1,7 +1,7 @@
 # openBIMAgent 阶段交接状态
 
-版本：v2.1
-更新时间：2026-08-04 03:24（Asia/Shanghai）
+版本：v2.2
+更新时间：2026-08-04 09:52（Asia/Shanghai）
 维护状态：**ACTIVE**
 工作区：`D:\devloop\workSpace\app_codex\GenerativeBIM\openBIMAgent`
 
@@ -12,9 +12,9 @@
 ```text
 M1 G6 = DEFERRED / IN PROGRESS
 M1 G7 = FINAL BLOCKED
-M1.5 T1–T6 = OFFLINE PASS
-M1.5 = IN PROGRESS
-当前 Gate = M1.5 T7：规模化 benchmark 与总验收
+M1.5 T1–T7 = OFFLINE PASS
+M1.5 = OFFLINE PASS
+当前 Gate = M1 G6：Vectorworks 真实宿主验收（等待真实工件）
 ```
 
 JY 已明确允许在 Vectorworks GUI 真机验收延期期间继续推进 M1.5 代码、Schema、负向测试、离线 E2E 和文档；该授权不等于 G6/G7/M1 通过。
@@ -63,21 +63,30 @@ T6 实现提交：e9296294eb35eb22ecca11a7d3322e94a90588c7（feat: complete M1.5
 - T6 路线包装逐障碍物绑定规则与减距审批，并以相同上下文重算后接入网络；减距结果必须绑定有效审批，未减距不得冒用审批。
 - RuleProjectionIdentity 已串联 typed Blender/Vectorworks、SemanticSnapshot、IFC4X3/IDS；`CompiledUtilityIR v1` 模型和 Schema 保持零漂移。
 
+### M1.5 T7：规模化 benchmark 与总验收
+
+- B1–B10 冻结 3 井串联、分支、汇流、锚点冲突、断网、有向环、证据缺失、规则歧义、26 节点和 102 节点场景；业务状态严格区分 PASS/FAIL/UNKNOWN/REVIEW_REQUIRED。
+- 每个场景冻结输入、期望失败语义、规则身份、IR canonical hash，以及 input/result/artifact 三层 SHA-256；严格 envelope Schema 拒绝未知字段和工件篡改。
+- 覆盖路线折点、55 个复杂地表样点、净距审批、design/check 水力、同义乱序、幂等、checkpoint/resume 和故障恢复；benchmark runner 不依赖删除 recovery state。
+- 正向场景通过离线 Blender/Vectorworks SemanticSnapshot 和 IFC4X3/IDS；B9 比较 120 个对象，B10 比较 481 个对象。该证据仅为 offline compatibility，不能关闭真实 G6。
+- 正式输出目录连续执行两次完整 B1–B10，均为 overall PASS 且 Blender/Vectorworks resume=true。详细证据见 `outputs/M1_5_T7规模化Benchmark与总验收报告.md` 和 `outputs/m1_5_t7_benchmark/`。
+
 ## 4. 最新有效质量证据
 
-以下数字对应本轮 T6 修复后重新执行的真实门禁；后续代码修改后必须重跑：
+以下数字对应 T7 代码冻结后的当前实测；后续代码修改后必须重跑：
 
 ```text
-全仓 pytest：680 passed, 4 skipped, 1 warning in 76.26s
-T6 规则/路线/水力/组合链路：70 passed in 12.39s
-严格 T6 Schema 与路线：24 passed in 2.85s
-JSON Schema 元校验：34 schemas meta-validated
+T7 focused + Schema Gate：21 passed in 36.35s
+recovery 无删除与 resume 定向回归：2 passed, 12 deselected in 33.87s
+T7 受影响链路与组合 E2E：167 passed in 54.13s
+全仓 pytest：694 passed, 4 skipped, 1 warning in 110.97s
+JSON Schema：35 schemas loaded；T7 Schema 已注册
 Ruff：All checks passed
 compileall：passed
-git diff --check：passed
+正式 B1–B10 双重运行：FIRST PASS true/true；SECOND PASS true/true
 ```
 
-唯一 warning：`tests/test_vs_index.py::test_generate_vs_index_success` 动态源码中的 `SyntaxWarning: invalid escape sequence '\\ '`, 未影响测试通过。详细 T6 证据见 `outputs/M1_5_T6规则证据例外与宿主表达离线验收报告.md`。
+唯一 pytest warning：`tests/test_vs_index.py::test_generate_vs_index_success` 动态源码中的既有 `SyntaxWarning: invalid escape sequence '\\ '`, 未影响测试通过。pytest 临时目录回收出现 Windows safe-delete fail-closed 提示，未绕过安全策略。仅暂存 T7 边界后的 `git diff --cached --check` 退出码为 0；当前 Git shim 额外输出 `error: daemon terminated`，未改变退出码。详细 T7 证据见 `outputs/M1_5_T7规模化Benchmark与总验收报告.md`。
 
 关键本地提交（均未推送）：
 
@@ -116,22 +125,22 @@ G6 闭合前不得最终 PASS。之后需补齐全仓质量基线、正式 bench
 
 ### M1.5 T7
 
-- 正常/边界/冲突/证据缺失/规则歧义 benchmark；至少 25 节点和 100 节点网络；正确性、确定性、恢复性、性能、宿主一致性和总验收。
-- T6 离线验收报告：`outputs/M1_5_T6规则证据例外与宿主表达离线验收报告.md`。
+T7 已完成离线验收并形成独立报告。`overall_status=PASS` 只表示 B1–B10 的观测状态和验收语义符合冻结预期；B4–B6 仍是目标 FAIL，B7 是 UNKNOWN，B8 是 REVIEW_REQUIRED。
 
-后续再进入 M2 产品化服务/客户端，最后进入 M3 评测、基准和学术输出。
+后续在 G6/G7 完成后再进入 M2 产品化服务/客户端，最后进入 M3 评测、基准和学术输出。
 
-## 6. T7 唯一启动动作
+## 6. 当前唯一动作：M1 G6 真实宿主验收
 
-先冻结 T6 已通过协议和规则身份，建立可重复 benchmark 工件与验收脚本：
+每次接管先检查：
 
-1. 建立正常、边界、冲突、证据缺失和规则歧义场景集，期望状态显式区分 PASS/FAIL/UNKNOWN/REVIEW_REQUIRED。
-2. 建立至少 25 节点和 100 节点网络，覆盖支路、汇流、路线折点、复杂地表标高、净距审批和 design/check 水力工况。
-3. 对同义乱序、重复执行、checkpoint/resume 和故障恢复验证 canonical hash、输出和审计身份稳定。
-4. 记录正确性、确定性、恢复性、性能和双宿主/IFC 语义一致性；离线 Vectorworks 结果不得替代真实 G6。
-5. 运行全仓质量门禁并形成 T7 总验收报告；提交前继续保护接管前差异。
+```text
+D:\devloop\G6_Test\openbimagent_g6.vwx
+D:\devloop\G6_Test\openbimagent_g6.vwx.openbimagent.json
+```
 
-若真实 Vectorworks `.vwx` 和 sidecar 到位，立即暂停 T7，优先执行 M1 G6 真实验收。
+工件缺失时保持 `DEFERRED / IN PROGRESS`，不得重跑离线 T7 来替代 G6，也不得使用伪 `.vwx`、空文件、独立 Python、`execute_vs_code` 或 fake host 关闭 Gate。
+
+工件到位后立即核验文件大小/SHA-256、completed receipt、13/13 operations、6 个稳定对象、米制单位、图层、records、3D geometry、topology、SemanticSnapshot、幂等重放和真实双宿主严格比较；仅允许协议声明的 `host_handle`、`presentation_material` 差异。
 
 ## 7. 受保护工作树与提交纪律
 

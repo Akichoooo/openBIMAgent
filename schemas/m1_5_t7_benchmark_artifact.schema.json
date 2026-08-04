@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/m1_5_t7_benchmark_artifact.schema.json",
+  "title": "M1.5 T7 Benchmark Artifact",
+  "description": "M1.5 T7 B1-B10 可复核 benchmark envelope。场景输入与结果的内部协议由既有严格模型和 Schema 校验；本 Schema 冻结 envelope 与三层 SHA-256 身份。",
+  "type": "object",
+  "required": [
+    "artifact_version",
+    "scenario_id",
+    "input",
+    "input_sha256",
+    "result",
+    "result_sha256",
+    "artifact_sha256"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "artifact_version": {"const": "1.0"},
+    "scenario_id": {"pattern": "^B(?:10|[1-9])$"},
+    "input": {"type": "object"},
+    "input_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "result": {"type": "object"},
+    "result_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "artifact_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}
