@@ -16,9 +16,20 @@ from openbimagent.server.contracts import (
     M2SseEvent,
     M2SseEventType,
 )
+from openbimagent.server.openapi import (
+    M2_OPENAPI_INFO_VERSION,
+    M2_OPENAPI_VERSION,
+    build_m2_readonly_openapi,
+    canonical_openapi_bytes,
+    canonical_openapi_sha256,
+)
+from openbimagent.server.service import M2_READONLY_SERVICE_VERSION, M2ReadOnlyService
 
 __all__ = [
     "M2_API_PROTOCOL_VERSION",
+    "M2_OPENAPI_INFO_VERSION",
+    "M2_OPENAPI_VERSION",
+    "M2_READONLY_SERVICE_VERSION",
     "M2_SSE_PROTOCOL_VERSION",
     "M2ApiEnvelope",
     "M2ApiError",
@@ -27,6 +38,10 @@ __all__ = [
     "M2ControlRequest",
     "M2ErrorCode",
     "M2SseCursor",
+    "M2ReadOnlyService",
     "M2SseEvent",
     "M2SseEventType",
+    "build_m2_readonly_openapi",
+    "canonical_openapi_bytes",
+    "canonical_openapi_sha256",
 ]
