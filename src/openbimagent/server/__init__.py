@@ -3,6 +3,16 @@
 当前仅包含 pre-G7 的协议与 Schema 准备，不启动 HTTP server，不获取 Runtime lease。
 """
 
+from openbimagent.server.control_preflight import (
+    M2_CONTROL_PREFLIGHT_VERSION,
+    M2ControlPreflight,
+    M2ControlPreflightError,
+    M2ControlProxyPlan,
+    M2ControlRole,
+    M2IdempotencyDecision,
+    M2IdempotencyDisposition,
+    M2IdempotencyFact,
+)
 from openbimagent.server.contracts import (
     M2_API_PROTOCOL_VERSION,
     M2_SSE_PROTOCOL_VERSION,
@@ -32,6 +42,7 @@ from openbimagent.server.sse_projection import (
 
 __all__ = [
     "M2_API_PROTOCOL_VERSION",
+    "M2_CONTROL_PREFLIGHT_VERSION",
     "M2_OPENAPI_INFO_VERSION",
     "M2_OPENAPI_VERSION",
     "M2_READONLY_SERVICE_VERSION",
@@ -41,8 +52,15 @@ __all__ = [
     "M2ApiError",
     "M2ArtifactMetadata",
     "M2ControlOperation",
+    "M2ControlPreflight",
+    "M2ControlPreflightError",
+    "M2ControlProxyPlan",
     "M2ControlRequest",
+    "M2ControlRole",
     "M2ErrorCode",
+    "M2IdempotencyDecision",
+    "M2IdempotencyDisposition",
+    "M2IdempotencyFact",
     "M2SseCursor",
     "M2ReadOnlyService",
     "M2SseEvent",
