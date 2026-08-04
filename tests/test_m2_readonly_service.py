@@ -290,6 +290,14 @@ def test_openapi_contains_only_eight_read_only_operations() -> None:
     assert document["x-openbimagent-boundaries"]["write_control_enabled"] is False
 
 
+def test_openapi_declares_adapter_method_rejection_contract() -> None:
+    document = build_m2_readonly_openapi()
+    for path_item in document["paths"].values():
+        method_error = path_item["get"]["responses"]["405"]
+        assert method_error["headers"]["Allow"]["required"] is True
+        assert method_error["headers"]["Allow"]["schema"] == {"type": "string", "const": "GET"}
+
+
 def test_openapi_requires_request_id_and_has_no_security_claim() -> None:
     document = build_m2_readonly_openapi()
     assert "securitySchemes" not in document["components"]

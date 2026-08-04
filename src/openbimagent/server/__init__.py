@@ -43,6 +43,14 @@ from openbimagent.server.openapi import (
     canonical_openapi_bytes,
     canonical_openapi_sha256,
 )
+from openbimagent.server.readonly_http import (
+    M2_READONLY_HTTP_ADAPTER_VERSION,
+    M2HttpHeader,
+    M2ReadonlyHttpAdapter,
+    M2ReadonlyHttpRequest,
+    M2ReadonlyHttpResponse,
+    m2_error_http_status,
+)
 from openbimagent.server.service import M2_READONLY_SERVICE_VERSION, M2ReadOnlyService
 from openbimagent.server.sse_projection import (
     M2_SSE_PROJECTION_VERSION,
@@ -56,6 +64,7 @@ __all__ = [
     "M2_IDEMPOTENCY_TRANSACTION_VERSION",
     "M2_OPENAPI_INFO_VERSION",
     "M2_OPENAPI_VERSION",
+    "M2_READONLY_HTTP_ADAPTER_VERSION",
     "M2_READONLY_SERVICE_VERSION",
     "M2_SSE_PROJECTION_VERSION",
     "M2_SSE_PROTOCOL_VERSION",
@@ -79,6 +88,10 @@ __all__ = [
     "M2IdempotencyTransactionDecision",
     "M2IdempotencyTransactionDisposition",
     "M2IdempotencyTransactionError",
+    "M2HttpHeader",
+    "M2ReadonlyHttpAdapter",
+    "M2ReadonlyHttpRequest",
+    "M2ReadonlyHttpResponse",
     "M2SseCursor",
     "M2ReadOnlyService",
     "M2SseEvent",
@@ -88,4 +101,5 @@ __all__ = [
     "build_m2_readonly_openapi",
     "canonical_openapi_bytes",
     "canonical_openapi_sha256",
+    "m2_error_http_status",
 ]

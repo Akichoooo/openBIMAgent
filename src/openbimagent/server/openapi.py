@@ -190,6 +190,15 @@ def _get_operation(
                 "200": _response("Successful read-only projection"),
                 "400": _response("Invalid request"),
                 "404": _response("Resource not found"),
+                "405": {
+                    **_response("Method not allowed"),
+                    "headers": {
+                        "Allow": {
+                            "required": True,
+                            "schema": {"type": "string", "const": "GET"},
+                        }
+                    },
+                },
                 "409": _response("Persistent fact conflict"),
                 "500": _response("Safe internal error"),
             },
