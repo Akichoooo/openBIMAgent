@@ -315,6 +315,13 @@ def test_openapi_declares_shared_correlation_identity_policy() -> None:
         assert request_header["schema"]["pattern"] == "^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$"
 
 
+def test_openapi_declares_sse_stream_identity_as_distinct_policy() -> None:
+    boundaries = build_m2_readonly_openapi()["x-openbimagent-boundaries"]
+    assert boundaries["sse_stream_id_policy_version"] == "0.1"
+    assert boundaries["sse_stream_id_pattern"] == "^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$"
+    assert boundaries["sse_stream_id_policy_distinct_from_attempt_identity"] is True
+
+
 def test_openapi_declares_shared_resource_identity_policy() -> None:
     document = build_m2_readonly_openapi()
     boundaries = document["x-openbimagent-boundaries"]

@@ -25,6 +25,11 @@ from openbimagent.server.resource_identity import (
     M2_RESOURCE_ID_POLICY_VERSION,
     validate_m2_resource_id,
 )
+from openbimagent.server.sse_identity import (
+    M2_SSE_STREAM_ID_PATTERN,
+    M2_SSE_STREAM_ID_POLICY_VERSION,
+    validate_m2_sse_stream_id,
+)
 
 M2_API_PROTOCOL_VERSION = "1.0"
 M2_SSE_PROTOCOL_VERSION = "1.0"
@@ -210,9 +215,22 @@ class M2SseCursor(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     protocol_version: str = Field(default=M2_SSE_PROTOCOL_VERSION, pattern=r"^1\.0$")
-    session_id: str = Field(min_length=1, max_length=128, pattern=_ID_PATTERN)
-    last_event_id: str = Field(min_length=1, max_length=128, pattern=_ID_PATTERN)
+    session_id: str = Field(
+        pattern=M2_SSE_STREAM_ID_PATTERN,
+        json_schema_extra={"x-openbimagent-sse-stream-id-policy": M2_SSE_STREAM_ID_POLICY_VERSION},
+    )
+    last_event_id: str = Field(
+        pattern=M2_SSE_STREAM_ID_PATTERN,
+        json_schema_extra={"x-openbimagent-sse-stream-id-policy": M2_SSE_STREAM_ID_POLICY_VERSION},
+    )
     last_sequence: int = Field(ge=1)
+
+    @field_validator("session_id", "last_event_id", mode="before")
+    @classmethod
+    def _cursor_identity_is_stream_identity(cls, value: object) -> object:
+        if isinstance(value, str):
+            return validate_m2_sse_stream_id(value)
+        return value
 
 
 class M2SseEvent(BaseModel):
@@ -221,9 +239,15 @@ class M2SseEvent(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     protocol_version: str = Field(default=M2_SSE_PROTOCOL_VERSION, pattern=r"^1\.0$")
-    event_id: str = Field(min_length=1, max_length=128, pattern=_ID_PATTERN)
+    event_id: str = Field(
+        pattern=M2_SSE_STREAM_ID_PATTERN,
+        json_schema_extra={"x-openbimagent-sse-stream-id-policy": M2_SSE_STREAM_ID_POLICY_VERSION},
+    )
     event_type: M2SseEventType
-    session_id: str = Field(min_length=1, max_length=128, pattern=_ID_PATTERN)
+    session_id: str = Field(
+        pattern=M2_SSE_STREAM_ID_PATTERN,
+        json_schema_extra={"x-openbimagent-sse-stream-id-policy": M2_SSE_STREAM_ID_POLICY_VERSION},
+    )
     request_id: str | None = Field(default=None, min_length=1, max_length=128, pattern=_ID_PATTERN)
     lineage_id: str | None = Field(default=None, min_length=1, max_length=128, pattern=_ID_PATTERN)
     attempt_number: int | None = Field(default=None, ge=1)
@@ -234,6 +258,13 @@ class M2SseEvent(BaseModel):
         default_factory=dict,
         json_schema_extra={"x-openbimagent-remote-payload-policy": M2_REMOTE_PAYLOAD_POLICY_VERSION},
     )
+
+    @field_validator("event_id", "session_id", mode="before")
+    @classmethod
+    def _event_identity_is_stream_identity(cls, value: object) -> object:
+        if isinstance(value, str):
+            return validate_m2_sse_stream_id(value)
+        return value
 
     @model_validator(mode="after")
     def _identity_and_terminal_semantics(self) -> "M2SseEvent":

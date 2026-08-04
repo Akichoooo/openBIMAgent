@@ -7,8 +7,8 @@
   "additionalProperties": false,
   "properties": {
     "protocol_version": {"const": "1.0"},
-    "session_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:@/-]+$"},
-    "last_event_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:@/-]+$"},
+    "session_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$", "x-openbimagent-sse-stream-id-policy": "0.1"},
+    "last_event_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$", "x-openbimagent-sse-stream-id-policy": "0.1"},
     "last_sequence": {"type": "integer", "minimum": 1}
   }
 }

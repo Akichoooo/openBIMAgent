@@ -31,6 +31,11 @@ from openbimagent.server.resource_identity import (
     is_m2_resource_id,
     validate_m2_resource_id,
 )
+from openbimagent.server.sse_identity import (
+    M2_SSE_STREAM_ID_POLICY_VERSION,
+    is_m2_sse_stream_id,
+    validate_m2_sse_stream_id,
+)
 from openbimagent.server.payload_privacy import (
     M2_REMOTE_PAYLOAD_POLICY_VERSION,
     RemotePayloadPrivacyError,
@@ -285,6 +290,56 @@ def test_sse_cursor_is_scoped_and_strict() -> None:
         M2SseCursor(session_id="session-1", last_event_id="event-0", last_sequence=0)
     with pytest.raises(ValidationError, match="Extra inputs"):
         M2SseCursor(session_id="session-1", last_event_id="event-1", last_sequence=1, token="bad")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [".", "..", "../event-1", "event/1", r"event\1", "C:event-1", "tenant:event", " event", "事件-1", "a" * 129],
+)
+def test_sse_stream_identity_policy_rejects_path_or_ambiguous_values(value: str) -> None:
+    assert is_m2_sse_stream_id(value) is False
+    with pytest.raises(ValueError, match="SSE 流标识"):
+        validate_m2_sse_stream_id(value)
+    for field in ("event_id", "session_id"):
+        with pytest.raises(ValidationError, match="SSE 流标识"):
+            _event(**{field: value})
+    with pytest.raises(ValidationError, match="SSE 流标识"):
+        M2SseCursor(session_id=value, last_event_id="event-1", last_sequence=1)
+    with pytest.raises(ValidationError, match="SSE 流标识"):
+        M2SseCursor(session_id="session-1", last_event_id=value, last_sequence=1)
+
+
+def test_sse_stream_identity_policy_is_versioned_without_reclassifying_attempt_identity() -> None:
+    assert M2_SSE_STREAM_ID_POLICY_VERSION == "0.1"
+    for value in ("session-1", "evt-" + "a" * 64, "stream.node_1", "tenant@session"):
+        assert is_m2_sse_stream_id(value) is True
+        assert validate_m2_sse_stream_id(value) == value
+    event = _event(request_id="tenant:attempt/1", lineage_id="lineage:branch/1")
+    assert event.request_id == "tenant:attempt/1"
+    assert event.lineage_id == "lineage:branch/1"
+
+
+def test_sse_schemas_declare_stream_identity_policy() -> None:
+    event_runtime = M2SseEvent.model_json_schema()["properties"]
+    cursor_runtime = M2SseCursor.model_json_schema()["properties"]
+    event_baseline = json.loads((ROOT / "schemas" / "m2_sse_event.schema.json").read_text(encoding="utf-8"))[
+        "properties"
+    ]
+    cursor_baseline = json.loads((ROOT / "schemas" / "m2_sse_cursor.schema.json").read_text(encoding="utf-8"))[
+        "properties"
+    ]
+    for schema in (
+        event_runtime["event_id"],
+        event_runtime["session_id"],
+        cursor_runtime["session_id"],
+        cursor_runtime["last_event_id"],
+        event_baseline["event_id"],
+        event_baseline["session_id"],
+        cursor_baseline["session_id"],
+        cursor_baseline["last_event_id"],
+    ):
+        assert schema["x-openbimagent-sse-stream-id-policy"] == "0.1"
+        assert schema["pattern"] == "^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$"
 
 
 def test_artifact_metadata_never_exposes_path_and_only_completed_is_downloadable() -> None:

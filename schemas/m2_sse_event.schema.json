@@ -19,7 +19,7 @@
   "additionalProperties": false,
   "properties": {
     "protocol_version": {"const": "1.0"},
-    "event_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:@/-]+$"},
+    "event_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$", "x-openbimagent-sse-stream-id-policy": "0.1"},
     "event_type": {
       "enum": [
         "data-progress",
@@ -32,7 +32,7 @@
         "data-terminal"
       ]
     },
-    "session_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:@/-]+$"},
+    "session_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$", "x-openbimagent-sse-stream-id-policy": "0.1"},
     "request_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:@/-]+$"},
     "lineage_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:@/-]+$"},
     "attempt_number": {"type": ["integer", "null"], "minimum": 1},

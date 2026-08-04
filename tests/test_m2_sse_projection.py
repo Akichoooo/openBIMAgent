@@ -191,6 +191,13 @@ def test_projection_whitelists_data_and_never_exposes_paths_or_private_text() ->
     assert approval.data["args_sha256"] == "a" * 64
 
 
+@pytest.mark.parametrize("session_id", [".", "..", "session/escape", r"session\escape", "C:session", "tenant:session"])
+def test_projection_rejects_invalid_stream_session_even_when_no_event_is_projected(session_id: str) -> None:
+    with pytest.raises(SseProjectionError, match="session_id") as exc_info:
+        PROJECTOR.project(session_id=session_id, events=[])
+    assert exc_info.value.code is M2ErrorCode.INVALID_REQUEST
+
+
 def test_non_whitelisted_session_events_are_ignored() -> None:
     message = SessionEvent(
         id="message",

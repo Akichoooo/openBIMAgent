@@ -23,6 +23,7 @@ from openbimagent.server.contracts import (
     M2SseEventType,
     make_m2_api_error,
 )
+from openbimagent.server.sse_identity import is_m2_sse_stream_id
 from openbimagent.session.schema import CustomType, EventType, SessionEvent
 
 M2_SSE_PROJECTION_VERSION = "0.1"
@@ -93,6 +94,8 @@ class M2SseProjector:
         session_id: str,
         events: Iterable[SessionEvent],
     ) -> tuple[M2SseEvent, ...]:
+        if not is_m2_sse_stream_id(session_id):
+            raise SseProjectionError(M2ErrorCode.INVALID_REQUEST, "SSE stream session_id 非法")
         source_events = tuple(events)
         attempt_index = self._attempt_index(source_events)
         facts: dict[str, _Fact] = {}
@@ -156,6 +159,8 @@ class M2SseProjector:
         cursor: M2SseCursor | None = None,
         limit: int = 100,
     ) -> tuple[M2SseEvent, ...]:
+        if not is_m2_sse_stream_id(session_id):
+            raise SseProjectionError(M2ErrorCode.INVALID_REQUEST, "SSE stream session_id 非法")
         if limit < 1 or limit > 1_000:
             raise SseProjectionError(M2ErrorCode.INVALID_REQUEST, "SSE replay limit 必须在 1..1000")
         self._validate_stream(session_id=session_id, events=events)

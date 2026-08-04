@@ -72,6 +72,12 @@ from openbimagent.server.readonly_http import (
     m2_error_http_status,
 )
 from openbimagent.server.service import M2_READONLY_SERVICE_VERSION, M2ReadOnlyService
+from openbimagent.server.sse_identity import (
+    M2_SSE_STREAM_ID_PATTERN,
+    M2_SSE_STREAM_ID_POLICY_VERSION,
+    is_m2_sse_stream_id,
+    validate_m2_sse_stream_id,
+)
 from openbimagent.server.sse_projection import (
     M2_SSE_PROJECTION_VERSION,
     M2SseProjector,
@@ -94,6 +100,8 @@ __all__ = [
     "M2_RESOURCE_ID_POLICY_VERSION",
     "M2_SSE_PROJECTION_VERSION",
     "M2_SSE_PROTOCOL_VERSION",
+    "M2_SSE_STREAM_ID_PATTERN",
+    "M2_SSE_STREAM_ID_POLICY_VERSION",
     "M2ApiEnvelope",
     "M2ApiError",
     "M2ArtifactMetadata",
@@ -130,10 +138,12 @@ __all__ = [
     "canonical_openapi_sha256",
     "is_m2_correlation_id",
     "is_m2_resource_id",
+    "is_m2_sse_stream_id",
     "m2_error_http_status",
     "m2_error_is_retryable",
     "make_m2_api_error",
     "validate_m2_correlation_id",
     "validate_m2_resource_id",
+    "validate_m2_sse_stream_id",
     "validate_remote_payload",
 ]

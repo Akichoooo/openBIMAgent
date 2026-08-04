@@ -24,6 +24,10 @@ from openbimagent.server.resource_identity import (
     M2_RESOURCE_ID_PATTERN,
     M2_RESOURCE_ID_POLICY_VERSION,
 )
+from openbimagent.server.sse_identity import (
+    M2_SSE_STREAM_ID_PATTERN,
+    M2_SSE_STREAM_ID_POLICY_VERSION,
+)
 
 M2_OPENAPI_VERSION = "3.1.0"
 M2_OPENAPI_INFO_VERSION = "0.1.0-pre-g7"
@@ -132,6 +136,9 @@ def build_m2_readonly_openapi() -> dict[str, Any]:
             "resource_id_pattern": M2_RESOURCE_ID_PATTERN,
             "correlation_id_policy_version": M2_CORRELATION_ID_POLICY_VERSION,
             "correlation_id_pattern": M2_CORRELATION_ID_PATTERN,
+            "sse_stream_id_policy_version": M2_SSE_STREAM_ID_POLICY_VERSION,
+            "sse_stream_id_pattern": M2_SSE_STREAM_ID_PATTERN,
+            "sse_stream_id_policy_distinct_from_attempt_identity": True,
         },
     }
 
