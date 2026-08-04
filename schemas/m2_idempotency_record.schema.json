@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/m2_idempotency_record.schema.json",
+  "title": "M2IdempotencyRecordV0.1",
+  "type": "object",
+  "required": [
+    "transaction_version",
+    "state",
+    "revision",
+    "idempotency_scope_sha256",
+    "semantic_fingerprint",
+    "reservation_id",
+    "receipt_id"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "transaction_version": {"const": "0.1"},
+    "state": {"enum": ["reserved", "completed"]},
+    "revision": {"type": "integer", "minimum": 1},
+    "idempotency_scope_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "semantic_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "reservation_id": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9_.:@/-]+$"},
+    "receipt_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9_.:@/-]+$"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"state": {"const": "reserved"}}},
+      "then": {"properties": {"receipt_id": {"type": "null"}}}
+    },
+    {
+      "if": {"properties": {"state": {"const": "completed"}}},
+      "then": {"properties": {"receipt_id": {"type": "string", "minLength": 1}}}
+    }
+  ]
+}

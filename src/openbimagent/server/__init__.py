@@ -26,6 +26,16 @@ from openbimagent.server.contracts import (
     M2SseEvent,
     M2SseEventType,
 )
+from openbimagent.server.idempotency_transaction import (
+    M2_IDEMPOTENCY_TRANSACTION_VERSION,
+    M2IdempotencyCasCommand,
+    M2IdempotencyRecord,
+    M2IdempotencyRecordState,
+    M2IdempotencyTransaction,
+    M2IdempotencyTransactionDecision,
+    M2IdempotencyTransactionDisposition,
+    M2IdempotencyTransactionError,
+)
 from openbimagent.server.openapi import (
     M2_OPENAPI_INFO_VERSION,
     M2_OPENAPI_VERSION,
@@ -43,6 +53,7 @@ from openbimagent.server.sse_projection import (
 __all__ = [
     "M2_API_PROTOCOL_VERSION",
     "M2_CONTROL_PREFLIGHT_VERSION",
+    "M2_IDEMPOTENCY_TRANSACTION_VERSION",
     "M2_OPENAPI_INFO_VERSION",
     "M2_OPENAPI_VERSION",
     "M2_READONLY_SERVICE_VERSION",
@@ -58,9 +69,16 @@ __all__ = [
     "M2ControlRequest",
     "M2ControlRole",
     "M2ErrorCode",
+    "M2IdempotencyCasCommand",
     "M2IdempotencyDecision",
     "M2IdempotencyDisposition",
     "M2IdempotencyFact",
+    "M2IdempotencyRecord",
+    "M2IdempotencyRecordState",
+    "M2IdempotencyTransaction",
+    "M2IdempotencyTransactionDecision",
+    "M2IdempotencyTransactionDisposition",
+    "M2IdempotencyTransactionError",
     "M2SseCursor",
     "M2ReadOnlyService",
     "M2SseEvent",
