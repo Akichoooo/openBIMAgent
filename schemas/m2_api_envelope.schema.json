@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/m2_api_envelope.schema.json",
+  "title": "M2ApiEnvelopeV1",
+  "type": "object",
+  "required": ["protocol_version", "request_id", "ok", "data", "error"],
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": {"const": "1.0"},
+    "request_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:@/-]+$"},
+    "ok": {"type": "boolean"},
+    "data": {"type": ["object", "null"]},
+    "error": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/error"}
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"ok": {"const": true}}},
+      "then": {"properties": {"data": {"type": "object"}, "error": {"type": "null"}}},
+      "else": {"properties": {"data": {"type": "null"}, "error": {"$ref": "#/$defs/error"}}}
+    }
+  ],
+  "$defs": {
+    "error": {
+      "type": "object",
+      "required": ["code", "message", "retryable", "request_id", "details"],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "enum": [
+            "InvalidRequest",
+            "UnsupportedVersion",
+            "Unauthorized",
+            "Forbidden",
+            "NotFound",
+            "Conflict",
+            "IdempotencyConflict",
+            "RateLimited",
+            "PayloadTooLarge",
+            "RuntimeUnavailable",
+            "ApprovalRequired",
+            "TerminalStateConflict",
+            "ReplayCursorExpired",
+            "InternalError"
+          ]
+        },
+        "message": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "retryable": {"type": "boolean"},
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:@/-]+$"},
+        "details": {
+          "type": "object",
+          "maxProperties": 20,
+          "additionalProperties": {"type": ["string", "integer", "number", "boolean", "null"]}
+        }
+      }
+    }
+  }
+}

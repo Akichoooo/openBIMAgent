@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/m2_sse_cursor.schema.json",
+  "title": "M2SseCursorV1",
+  "type": "object",
+  "required": ["protocol_version", "session_id", "last_event_id", "last_sequence"],
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": {"const": "1.0"},
+    "session_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:@/-]+$"},
+    "last_event_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:@/-]+$"},
+    "last_sequence": {"type": "integer", "minimum": 1}
+  }
+}

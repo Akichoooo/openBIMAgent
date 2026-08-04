@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/m2_artifact_metadata.schema.json",
+  "title": "M2ArtifactMetadataV1",
+  "type": "object",
+  "required": [
+    "protocol_version",
+    "artifact_id",
+    "kind",
+    "media_type",
+    "sha256",
+    "size_bytes",
+    "immutable",
+    "status",
+    "source_attempt_id",
+    "download_available"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": {"const": "1.0"},
+    "artifact_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:@/-]+$"},
+    "kind": {"type": "string", "minLength": 1, "maxLength": 128},
+    "media_type": {"type": "string", "minLength": 3, "maxLength": 255, "pattern": "^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "size_bytes": {"type": "integer", "minimum": 0},
+    "immutable": {"const": true},
+    "status": {"enum": ["completed", "partial", "failed"]},
+    "source_attempt_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:@/-]+$"},
+    "download_available": {"type": "boolean"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"download_available": {"const": true}}},
+      "then": {"properties": {"status": {"const": "completed"}}}
+    }
+  ]
+}

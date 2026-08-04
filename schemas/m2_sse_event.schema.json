@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/m2_sse_event.schema.json",
+  "title": "M2SseEventV1",
+  "type": "object",
+  "required": [
+    "protocol_version",
+    "event_id",
+    "event_type",
+    "session_id",
+    "request_id",
+    "lineage_id",
+    "attempt_number",
+    "sequence",
+    "occurred_at",
+    "terminal",
+    "data"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": {"const": "1.0"},
+    "event_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:@/-]+$"},
+    "event_type": {
+      "enum": [
+        "data-progress",
+        "data-vision-scorecard",
+        "data-clarify-form",
+        "data-attempt",
+        "data-approval",
+        "data-artifact",
+        "data-error",
+        "data-terminal"
+      ]
+    },
+    "session_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:@/-]+$"},
+    "request_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:@/-]+$"},
+    "lineage_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:@/-]+$"},
+    "attempt_number": {"type": ["integer", "null"], "minimum": 1},
+    "sequence": {"type": "integer", "minimum": 1},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "terminal": {"type": "boolean"},
+    "data": {"type": "object"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"event_type": {"const": "data-terminal"}}},
+      "then": {"properties": {"terminal": {"const": true}}},
+      "else": {"properties": {"terminal": {"const": false}}}
+    },
+    {
+      "if": {
+        "anyOf": [
+          {"properties": {"request_id": {"type": "string"}}},
+          {"properties": {"lineage_id": {"type": "string"}}},
+          {"properties": {"attempt_number": {"type": "integer"}}}
+        ]
+      },
+      "then": {
+        "properties": {
+          "request_id": {"type": "string"},
+          "lineage_id": {"type": "string"},
+          "attempt_number": {"type": "integer"}
+        }
+      }
+    }
+  ]
+}

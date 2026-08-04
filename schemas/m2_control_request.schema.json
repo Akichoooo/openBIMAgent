@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/m2_control_request.schema.json",
+  "title": "M2ControlRequestV1",
+  "type": "object",
+  "required": [
+    "protocol_version",
+    "operation",
+    "resource_id",
+    "idempotency_key",
+    "approved",
+    "instruction",
+    "reason"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": {"const": "1.0"},
+    "operation": {"enum": ["approval.decide", "attempt.resume", "attempt.steer", "attempt.cancel"]},
+    "resource_id": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9_.:@/-]+$"},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9_.:@/-]+$"},
+    "approved": {"type": ["boolean", "null"]},
+    "instruction": {"type": ["string", "null"], "minLength": 1, "maxLength": 20000},
+    "reason": {"type": "string", "maxLength": 1000}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"operation": {"const": "approval.decide"}}},
+      "then": {
+        "properties": {
+          "approved": {"type": "boolean"},
+          "instruction": {"type": "null"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"operation": {"enum": ["attempt.resume", "attempt.steer"]}}},
+      "then": {
+        "properties": {
+          "approved": {"type": "null"},
+          "instruction": {"type": "string", "minLength": 1},
+          "reason": {"const": ""}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"operation": {"const": "attempt.cancel"}}},
+      "then": {
+        "properties": {
+          "approved": {"type": "null"},
+          "instruction": {"type": "null"},
+          "reason": {"const": ""}
+        }
+      }
+    }
+  ]
+}
