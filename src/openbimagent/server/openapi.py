@@ -10,7 +10,11 @@ import json
 from copy import deepcopy
 from typing import Any
 
-from openbimagent.server.contracts import M2ApiEnvelope, M2ArtifactMetadata
+from openbimagent.server.contracts import (
+    M2_ERROR_RETRY_POLICY_VERSION,
+    M2ApiEnvelope,
+    M2ArtifactMetadata,
+)
 from openbimagent.server.payload_privacy import M2_REMOTE_PAYLOAD_POLICY_VERSION
 
 M2_OPENAPI_VERSION = "3.1.0"
@@ -114,6 +118,8 @@ def build_m2_readonly_openapi() -> dict[str, Any]:
             "arbitrary_path_parameters": False,
             "remote_payload_policy_version": M2_REMOTE_PAYLOAD_POLICY_VERSION,
             "remote_payload_runtime_gate_required": True,
+            "error_retry_policy_version": M2_ERROR_RETRY_POLICY_VERSION,
+            "error_retryable_codes": ["RateLimited", "RuntimeUnavailable"],
         },
     }
 

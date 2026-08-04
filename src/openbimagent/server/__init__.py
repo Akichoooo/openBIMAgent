@@ -15,6 +15,7 @@ from openbimagent.server.control_preflight import (
 )
 from openbimagent.server.contracts import (
     M2_API_PROTOCOL_VERSION,
+    M2_ERROR_RETRY_POLICY_VERSION,
     M2_SSE_PROTOCOL_VERSION,
     M2ApiEnvelope,
     M2ApiError,
@@ -25,6 +26,8 @@ from openbimagent.server.contracts import (
     M2SseCursor,
     M2SseEvent,
     M2SseEventType,
+    m2_error_is_retryable,
+    make_m2_api_error,
 )
 from openbimagent.server.idempotency_transaction import (
     M2_IDEMPOTENCY_TRANSACTION_VERSION,
@@ -66,6 +69,7 @@ from openbimagent.server.sse_projection import (
 __all__ = [
     "M2_API_PROTOCOL_VERSION",
     "M2_CONTROL_PREFLIGHT_VERSION",
+    "M2_ERROR_RETRY_POLICY_VERSION",
     "M2_IDEMPOTENCY_TRANSACTION_VERSION",
     "M2_OPENAPI_INFO_VERSION",
     "M2_OPENAPI_VERSION",
@@ -109,5 +113,7 @@ __all__ = [
     "canonical_openapi_bytes",
     "canonical_openapi_sha256",
     "m2_error_http_status",
+    "m2_error_is_retryable",
+    "make_m2_api_error",
     "validate_remote_payload",
 ]

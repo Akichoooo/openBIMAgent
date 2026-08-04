@@ -15,9 +15,9 @@ from openbimagent.orchestrator.control_plane import ControlPlaneError
 from openbimagent.server.contracts import (
     M2_API_PROTOCOL_VERSION,
     M2ApiEnvelope,
-    M2ApiError,
     M2ArtifactMetadata,
     M2ErrorCode,
+    make_m2_api_error,
 )
 
 M2_READONLY_SERVICE_VERSION = "0.1"
@@ -281,13 +281,10 @@ class M2ReadOnlyService:
         request_id: str,
         code: M2ErrorCode,
         message: str,
-        *,
-        retryable: bool = False,
     ) -> M2ApiEnvelope:
-        error = M2ApiError(
+        error = make_m2_api_error(
             code=code,
             message=message,
-            retryable=retryable,
             request_id=request_id,
         )
         return M2ApiEnvelope(request_id=request_id, ok=False, error=error)
@@ -310,7 +307,6 @@ class M2ReadOnlyService:
             request_id,
             M2ErrorCode.INTERNAL_ERROR,
             message,
-            retryable=False,
         )
 
 

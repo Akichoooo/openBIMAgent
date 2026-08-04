@@ -18,6 +18,7 @@ from openbimagent.server.payload_privacy import M2_REMOTE_PAYLOAD_POLICY_VERSION
 
 M2_API_PROTOCOL_VERSION = "1.0"
 M2_SSE_PROTOCOL_VERSION = "1.0"
+M2_ERROR_RETRY_POLICY_VERSION = "0.1"
 _ID_PATTERN = r"^[A-Za-z0-9_.:@/-]+$"
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
 _MEDIA_TYPE_PATTERN = re.compile(r"^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$")
@@ -40,14 +41,51 @@ class M2ErrorCode(StrEnum):
     INTERNAL_ERROR = "InternalError"
 
 
+_RETRYABLE_ERROR_CODES = frozenset(
+    {
+        M2ErrorCode.RATE_LIMITED,
+        M2ErrorCode.RUNTIME_UNAVAILABLE,
+    }
+)
+
+
+def m2_error_is_retryable(code: M2ErrorCode) -> bool:
+    """返回稳定错误码是否允许客户端对同一语义请求安全重试。"""
+
+    return code in _RETRYABLE_ERROR_CODES
+
+
 class M2ApiError(BaseModel):
     """远程安全错误；不得包含 token、请求正文、异常堆栈或内部路径。"""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        json_schema_extra={
+            "x-openbimagent-retry-policy": M2_ERROR_RETRY_POLICY_VERSION,
+            "allOf": [
+                {
+                    "if": {
+                        "properties": {
+                            "code": {
+                                "enum": [
+                                    M2ErrorCode.RATE_LIMITED.value,
+                                    M2ErrorCode.RUNTIME_UNAVAILABLE.value,
+                                ]
+                            }
+                        },
+                        "required": ["code"],
+                    },
+                    "then": {"properties": {"retryable": {"const": True}}},
+                    "else": {"properties": {"retryable": {"const": False}}},
+                }
+            ],
+        },
+    )
 
     code: M2ErrorCode
     message: str = Field(min_length=1, max_length=2_000)
-    retryable: bool = False
+    retryable: bool
     request_id: str = Field(min_length=1, max_length=128, pattern=_ID_PATTERN)
     details: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
 
@@ -67,6 +105,30 @@ class M2ApiError(BaseModel):
                 raise ValueError(f"error.details.{key} 超过 500 字符")
         validate_remote_payload(value)
         return value
+
+    @model_validator(mode="after")
+    def _retryable_matches_stable_code(self) -> "M2ApiError":
+        if self.retryable is not m2_error_is_retryable(self.code):
+            raise ValueError("retryable 必须由稳定错误码决定")
+        return self
+
+
+def make_m2_api_error(
+    *,
+    code: M2ErrorCode,
+    message: str,
+    request_id: str,
+    details: dict[str, str | int | float | bool | None] | None = None,
+) -> M2ApiError:
+    """按稳定错误码派生 retryable，避免 adapter 自行声明重试语义。"""
+
+    return M2ApiError(
+        code=code,
+        message=message,
+        retryable=m2_error_is_retryable(code),
+        request_id=request_id,
+        details={} if details is None else details,
+    )
 
 
 class M2ApiEnvelope(BaseModel):
@@ -229,6 +291,7 @@ class M2ControlRequest(BaseModel):
 
 __all__ = [
     "M2_API_PROTOCOL_VERSION",
+    "M2_ERROR_RETRY_POLICY_VERSION",
     "M2_SSE_PROTOCOL_VERSION",
     "M2ApiEnvelope",
     "M2ApiError",
@@ -239,4 +302,6 @@ __all__ = [
     "M2SseCursor",
     "M2SseEvent",
     "M2SseEventType",
+    "m2_error_is_retryable",
+    "make_m2_api_error",
 ]

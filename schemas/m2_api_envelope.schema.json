@@ -32,6 +32,7 @@
       "type": "object",
       "required": ["code", "message", "retryable", "request_id", "details"],
       "additionalProperties": false,
+      "x-openbimagent-retry-policy": "0.1",
       "properties": {
         "code": {
           "enum": [
@@ -59,7 +60,19 @@
           "maxProperties": 20,
           "additionalProperties": {"type": ["string", "integer", "number", "boolean", "null"]}
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "code": {"enum": ["RateLimited", "RuntimeUnavailable"]}
+            },
+            "required": ["code"]
+          },
+          "then": {"properties": {"retryable": {"const": true}}},
+          "else": {"properties": {"retryable": {"const": false}}}
+        }
+      ]
     }
   }
 }

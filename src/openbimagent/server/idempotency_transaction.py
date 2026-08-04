@@ -10,7 +10,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from openbimagent.server.contracts import M2ApiError, M2ErrorCode
+from openbimagent.server.contracts import M2ApiError, M2ErrorCode, make_m2_api_error
 from openbimagent.server.control_preflight import M2ControlProxyPlan
 
 M2_IDEMPOTENCY_TRANSACTION_VERSION = "0.1"
@@ -42,10 +42,9 @@ class M2IdempotencyTransactionError(ValueError):
         super().__init__(message)
 
     def to_api_error(self, request_id: str) -> M2ApiError:
-        return M2ApiError(
+        return make_m2_api_error(
             code=self.code,
             message=str(self),
-            retryable=False,
             request_id=request_id,
         )
 

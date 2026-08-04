@@ -12,7 +12,7 @@ from urllib.parse import parse_qsl, unquote_to_bytes, urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from openbimagent.server.contracts import M2ApiEnvelope, M2ApiError, M2ErrorCode
+from openbimagent.server.contracts import M2ApiEnvelope, M2ErrorCode, make_m2_api_error
 from openbimagent.server.service import M2ReadOnlyService
 
 M2_READONLY_HTTP_ADAPTER_VERSION = "0.1"
@@ -256,7 +256,7 @@ def _optional_bool(query: Mapping[str, str], name: str, *, request_id: str) -> b
 
 
 def _error_envelope(*, request_id: str, code: M2ErrorCode, message: str) -> M2ApiEnvelope:
-    error = M2ApiError(code=code, message=message, retryable=False, request_id=request_id)
+    error = make_m2_api_error(code=code, message=message, request_id=request_id)
     return M2ApiEnvelope(request_id=request_id, ok=False, error=error)
 
 

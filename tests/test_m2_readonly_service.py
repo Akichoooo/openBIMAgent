@@ -302,6 +302,17 @@ def test_openapi_declares_remote_payload_runtime_policy() -> None:
     )
 
 
+def test_openapi_declares_stable_error_retry_policy() -> None:
+    document = build_m2_readonly_openapi()
+    boundaries = document["x-openbimagent-boundaries"]
+    error_schema = document["components"]["schemas"]["M2ApiError"]
+    assert boundaries["error_retry_policy_version"] == "0.1"
+    assert boundaries["error_retryable_codes"] == ["RateLimited", "RuntimeUnavailable"]
+    assert error_schema["x-openbimagent-retry-policy"] == "0.1"
+    assert error_schema["allOf"][0]["then"]["properties"]["retryable"] == {"const": True}
+    assert error_schema["allOf"][0]["else"]["properties"]["retryable"] == {"const": False}
+
+
 def test_openapi_declares_adapter_method_rejection_contract() -> None:
     document = build_m2_readonly_openapi()
     for path_item in document["paths"].values():

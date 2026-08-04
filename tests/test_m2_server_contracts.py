@@ -18,6 +18,8 @@ from openbimagent.server.contracts import (
     M2SseCursor,
     M2SseEvent,
     M2SseEventType,
+    m2_error_is_retryable,
+    make_m2_api_error,
 )
 from openbimagent.server.payload_privacy import (
     M2_REMOTE_PAYLOAD_POLICY_VERSION,
@@ -70,11 +72,73 @@ def test_api_error_rejects_sensitive_details_and_unknown_fields() -> None:
         M2ApiError(
             code=M2ErrorCode.INTERNAL_ERROR,
             message="safe",
+            retryable=False,
             request_id="api-1",
             details={"bearer_token": "secret"},
         )
     with pytest.raises(ValidationError, match="Extra inputs"):
         M2ApiEnvelope(request_id="api-1", ok=True, data={}, actor={"actor_id": "human:spoof"})
+
+
+def test_api_error_retryability_is_derived_from_stable_code() -> None:
+    assert m2_error_is_retryable(M2ErrorCode.RATE_LIMITED) is True
+    assert m2_error_is_retryable(M2ErrorCode.RUNTIME_UNAVAILABLE) is True
+    for code in set(M2ErrorCode) - {M2ErrorCode.RATE_LIMITED, M2ErrorCode.RUNTIME_UNAVAILABLE}:
+        assert m2_error_is_retryable(code) is False
+
+    runtime_error = make_m2_api_error(
+        code=M2ErrorCode.RUNTIME_UNAVAILABLE,
+        message="Runtime unavailable",
+        request_id="api-runtime",
+    )
+    invalid_error = make_m2_api_error(
+        code=M2ErrorCode.INVALID_REQUEST,
+        message="Invalid request",
+        request_id="api-invalid",
+    )
+    assert runtime_error.retryable is True
+    assert invalid_error.retryable is False
+
+
+@pytest.mark.parametrize(
+    ("code", "retryable"),
+    [
+        (M2ErrorCode.INTERNAL_ERROR, True),
+        (M2ErrorCode.CONFLICT, True),
+        (M2ErrorCode.RATE_LIMITED, False),
+        (M2ErrorCode.RUNTIME_UNAVAILABLE, False),
+    ],
+)
+def test_api_error_rejects_retryability_that_conflicts_with_code(
+    code: M2ErrorCode,
+    retryable: bool,
+) -> None:
+    with pytest.raises(ValidationError, match="retryable 必须由稳定错误码决定"):
+        M2ApiError(
+            code=code,
+            message="safe error",
+            retryable=retryable,
+            request_id="api-retry-policy",
+        )
+
+
+def test_api_error_schema_freezes_retryability_policy() -> None:
+    runtime_schema = M2ApiError.model_json_schema()
+    baseline = json.loads((ROOT / "schemas" / "m2_api_envelope.schema.json").read_text(encoding="utf-8"))
+    error_schema = baseline["$defs"]["error"]
+    assert runtime_schema["x-openbimagent-retry-policy"] == "0.1"
+    assert runtime_schema["allOf"] == error_schema["allOf"]
+    assert error_schema["x-openbimagent-retry-policy"] == "0.1"
+
+    retryable_runtime = make_m2_api_error(
+        code=M2ErrorCode.RUNTIME_UNAVAILABLE,
+        message="Runtime unavailable",
+        request_id="api-runtime",
+    )
+    payload = M2ApiEnvelope(request_id="api-runtime", ok=False, error=retryable_runtime).model_dump(mode="json")
+    assert validate_artifact("m2_api_envelope", payload) == []
+    payload["error"]["retryable"] = False
+    assert validate_artifact("m2_api_envelope", payload)
 
 
 def test_sse_event_reuses_existing_data_types_and_requires_attempt_identity() -> None:
@@ -172,6 +236,7 @@ def test_api_and_sse_models_apply_value_privacy_gate() -> None:
         M2ApiError(
             code=M2ErrorCode.INTERNAL_ERROR,
             message="Traceback (most recent call last): secret",
+            retryable=False,
             request_id="api-error",
         )
     with pytest.raises(ValidationError, match="远程载荷"):

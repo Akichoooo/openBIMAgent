@@ -21,6 +21,7 @@ from openbimagent.server.contracts import (
     M2SseCursor,
     M2SseEvent,
     M2SseEventType,
+    make_m2_api_error,
 )
 from openbimagent.session.schema import CustomType, EventType, SessionEvent
 
@@ -51,10 +52,9 @@ class SseProjectionError(ValueError):
         super().__init__(message)
 
     def to_api_error(self, request_id: str) -> M2ApiError:
-        return M2ApiError(
+        return make_m2_api_error(
             code=self.code,
             message=str(self),
-            retryable=False,
             request_id=request_id,
         )
 

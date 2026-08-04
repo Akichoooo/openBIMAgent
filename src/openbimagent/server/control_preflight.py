@@ -21,6 +21,7 @@ from openbimagent.server.contracts import (
     M2ControlOperation,
     M2ControlRequest,
     M2ErrorCode,
+    make_m2_api_error,
 )
 
 M2_CONTROL_PREFLIGHT_VERSION = "0.1"
@@ -50,10 +51,9 @@ class M2ControlPreflightError(ValueError):
         super().__init__(message)
 
     def to_api_error(self, request_id: str) -> M2ApiError:
-        return M2ApiError(
+        return make_m2_api_error(
             code=self.code,
             message=str(self),
-            retryable=False,
             request_id=request_id,
         )
 
