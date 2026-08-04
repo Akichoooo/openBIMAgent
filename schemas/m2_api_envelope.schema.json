@@ -7,7 +7,11 @@
   "additionalProperties": false,
   "properties": {
     "protocol_version": {"const": "1.0"},
-    "request_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:@/-]+$"},
+    "request_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$",
+      "x-openbimagent-correlation-id-policy": "0.1"
+    },
     "ok": {"type": "boolean"},
     "data": {
       "type": ["object", "null"],
@@ -54,7 +58,11 @@
         },
         "message": {"type": "string", "minLength": 1, "maxLength": 2000},
         "retryable": {"type": "boolean"},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:@/-]+$"},
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$",
+          "x-openbimagent-correlation-id-policy": "0.1"
+        },
         "details": {
           "type": "object",
           "maxProperties": 20,

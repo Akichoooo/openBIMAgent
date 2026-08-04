@@ -21,6 +21,11 @@ from openbimagent.server.contracts import (
     m2_error_is_retryable,
     make_m2_api_error,
 )
+from openbimagent.server.correlation_identity import (
+    M2_CORRELATION_ID_POLICY_VERSION,
+    is_m2_correlation_id,
+    validate_m2_correlation_id,
+)
 from openbimagent.server.resource_identity import (
     M2_RESOURCE_ID_POLICY_VERSION,
     is_m2_resource_id,
@@ -50,6 +55,31 @@ def _event(**overrides):
     }
     data.update(overrides)
     return M2SseEvent(**data)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [".", "..", "../api-1", "api/1", r"api\1", "C:secret", "tenant:request", " name", "name ", "会话-1", "a" * 129],
+)
+def test_correlation_identity_policy_rejects_path_or_ambiguous_values(value: str) -> None:
+    assert is_m2_correlation_id(value) is False
+    with pytest.raises(ValueError, match="关联标识"):
+        validate_m2_correlation_id(value)
+    with pytest.raises(ValidationError, match="关联标识"):
+        M2ApiEnvelope(request_id=value, ok=True, data={})
+    with pytest.raises(ValidationError, match="关联标识"):
+        make_m2_api_error(code=M2ErrorCode.INVALID_REQUEST, message="invalid", request_id=value)
+
+
+def test_correlation_identity_policy_is_versioned_and_does_not_reclassify_sse_attempt_id() -> None:
+    assert M2_CORRELATION_ID_POLICY_VERSION == "0.1"
+    for value in ("api-1", "trace_parent.1", "tenant-request", "client@node"):
+        assert is_m2_correlation_id(value) is True
+        assert validate_m2_correlation_id(value) == value
+    sse_request_schema = M2SseEvent.model_json_schema()["properties"]["request_id"]
+    assert "x-openbimagent-correlation-id-policy" not in sse_request_schema
+    sse_attempt_identity = next(branch for branch in sse_request_schema["anyOf"] if branch.get("type") == "string")
+    assert sse_attempt_identity["pattern"] == "^[A-Za-z0-9_.:@/-]+$"
 
 
 def test_api_envelope_success_and_error_are_exclusive() -> None:
@@ -353,6 +383,26 @@ def test_control_request_has_exact_operation_payload_and_no_actor_override() -> 
             idempotency_key="cancel-2",
             actor={"actor_id": "human:spoof"},
         )
+
+
+def test_api_schema_declares_shared_correlation_identity_policy() -> None:
+    runtime = M2ApiEnvelope.model_json_schema()
+    baseline = json.loads((ROOT / "schemas" / "m2_api_envelope.schema.json").read_text(encoding="utf-8"))
+    runtime_error = runtime["$defs"]["M2ApiError"]
+    baseline_error = baseline["$defs"]["error"]
+    for schema in (
+        runtime["properties"]["request_id"],
+        runtime_error["properties"]["request_id"],
+        baseline["properties"]["request_id"],
+        baseline_error["properties"]["request_id"],
+    ):
+        assert schema["x-openbimagent-correlation-id-policy"] == "0.1"
+        assert schema["pattern"] == "^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$"
+
+    payload = M2ApiEnvelope(request_id="api-1", ok=True, data={}).model_dump(mode="json")
+    for invalid in (".", "..", "api/1", r"api\1", "C:secret", "tenant:request", "a" * 129):
+        payload["request_id"] = invalid
+        assert validate_artifact("m2_api_envelope", payload)
 
 
 def test_protocol_schemas_declare_shared_resource_identity_policy() -> None:

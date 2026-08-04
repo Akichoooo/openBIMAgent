@@ -302,6 +302,19 @@ def test_openapi_declares_remote_payload_runtime_policy() -> None:
     )
 
 
+def test_openapi_declares_shared_correlation_identity_policy() -> None:
+    document = build_m2_readonly_openapi()
+    boundaries = document["x-openbimagent-boundaries"]
+    assert boundaries["correlation_id_policy_version"] == "0.1"
+    assert boundaries["correlation_id_pattern"] == "^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$"
+    for path_item in document["paths"].values():
+        request_header = next(
+            parameter for parameter in path_item["get"]["parameters"] if parameter["name"] == "X-Request-ID"
+        )
+        assert request_header["schema"]["x-openbimagent-correlation-id-policy"] == "0.1"
+        assert request_header["schema"]["pattern"] == "^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$"
+
+
 def test_openapi_declares_shared_resource_identity_policy() -> None:
     document = build_m2_readonly_openapi()
     boundaries = document["x-openbimagent-boundaries"]

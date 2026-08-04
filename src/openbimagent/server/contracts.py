@@ -14,6 +14,11 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from openbimagent.core.events import SSEEventType
+from openbimagent.server.correlation_identity import (
+    M2_CORRELATION_ID_PATTERN,
+    M2_CORRELATION_ID_POLICY_VERSION,
+    validate_m2_correlation_id,
+)
 from openbimagent.server.payload_privacy import M2_REMOTE_PAYLOAD_POLICY_VERSION, validate_remote_payload
 from openbimagent.server.resource_identity import (
     M2_RESOURCE_ID_PATTERN,
@@ -91,8 +96,18 @@ class M2ApiError(BaseModel):
     code: M2ErrorCode
     message: str = Field(min_length=1, max_length=2_000)
     retryable: bool
-    request_id: str = Field(min_length=1, max_length=128, pattern=_ID_PATTERN)
+    request_id: str = Field(
+        pattern=M2_CORRELATION_ID_PATTERN,
+        json_schema_extra={"x-openbimagent-correlation-id-policy": M2_CORRELATION_ID_POLICY_VERSION},
+    )
     details: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+
+    @field_validator("request_id", mode="before")
+    @classmethod
+    def _request_id_is_correlation_identity(cls, value: object) -> object:
+        if isinstance(value, str):
+            return validate_m2_correlation_id(value)
+        return value
 
     @field_validator("message")
     @classmethod
@@ -142,13 +157,23 @@ class M2ApiEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     protocol_version: str = Field(default=M2_API_PROTOCOL_VERSION, pattern=r"^1\.0$")
-    request_id: str = Field(min_length=1, max_length=128, pattern=_ID_PATTERN)
+    request_id: str = Field(
+        pattern=M2_CORRELATION_ID_PATTERN,
+        json_schema_extra={"x-openbimagent-correlation-id-policy": M2_CORRELATION_ID_POLICY_VERSION},
+    )
     ok: bool
     data: dict[str, Any] | None = Field(
         default=None,
         json_schema_extra={"x-openbimagent-remote-payload-policy": M2_REMOTE_PAYLOAD_POLICY_VERSION},
     )
     error: M2ApiError | None = None
+
+    @field_validator("request_id", mode="before")
+    @classmethod
+    def _request_id_is_correlation_identity(cls, value: object) -> object:
+        if isinstance(value, str):
+            return validate_m2_correlation_id(value)
+        return value
 
     @field_validator("data")
     @classmethod

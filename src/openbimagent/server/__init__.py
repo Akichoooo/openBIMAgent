@@ -3,6 +3,12 @@
 当前仅包含 pre-G7 的协议与 Schema 准备，不启动 HTTP server，不获取 Runtime lease。
 """
 
+from openbimagent.server.correlation_identity import (
+    M2_CORRELATION_ID_PATTERN,
+    M2_CORRELATION_ID_POLICY_VERSION,
+    is_m2_correlation_id,
+    validate_m2_correlation_id,
+)
 from openbimagent.server.control_preflight import (
     M2_CONTROL_PREFLIGHT_VERSION,
     M2ControlPreflight,
@@ -75,6 +81,8 @@ from openbimagent.server.sse_projection import (
 __all__ = [
     "M2_API_PROTOCOL_VERSION",
     "M2_CONTROL_PREFLIGHT_VERSION",
+    "M2_CORRELATION_ID_PATTERN",
+    "M2_CORRELATION_ID_POLICY_VERSION",
     "M2_ERROR_RETRY_POLICY_VERSION",
     "M2_IDEMPOTENCY_TRANSACTION_VERSION",
     "M2_OPENAPI_INFO_VERSION",
@@ -120,10 +128,12 @@ __all__ = [
     "build_m2_readonly_openapi",
     "canonical_openapi_bytes",
     "canonical_openapi_sha256",
+    "is_m2_correlation_id",
     "is_m2_resource_id",
     "m2_error_http_status",
     "m2_error_is_retryable",
     "make_m2_api_error",
+    "validate_m2_correlation_id",
     "validate_m2_resource_id",
     "validate_remote_payload",
 ]

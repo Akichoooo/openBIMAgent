@@ -13,11 +13,11 @@ from urllib.parse import parse_qsl, unquote_to_bytes, urlsplit
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from openbimagent.server.contracts import M2ApiEnvelope, M2ErrorCode, make_m2_api_error
+from openbimagent.server.correlation_identity import is_m2_correlation_id
 from openbimagent.server.resource_identity import is_m2_resource_id
 from openbimagent.server.service import M2ReadOnlyService
 
 M2_READONLY_HTTP_ADAPTER_VERSION = "0.1"
-_REQUEST_ID = re.compile(r"^[A-Za-z0-9_.:@/-]{1,128}$")
 _ASCII_TARGET = re.compile(r"^[\x21-\x7e]{1,2048}$")
 _HEADER_NAME = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,128}$")
 _STATUS = {"pending", "running", "completed", "failed", "cancelled"}
@@ -194,7 +194,7 @@ def m2_error_http_status(code: M2ErrorCode) -> int:
 
 def _request_id(headers: tuple[M2HttpHeader, ...]) -> str:
     values = [header.value for header in headers if header.name.lower() == "x-request-id"]
-    if len(values) != 1 or not _REQUEST_ID.fullmatch(values[0]):
+    if len(values) != 1 or not is_m2_correlation_id(values[0]):
         raise _RequestError("缺失、重复或非法 X-Request-ID")
     return values[0]
 

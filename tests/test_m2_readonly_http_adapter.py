@@ -10,6 +10,7 @@ import pytest
 from openbimagent.orchestrator.contracts import SubagentStatus
 from openbimagent.orchestrator.control_plane import AttemptView
 from openbimagent.server.contracts import M2ErrorCode
+from openbimagent.server.correlation_identity import M2_CORRELATION_ID_POLICY_VERSION
 from openbimagent.server.readonly_http import (
     M2HttpHeader,
     M2ReadonlyHttpAdapter,
@@ -187,6 +188,7 @@ def test_unknown_route_and_non_get_method_have_stable_status_without_body_echo()
 
 
 def test_missing_duplicate_invalid_request_id_and_headers_fail_closed() -> None:
+    assert M2_CORRELATION_ID_POLICY_VERSION == "0.1"
     adapter = M2ReadonlyHttpAdapter(_service())
     cases = [
         (),
@@ -194,7 +196,10 @@ def test_missing_duplicate_invalid_request_id_and_headers_fail_closed() -> None:
             M2HttpHeader(name="X-Request-ID", value="api-1"),
             M2HttpHeader(name="x-request-id", value="api-2"),
         ),
-        (M2HttpHeader(name="X-Request-ID", value="bad id"),),
+        *[
+            (M2HttpHeader(name="X-Request-ID", value=value),)
+            for value in ("bad id", ".", "..", "api/1", r"api\1", "C:secret", "tenant:request", "会话-1", "a" * 129)
+        ],
     ]
     for headers in cases:
         response = adapter.dispatch(_request("/api/v1/health", headers=headers))

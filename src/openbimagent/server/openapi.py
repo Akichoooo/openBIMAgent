@@ -15,6 +15,10 @@ from openbimagent.server.contracts import (
     M2ApiEnvelope,
     M2ArtifactMetadata,
 )
+from openbimagent.server.correlation_identity import (
+    M2_CORRELATION_ID_PATTERN,
+    M2_CORRELATION_ID_POLICY_VERSION,
+)
 from openbimagent.server.payload_privacy import M2_REMOTE_PAYLOAD_POLICY_VERSION
 from openbimagent.server.resource_identity import (
     M2_RESOURCE_ID_PATTERN,
@@ -126,6 +130,8 @@ def build_m2_readonly_openapi() -> dict[str, Any]:
             "error_retryable_codes": ["RateLimited", "RuntimeUnavailable"],
             "resource_id_policy_version": M2_RESOURCE_ID_POLICY_VERSION,
             "resource_id_pattern": M2_RESOURCE_ID_PATTERN,
+            "correlation_id_policy_version": M2_CORRELATION_ID_POLICY_VERSION,
+            "correlation_id_pattern": M2_CORRELATION_ID_PATTERN,
         },
     }
 
@@ -168,9 +174,8 @@ def _get_operation(
             "description": "Client correlation ID echoed by the M2 response envelope",
             "schema": {
                 "type": "string",
-                "minLength": 1,
-                "maxLength": 128,
-                "pattern": "^[A-Za-z0-9_.:@/-]+$",
+                "pattern": M2_CORRELATION_ID_PATTERN,
+                "x-openbimagent-correlation-id-policy": M2_CORRELATION_ID_POLICY_VERSION,
             },
         }
     ]
