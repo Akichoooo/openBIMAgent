@@ -9,7 +9,10 @@
     "protocol_version": {"const": "1.0"},
     "request_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:@/-]+$"},
     "ok": {"type": "boolean"},
-    "data": {"type": ["object", "null"]},
+    "data": {
+      "type": ["object", "null"],
+      "x-openbimagent-remote-payload-policy": "0.1"
+    },
     "error": {
       "oneOf": [
         {"type": "null"},

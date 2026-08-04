@@ -290,6 +290,18 @@ def test_openapi_contains_only_eight_read_only_operations() -> None:
     assert document["x-openbimagent-boundaries"]["write_control_enabled"] is False
 
 
+def test_openapi_declares_remote_payload_runtime_policy() -> None:
+    document = build_m2_readonly_openapi()
+    boundaries = document["x-openbimagent-boundaries"]
+    assert boundaries["remote_payload_policy_version"] == "0.1"
+    assert boundaries["remote_payload_runtime_gate_required"] is True
+    assert (
+        document["components"]["schemas"]["M2ApiEnvelope"]["properties"]["data"]
+        ["x-openbimagent-remote-payload-policy"]
+        == "0.1"
+    )
+
+
 def test_openapi_declares_adapter_method_rejection_contract() -> None:
     document = build_m2_readonly_openapi()
     for path_item in document["paths"].values():

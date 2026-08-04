@@ -300,7 +300,9 @@ def test_typed_host_completed_receipt_requires_controlled_file_and_identity(tmp_
     fake = _FakeBpy()
     receipt = _execute(module, fake, tmp_path)
     output = tmp_path / "case.blend"
-    output.unlink()
+    isolated = output.rename(tmp_path / "case.blend.missing")
+    assert isolated.is_file()
+    assert not output.exists()
     with pytest.raises(module.TypedPlanError, match="controlled Blender file is missing"):
         _execute(module, fake, tmp_path)
 

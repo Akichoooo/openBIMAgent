@@ -268,7 +268,9 @@ def test_execute_typed_plan_is_idempotent_and_persists_sidecar(
     assert second == first
     assert fake_vs.saved_paths == [str(output.resolve())] * len(plan["operations"])
 
-    output.unlink()
+    isolated = output.rename(tmp_path / "case.vwx.missing")
+    assert isolated.is_file()
+    assert not output.exists()
     with pytest.raises(FileNotFoundError, match="completed receipt"):
         runner.execute_command(
             "execute_plan",
@@ -491,7 +493,9 @@ def test_execute_typed_plan_rejects_missing_controlled_file_on_partial_resume(
         "execute_plan", params, gate=_typed_gate(runner, params)
     )
     assert partial["status"] == "partial"
-    output.unlink()
+    isolated = output.rename(tmp_path / "missing-document.vwx.missing")
+    assert isolated.is_file()
+    assert not output.exists()
     fake_vs.DoMenuTextByName = original_save_menu
     with pytest.raises(FileNotFoundError, match="controlled document is missing"):
         runner.execute_command(

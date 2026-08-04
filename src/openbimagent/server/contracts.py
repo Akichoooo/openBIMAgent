@@ -14,6 +14,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from openbimagent.core.events import SSEEventType
+from openbimagent.server.payload_privacy import M2_REMOTE_PAYLOAD_POLICY_VERSION, validate_remote_payload
 
 M2_API_PROTOCOL_VERSION = "1.0"
 M2_SSE_PROTOCOL_VERSION = "1.0"
@@ -50,18 +51,21 @@ class M2ApiError(BaseModel):
     request_id: str = Field(min_length=1, max_length=128, pattern=_ID_PATTERN)
     details: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
 
+    @field_validator("message")
+    @classmethod
+    def _message_is_safe(cls, value: str) -> str:
+        validate_remote_payload(value)
+        return value
+
     @field_validator("details")
     @classmethod
     def _details_are_small_and_safe(cls, value: dict[str, str | int | float | bool | None]) -> dict[str, Any]:
         if len(value) > 20:
             raise ValueError("error.details 最多允许 20 个字段")
-        forbidden = {"token", "authorization", "cookie", "password", "secret", "traceback", "stack", "path"}
         for key, item in value.items():
-            normalized = key.lower().replace("-", "_")
-            if any(marker in normalized for marker in forbidden):
-                raise ValueError(f"error.details 禁止敏感字段: {key}")
             if isinstance(item, str) and len(item) > 500:
                 raise ValueError(f"error.details.{key} 超过 500 字符")
+        validate_remote_payload(value)
         return value
 
 
@@ -73,8 +77,18 @@ class M2ApiEnvelope(BaseModel):
     protocol_version: str = Field(default=M2_API_PROTOCOL_VERSION, pattern=r"^1\.0$")
     request_id: str = Field(min_length=1, max_length=128, pattern=_ID_PATTERN)
     ok: bool
-    data: dict[str, Any] | None = None
+    data: dict[str, Any] | None = Field(
+        default=None,
+        json_schema_extra={"x-openbimagent-remote-payload-policy": M2_REMOTE_PAYLOAD_POLICY_VERSION},
+    )
     error: M2ApiError | None = None
+
+    @field_validator("data")
+    @classmethod
+    def _data_is_safe(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is not None:
+            validate_remote_payload(value)
+        return value
 
     @model_validator(mode="after")
     def _success_and_error_are_exclusive(self) -> "M2ApiEnvelope":
@@ -124,7 +138,10 @@ class M2SseEvent(BaseModel):
     sequence: int = Field(ge=1)
     occurred_at: datetime
     terminal: bool = False
-    data: dict[str, Any] = Field(default_factory=dict)
+    data: dict[str, Any] = Field(
+        default_factory=dict,
+        json_schema_extra={"x-openbimagent-remote-payload-policy": M2_REMOTE_PAYLOAD_POLICY_VERSION},
+    )
 
     @model_validator(mode="after")
     def _identity_and_terminal_semantics(self) -> "M2SseEvent":
@@ -138,32 +155,7 @@ class M2SseEvent(BaseModel):
     @field_validator("data")
     @classmethod
     def _data_does_not_expose_forbidden_fields(cls, value: dict[str, Any]) -> dict[str, Any]:
-        forbidden = {
-            "authorization",
-            "bearer_token",
-            "cookie",
-            "password",
-            "secret",
-            "api_key",
-            "ipc_token",
-            "instruction",
-            "task",
-            "traceback",
-            "stack",
-        }
-
-        def walk(item: Any, path: str) -> None:
-            if isinstance(item, dict):
-                for key, child in item.items():
-                    normalized = str(key).lower().replace("-", "_")
-                    if normalized in forbidden or normalized.endswith("_token") or normalized.endswith("_secret"):
-                        raise ValueError(f"SSE data 禁止敏感字段: {path}.{key}")
-                    walk(child, f"{path}.{key}")
-            elif isinstance(item, list):
-                for index, child in enumerate(item):
-                    walk(child, f"{path}[{index}]")
-
-        walk(value, "data")
+        validate_remote_payload(value)
         return value
 
 

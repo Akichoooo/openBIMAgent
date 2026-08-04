@@ -43,6 +43,11 @@ from openbimagent.server.openapi import (
     canonical_openapi_bytes,
     canonical_openapi_sha256,
 )
+from openbimagent.server.payload_privacy import (
+    M2_REMOTE_PAYLOAD_POLICY_VERSION,
+    RemotePayloadPrivacyError,
+    validate_remote_payload,
+)
 from openbimagent.server.readonly_http import (
     M2_READONLY_HTTP_ADAPTER_VERSION,
     M2HttpHeader,
@@ -66,6 +71,7 @@ __all__ = [
     "M2_OPENAPI_VERSION",
     "M2_READONLY_HTTP_ADAPTER_VERSION",
     "M2_READONLY_SERVICE_VERSION",
+    "M2_REMOTE_PAYLOAD_POLICY_VERSION",
     "M2_SSE_PROJECTION_VERSION",
     "M2_SSE_PROTOCOL_VERSION",
     "M2ApiEnvelope",
@@ -93,6 +99,7 @@ __all__ = [
     "M2ReadonlyHttpRequest",
     "M2ReadonlyHttpResponse",
     "M2SseCursor",
+    "RemotePayloadPrivacyError",
     "M2ReadOnlyService",
     "M2SseEvent",
     "M2SseProjector",
@@ -102,4 +109,5 @@ __all__ = [
     "canonical_openapi_bytes",
     "canonical_openapi_sha256",
     "m2_error_http_status",
+    "validate_remote_payload",
 ]

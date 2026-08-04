@@ -1,6 +1,8 @@
 """M2 P1 pre-G7 API/SSE/Artifact/Control 协议正负向测试。"""
 
+import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -17,6 +19,13 @@ from openbimagent.server.contracts import (
     M2SseEvent,
     M2SseEventType,
 )
+from openbimagent.server.payload_privacy import (
+    M2_REMOTE_PAYLOAD_POLICY_VERSION,
+    RemotePayloadPrivacyError,
+    validate_remote_payload,
+)
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _event(**overrides):
@@ -87,6 +96,86 @@ def test_sse_event_rejects_nested_sensitive_data() -> None:
         _event(data={"nested": {"api_key": "do-not-expose"}})
     with pytest.raises(ValidationError, match="禁止敏感字段"):
         _event(data={"instruction": "raw instruction"})
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"message": "Authorization: Bearer abc.def.ghi"},
+        {"message": "token=super-secret-value"},
+        {"message": "Traceback (most recent call last): boom"},
+        {"message": "validation failed input_value={'password': 'secret'}"},
+        {"message": "D:/private/runtime/discovery.json"},
+        {"message": r"C:\\Users\\operator\\AppData\\Local\\runtime.json"},
+        {"message": "/home/operator/.config/openbimagent/token.json"},
+        {"nested": [{"safe_name": "ok"}, {"client-secret": "hidden"}]},
+        {"nested": {"runtime_path": "relative-but-private.json"}},
+        {"nested": {"authorization_header": "redacted"}},
+    ],
+)
+def test_remote_payload_privacy_rejects_sensitive_keys_and_values(payload: dict) -> None:
+    with pytest.raises(RemotePayloadPrivacyError):
+        validate_remote_payload(payload)
+
+
+def test_remote_payload_privacy_accepts_bounded_json_and_is_pure() -> None:
+    payload = {
+        "items": [{"request_id": "request-1", "status": "running"}],
+        "count": 1,
+        "complete": False,
+        "ratio": 0.5,
+        "optional": None,
+    }
+    assert M2_REMOTE_PAYLOAD_POLICY_VERSION == "0.1"
+    assert validate_remote_payload(payload) is payload
+    assert payload["items"][0]["status"] == "running"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"value": b"not-json"},
+        {"value": float("nan")},
+        {"value": float("inf")},
+        {"items": list(range(1_001))},
+    ],
+)
+def test_remote_payload_privacy_rejects_non_json_or_unbounded_values(payload: dict) -> None:
+    with pytest.raises(RemotePayloadPrivacyError):
+        validate_remote_payload(payload)
+
+
+def test_remote_payload_privacy_rejects_excessive_depth() -> None:
+    payload: dict = {"leaf": "safe"}
+    for _ in range(17):
+        payload = {"nested": payload}
+    with pytest.raises(RemotePayloadPrivacyError):
+        validate_remote_payload(payload)
+
+
+def test_remote_payload_privacy_rejects_cycles_without_mutating_input() -> None:
+    payload: dict = {}
+    payload["cycle"] = payload
+    with pytest.raises(RemotePayloadPrivacyError, match="循环引用"):
+        validate_remote_payload(payload)
+    assert payload["cycle"] is payload
+
+
+def test_api_and_sse_models_apply_value_privacy_gate() -> None:
+    with pytest.raises(ValidationError, match="远程载荷"):
+        M2ApiEnvelope(
+            request_id="api-privacy",
+            ok=True,
+            data={"status": "failed", "message": "D:/private/runtime.json"},
+        )
+    with pytest.raises(ValidationError, match="远程载荷"):
+        M2ApiError(
+            code=M2ErrorCode.INTERNAL_ERROR,
+            message="Traceback (most recent call last): secret",
+            request_id="api-error",
+        )
+    with pytest.raises(ValidationError, match="远程载荷"):
+        _event(data={"message": "token=secret-value"})
 
 
 def test_sse_cursor_is_scoped_and_strict() -> None:
@@ -169,6 +258,17 @@ def test_control_request_has_exact_operation_payload_and_no_actor_override() -> 
             idempotency_key="cancel-2",
             actor={"actor_id": "human:spoof"},
         )
+
+
+def test_json_schemas_declare_remote_payload_runtime_policy() -> None:
+    api_schema = M2ApiEnvelope.model_json_schema()
+    sse_schema = M2SseEvent.model_json_schema()
+    api_baseline = json.loads((ROOT / "schemas" / "m2_api_envelope.schema.json").read_text(encoding="utf-8"))
+    sse_baseline = json.loads((ROOT / "schemas" / "m2_sse_event.schema.json").read_text(encoding="utf-8"))
+    assert api_schema["properties"]["data"]["x-openbimagent-remote-payload-policy"] == "0.1"
+    assert sse_schema["properties"]["data"]["x-openbimagent-remote-payload-policy"] == "0.1"
+    assert api_baseline["properties"]["data"]["x-openbimagent-remote-payload-policy"] == "0.1"
+    assert sse_baseline["properties"]["data"]["x-openbimagent-remote-payload-policy"] == "0.1"
 
 
 def test_json_schemas_reject_version_unknown_field_and_semantic_drift() -> None:

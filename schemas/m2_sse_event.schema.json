@@ -39,7 +39,10 @@
     "sequence": {"type": "integer", "minimum": 1},
     "occurred_at": {"type": "string", "format": "date-time"},
     "terminal": {"type": "boolean"},
-    "data": {"type": "object"}
+    "data": {
+      "type": "object",
+      "x-openbimagent-remote-payload-policy": "0.1"
+    }
   },
   "allOf": [
     {

@@ -11,6 +11,7 @@ from copy import deepcopy
 from typing import Any
 
 from openbimagent.server.contracts import M2ApiEnvelope, M2ArtifactMetadata
+from openbimagent.server.payload_privacy import M2_REMOTE_PAYLOAD_POLICY_VERSION
 
 M2_OPENAPI_VERSION = "3.1.0"
 M2_OPENAPI_INFO_VERSION = "0.1.0-pre-g7"
@@ -111,6 +112,8 @@ def build_m2_readonly_openapi() -> dict[str, Any]:
             "runtime_created": False,
             "write_control_enabled": False,
             "arbitrary_path_parameters": False,
+            "remote_payload_policy_version": M2_REMOTE_PAYLOAD_POLICY_VERSION,
+            "remote_payload_runtime_gate_required": True,
         },
     }
 
