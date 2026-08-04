@@ -211,6 +211,25 @@ def test_missing_duplicate_invalid_request_id_and_headers_fail_closed() -> None:
         M2HttpHeader(name="X-Test", value="safe\r\nInjected: true")
 
 
+def test_request_header_count_and_aggregate_metadata_budget_fail_closed() -> None:
+    request_id = M2HttpHeader(name="X-Request-ID", value="api-budget")
+    with pytest.raises(ValueError, match="header 数量"):
+        M2ReadonlyHttpRequest(
+            method="GET",
+            target="/api/v1/health",
+            headers=(request_id, *(M2HttpHeader(name=f"X-Test-{index}", value="v") for index in range(64))),
+        )
+    with pytest.raises(ValueError, match="header 总字节"):
+        M2ReadonlyHttpRequest(
+            method="GET",
+            target="/api/v1/health",
+            headers=(
+                request_id,
+                *(M2HttpHeader(name=f"X-Test-{index}", value="x" * 2_000) for index in range(17)),
+            ),
+        )
+
+
 def test_get_body_and_oversized_or_non_ascii_target_fail_closed() -> None:
     adapter = M2ReadonlyHttpAdapter(_service())
     body = adapter.dispatch(_request("/api/v1/health", body_size=1))

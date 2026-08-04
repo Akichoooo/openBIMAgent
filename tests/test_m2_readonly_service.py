@@ -345,6 +345,18 @@ def test_openapi_declares_stable_error_retry_policy() -> None:
     assert error_schema["allOf"][0]["else"]["properties"]["retryable"] == {"const": False}
 
 
+def test_openapi_declares_readonly_request_metadata_budget() -> None:
+    budget = build_m2_readonly_openapi()["x-openbimagent-boundaries"]["readonly_request_metadata_budget"]
+    assert budget == {
+        "body_bytes_max": 1_048_576,
+        "header_count_max": 64,
+        "header_total_bytes_max": 32_768,
+        "header_value_chars_max": 2_000,
+        "query_fields_max": 20,
+        "target_ascii_bytes_max": 2_048,
+    }
+
+
 def test_openapi_declares_adapter_method_rejection_contract() -> None:
     document = build_m2_readonly_openapi()
     for path_item in document["paths"].values():

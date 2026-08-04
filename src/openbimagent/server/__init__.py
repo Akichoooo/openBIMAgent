@@ -65,6 +65,7 @@ from openbimagent.server.resource_identity import (
 )
 from openbimagent.server.readonly_http import (
     M2_READONLY_HTTP_ADAPTER_VERSION,
+    M2_READONLY_REQUEST_METADATA_BUDGET,
     M2HttpHeader,
     M2ReadonlyHttpAdapter,
     M2ReadonlyHttpRequest,
@@ -94,6 +95,7 @@ __all__ = [
     "M2_OPENAPI_INFO_VERSION",
     "M2_OPENAPI_VERSION",
     "M2_READONLY_HTTP_ADAPTER_VERSION",
+    "M2_READONLY_REQUEST_METADATA_BUDGET",
     "M2_READONLY_SERVICE_VERSION",
     "M2_REMOTE_PAYLOAD_POLICY_VERSION",
     "M2_RESOURCE_ID_PATTERN",

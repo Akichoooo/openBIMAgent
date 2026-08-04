@@ -20,6 +20,7 @@ from openbimagent.server.correlation_identity import (
     M2_CORRELATION_ID_POLICY_VERSION,
 )
 from openbimagent.server.payload_privacy import M2_REMOTE_PAYLOAD_POLICY_VERSION
+from openbimagent.server.readonly_http import M2_READONLY_REQUEST_METADATA_BUDGET
 from openbimagent.server.resource_identity import (
     M2_RESOURCE_ID_PATTERN,
     M2_RESOURCE_ID_POLICY_VERSION,
@@ -139,6 +140,7 @@ def build_m2_readonly_openapi() -> dict[str, Any]:
             "sse_stream_id_policy_version": M2_SSE_STREAM_ID_POLICY_VERSION,
             "sse_stream_id_pattern": M2_SSE_STREAM_ID_PATTERN,
             "sse_stream_id_policy_distinct_from_attempt_identity": True,
+            "readonly_request_metadata_budget": dict(M2_READONLY_REQUEST_METADATA_BUDGET),
         },
     }
 

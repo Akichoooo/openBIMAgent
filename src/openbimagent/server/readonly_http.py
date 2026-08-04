@@ -10,7 +10,7 @@ import re
 from collections.abc import Mapping
 from urllib.parse import parse_qsl, unquote_to_bytes, urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from openbimagent.server.contracts import M2ApiEnvelope, M2ErrorCode, make_m2_api_error
 from openbimagent.server.correlation_identity import is_m2_correlation_id
@@ -18,6 +18,14 @@ from openbimagent.server.resource_identity import is_m2_resource_id
 from openbimagent.server.service import M2ReadOnlyService
 
 M2_READONLY_HTTP_ADAPTER_VERSION = "0.1"
+M2_READONLY_REQUEST_METADATA_BUDGET = {
+    "body_bytes_max": 1_048_576,
+    "header_count_max": 64,
+    "header_total_bytes_max": 32_768,
+    "header_value_chars_max": 2_000,
+    "query_fields_max": 20,
+    "target_ascii_bytes_max": 2_048,
+}
 _ASCII_TARGET = re.compile(r"^[\x21-\x7e]{1,2048}$")
 _HEADER_NAME = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,128}$")
 _STATUS = {"pending", "running", "completed", "failed", "cancelled"}
@@ -84,6 +92,15 @@ class M2ReadonlyHttpRequest(BaseModel):
         if not _ASCII_TARGET.fullmatch(value):
             raise ValueError("HTTP target 必须是 1..2048 字节可见 ASCII")
         return value
+
+    @model_validator(mode="after")
+    def _header_budget_is_bounded(self) -> "M2ReadonlyHttpRequest":
+        if len(self.headers) > M2_READONLY_REQUEST_METADATA_BUDGET["header_count_max"]:
+            raise ValueError("HTTP header 数量超过安全上限")
+        total_bytes = sum(len(header.name.encode("ascii")) + len(header.value.encode("utf-8")) for header in self.headers)
+        if total_bytes > M2_READONLY_REQUEST_METADATA_BUDGET["header_total_bytes_max"]:
+            raise ValueError("HTTP header 总字节超过安全上限")
+        return self
 
 
 class M2ReadonlyHttpResponse(BaseModel):
@@ -269,6 +286,7 @@ def _response(status_code: int, envelope: M2ApiEnvelope, *, allow_get: bool = Fa
 
 __all__ = [
     "M2_READONLY_HTTP_ADAPTER_VERSION",
+    "M2_READONLY_REQUEST_METADATA_BUDGET",
     "M2HttpHeader",
     "M2ReadonlyHttpAdapter",
     "M2ReadonlyHttpRequest",
