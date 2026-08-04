@@ -302,6 +302,18 @@ def test_openapi_declares_remote_payload_runtime_policy() -> None:
     )
 
 
+def test_openapi_declares_shared_resource_identity_policy() -> None:
+    document = build_m2_readonly_openapi()
+    boundaries = document["x-openbimagent-boundaries"]
+    assert boundaries["resource_id_policy_version"] == "0.1"
+    assert boundaries["resource_id_pattern"] == "^[A-Za-z0-9_@-][A-Za-z0-9_.@-]{0,199}$"
+    for path_item in document["paths"].values():
+        for parameter in path_item["get"]["parameters"]:
+            if parameter["name"] != "X-Request-ID" and parameter["name"] not in {"status", "pending_only"}:
+                assert parameter["schema"]["x-openbimagent-resource-id-policy"] == "0.1"
+                assert parameter["schema"]["pattern"] == "^[A-Za-z0-9_@-][A-Za-z0-9_.@-]{0,199}$"
+
+
 def test_openapi_declares_stable_error_retry_policy() -> None:
     document = build_m2_readonly_openapi()
     boundaries = document["x-openbimagent-boundaries"]
@@ -353,7 +365,13 @@ def test_service_does_not_expose_write_control_methods() -> None:
         assert forbidden not in methods
 
 
-@pytest.mark.parametrize("value", ["", "../x", "x/y", "C:secret", "name with spaces"])
+@pytest.mark.parametrize("value", ["", ".", "..", "../x", "x/y", r"x\y", "C:secret", "name with spaces"])
 def test_resource_ids_reject_path_like_or_ambiguous_values(value: str) -> None:
-    envelope = _service().get_session(request_id="api-1", session_id=value)
-    assert envelope.error.code is M2ErrorCode.INVALID_REQUEST
+    service = _service()
+    calls = (
+        service.get_session(request_id="api-session", session_id=value),
+        service.get_attempt(request_id="api-attempt", attempt_request_id=value),
+        service.get_lineage(request_id="api-lineage", lineage_id=value),
+        service.get_artifact_metadata(request_id="api-artifact", artifact_id=value),
+    )
+    assert all(envelope.error.code is M2ErrorCode.INVALID_REQUEST for envelope in calls)

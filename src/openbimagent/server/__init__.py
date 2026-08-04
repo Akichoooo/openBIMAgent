@@ -51,6 +51,12 @@ from openbimagent.server.payload_privacy import (
     RemotePayloadPrivacyError,
     validate_remote_payload,
 )
+from openbimagent.server.resource_identity import (
+    M2_RESOURCE_ID_PATTERN,
+    M2_RESOURCE_ID_POLICY_VERSION,
+    is_m2_resource_id,
+    validate_m2_resource_id,
+)
 from openbimagent.server.readonly_http import (
     M2_READONLY_HTTP_ADAPTER_VERSION,
     M2HttpHeader,
@@ -76,6 +82,8 @@ __all__ = [
     "M2_READONLY_HTTP_ADAPTER_VERSION",
     "M2_READONLY_SERVICE_VERSION",
     "M2_REMOTE_PAYLOAD_POLICY_VERSION",
+    "M2_RESOURCE_ID_PATTERN",
+    "M2_RESOURCE_ID_POLICY_VERSION",
     "M2_SSE_PROJECTION_VERSION",
     "M2_SSE_PROTOCOL_VERSION",
     "M2ApiEnvelope",
@@ -112,8 +120,10 @@ __all__ = [
     "build_m2_readonly_openapi",
     "canonical_openapi_bytes",
     "canonical_openapi_sha256",
+    "is_m2_resource_id",
     "m2_error_http_status",
     "m2_error_is_retryable",
     "make_m2_api_error",
+    "validate_m2_resource_id",
     "validate_remote_payload",
 ]

@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol
 
@@ -19,9 +18,9 @@ from openbimagent.server.contracts import (
     M2ErrorCode,
     make_m2_api_error,
 )
+from openbimagent.server.resource_identity import is_m2_resource_id
 
 M2_READONLY_SERVICE_VERSION = "0.1"
-_RESOURCE_ID = re.compile(r"^[A-Za-z0-9_.@-]{1,200}$")
 
 
 class ControlPlaneReader(Protocol):
@@ -208,7 +207,7 @@ class M2ReadOnlyService:
     @staticmethod
     def _session_metadata(entry: Mapping[str, Any]) -> dict[str, Any]:
         session_id = str(entry.get("id", ""))
-        if not _RESOURCE_ID.fullmatch(session_id):
+        if not is_m2_resource_id(session_id):
             raise ValueError("session index 包含非法 id")
         event_count = entry.get("event_count", 0)
         if not isinstance(event_count, int) or isinstance(event_count, bool) or event_count < 0:
@@ -268,7 +267,7 @@ class M2ReadOnlyService:
 
     @staticmethod
     def _validate_resource(request_id: str, value: str, field: str) -> M2ApiEnvelope | None:
-        if _RESOURCE_ID.fullmatch(value):
+        if is_m2_resource_id(value):
             return None
         return M2ReadOnlyService._invalid_request(request_id, f"非法 {field}")
 

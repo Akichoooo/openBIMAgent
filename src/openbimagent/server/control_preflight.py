@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from enum import StrEnum
 from typing import Any
 
@@ -23,9 +22,9 @@ from openbimagent.server.contracts import (
     M2ErrorCode,
     make_m2_api_error,
 )
+from openbimagent.server.resource_identity import M2_RESOURCE_ID_PATTERN, is_m2_resource_id
 
 M2_CONTROL_PREFLIGHT_VERSION = "0.1"
-_RESOURCE_ID = re.compile(r"^[A-Za-z0-9_.@-]{1,200}$")
 
 
 class M2ControlRole(StrEnum):
@@ -67,7 +66,7 @@ class M2ControlProxyPlan(BaseModel):
     actor: ActorRef
     role: M2ControlRole
     operation: M2ControlOperation
-    resource_id: str = Field(pattern=r"^[A-Za-z0-9_.@-]{1,200}$")
+    resource_id: str = Field(pattern=M2_RESOURCE_ID_PATTERN)
     idempotency_key: str = Field(min_length=1, max_length=200, pattern=r"^[A-Za-z0-9_.:@/-]+$")
     idempotency_scope_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     semantic_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -114,7 +113,7 @@ class M2ControlPreflight:
                 M2ErrorCode.FORBIDDEN,
                 "当前角色无权执行远程控制",
             )
-        if request.resource_id in {".", ".."} or not _RESOURCE_ID.fullmatch(request.resource_id):
+        if not is_m2_resource_id(request.resource_id):
             raise M2ControlPreflightError(
                 M2ErrorCode.INVALID_REQUEST,
                 "控制资源标识不满足远程协议",

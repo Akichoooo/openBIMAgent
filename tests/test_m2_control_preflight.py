@@ -116,9 +116,20 @@ def test_external_actor_cannot_claim_runtime_or_legacy(actor_type: ActorType) ->
 
 @pytest.mark.parametrize("resource_id", ["../request-1", "D:secret", "request/1", ".", ".."])
 def test_path_style_or_ambiguous_resource_ids_fail_closed(resource_id: str) -> None:
-    request = _request("attempt.cancel", resource_id=resource_id)
+    with pytest.raises(ValidationError):
+        _request("attempt.cancel", resource_id=resource_id)
+
+    bypassed_request = M2ControlRequest.model_construct(
+        protocol_version="1.0",
+        operation="attempt.cancel",
+        resource_id=resource_id,
+        idempotency_key="bypassed-invalid-resource",
+        approved=None,
+        instruction=None,
+        reason="",
+    )
     with pytest.raises(M2ControlPreflightError) as exc_info:
-        PREFLIGHT.prepare(actor=OPERATOR, role=M2ControlRole.OPERATOR, request=request)
+        PREFLIGHT.prepare(actor=OPERATOR, role=M2ControlRole.OPERATOR, request=bypassed_request)
     assert exc_info.value.code is M2ErrorCode.INVALID_REQUEST
 
 

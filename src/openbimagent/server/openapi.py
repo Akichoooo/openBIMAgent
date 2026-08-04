@@ -16,6 +16,10 @@ from openbimagent.server.contracts import (
     M2ArtifactMetadata,
 )
 from openbimagent.server.payload_privacy import M2_REMOTE_PAYLOAD_POLICY_VERSION
+from openbimagent.server.resource_identity import (
+    M2_RESOURCE_ID_PATTERN,
+    M2_RESOURCE_ID_POLICY_VERSION,
+)
 
 M2_OPENAPI_VERSION = "3.1.0"
 M2_OPENAPI_INFO_VERSION = "0.1.0-pre-g7"
@@ -120,6 +124,8 @@ def build_m2_readonly_openapi() -> dict[str, Any]:
             "remote_payload_runtime_gate_required": True,
             "error_retry_policy_version": M2_ERROR_RETRY_POLICY_VERSION,
             "error_retryable_codes": ["RateLimited", "RuntimeUnavailable"],
+            "resource_id_policy_version": M2_RESOURCE_ID_POLICY_VERSION,
+            "resource_id_pattern": M2_RESOURCE_ID_PATTERN,
         },
     }
 
@@ -231,8 +237,8 @@ def _id_schema() -> dict[str, Any]:
     return {
         "type": "string",
         "minLength": 1,
-        "maxLength": 200,
-        "pattern": "^[A-Za-z0-9_.@-]+$",
+        "pattern": M2_RESOURCE_ID_PATTERN,
+        "x-openbimagent-resource-id-policy": M2_RESOURCE_ID_POLICY_VERSION,
     }
 
 

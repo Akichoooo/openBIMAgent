@@ -15,6 +15,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from openbimagent.core.events import SSEEventType
 from openbimagent.server.payload_privacy import M2_REMOTE_PAYLOAD_POLICY_VERSION, validate_remote_payload
+from openbimagent.server.resource_identity import (
+    M2_RESOURCE_ID_PATTERN,
+    M2_RESOURCE_ID_POLICY_VERSION,
+    validate_m2_resource_id,
+)
 
 M2_API_PROTOCOL_VERSION = "1.0"
 M2_SSE_PROTOCOL_VERSION = "1.0"
@@ -227,7 +232,11 @@ class M2ArtifactMetadata(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     protocol_version: str = Field(default=M2_API_PROTOCOL_VERSION, pattern=r"^1\.0$")
-    artifact_id: str = Field(min_length=1, max_length=128, pattern=_ID_PATTERN)
+    artifact_id: str = Field(
+        max_length=128,
+        pattern=M2_RESOURCE_ID_PATTERN,
+        json_schema_extra={"x-openbimagent-resource-id-policy": M2_RESOURCE_ID_POLICY_VERSION},
+    )
     kind: str = Field(min_length=1, max_length=128)
     media_type: str = Field(min_length=3, max_length=255)
     sha256: str = Field(pattern=_SHA256_PATTERN)
@@ -236,6 +245,13 @@ class M2ArtifactMetadata(BaseModel):
     status: str = Field(pattern=r"^(completed|partial|failed)$")
     source_attempt_id: str | None = Field(default=None, min_length=1, max_length=128, pattern=_ID_PATTERN)
     download_available: bool = False
+
+    @field_validator("artifact_id", mode="before")
+    @classmethod
+    def _artifact_id_is_external_identity(cls, value: object) -> object:
+        if isinstance(value, str):
+            return validate_m2_resource_id(value)
+        return value
 
     @field_validator("media_type")
     @classmethod
@@ -265,11 +281,21 @@ class M2ControlRequest(BaseModel):
 
     protocol_version: str = Field(default=M2_API_PROTOCOL_VERSION, pattern=r"^1\.0$")
     operation: M2ControlOperation
-    resource_id: str = Field(min_length=1, max_length=200, pattern=_ID_PATTERN)
+    resource_id: str = Field(
+        pattern=M2_RESOURCE_ID_PATTERN,
+        json_schema_extra={"x-openbimagent-resource-id-policy": M2_RESOURCE_ID_POLICY_VERSION},
+    )
     idempotency_key: str = Field(min_length=1, max_length=200, pattern=_ID_PATTERN)
     approved: bool | None = None
     instruction: str | None = Field(default=None, min_length=1, max_length=20_000)
     reason: str = Field(default="", max_length=1_000)
+
+    @field_validator("resource_id", mode="before")
+    @classmethod
+    def _resource_id_is_external_identity(cls, value: object) -> object:
+        if isinstance(value, str):
+            return validate_m2_resource_id(value)
+        return value
 
     @model_validator(mode="after")
     def _operation_payload_is_exact(self) -> "M2ControlRequest":

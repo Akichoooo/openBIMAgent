@@ -13,13 +13,13 @@ from urllib.parse import parse_qsl, unquote_to_bytes, urlsplit
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from openbimagent.server.contracts import M2ApiEnvelope, M2ErrorCode, make_m2_api_error
+from openbimagent.server.resource_identity import is_m2_resource_id
 from openbimagent.server.service import M2ReadOnlyService
 
 M2_READONLY_HTTP_ADAPTER_VERSION = "0.1"
 _REQUEST_ID = re.compile(r"^[A-Za-z0-9_.:@/-]{1,128}$")
 _ASCII_TARGET = re.compile(r"^[\x21-\x7e]{1,2048}$")
 _HEADER_NAME = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,128}$")
-_RESOURCE_ID = re.compile(r"^[A-Za-z0-9_.@-]{1,200}$")
 _STATUS = {"pending", "running", "completed", "failed", "cancelled"}
 _ERROR_STATUS = {
     M2ErrorCode.INVALID_REQUEST: 400,
@@ -174,7 +174,7 @@ class M2ReadonlyHttpAdapter:
             if path.startswith(prefix):
                 _require_query(query, (), request_id=request_id)
                 resource_id = path.removeprefix(prefix)
-                if not _RESOURCE_ID.fullmatch(resource_id):
+                if not is_m2_resource_id(resource_id):
                     raise _RequestError("非法资源标识", request_id=request_id)
                 keyword = {
                     "/api/v1/sessions/": "session_id",
@@ -241,7 +241,7 @@ def _optional_resource(query: Mapping[str, str], name: str, *, request_id: str) 
     value = query.get(name)
     if value is None:
         return None
-    if not _RESOURCE_ID.fullmatch(value):
+    if not is_m2_resource_id(value):
         raise _RequestError(f"非法 {name} 查询参数", request_id=request_id)
     return value
 

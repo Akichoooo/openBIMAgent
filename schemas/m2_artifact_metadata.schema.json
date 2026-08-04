@@ -18,7 +18,12 @@
   "additionalProperties": false,
   "properties": {
     "protocol_version": {"const": "1.0"},
-    "artifact_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:@/-]+$"},
+    "artifact_id": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_@-][A-Za-z0-9_.@-]{0,199}$",
+      "x-openbimagent-resource-id-policy": "0.1"
+    },
     "kind": {"type": "string", "minLength": 1, "maxLength": 128},
     "media_type": {"type": "string", "minLength": 3, "maxLength": 255, "pattern": "^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$"},
     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},

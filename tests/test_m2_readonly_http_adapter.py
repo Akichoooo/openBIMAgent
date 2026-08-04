@@ -156,6 +156,23 @@ def test_ambiguous_path_query_and_unknown_parameters_fail_closed(target: str) ->
     assert "secret" not in serialized
 
 
+@pytest.mark.parametrize(
+    "target",
+    [
+        "/api/v1/sessions/.",
+        "/api/v1/sessions/..",
+        "/api/v1/sessions/C:secret",
+        "/api/v1/attempts?lineage_id=C:secret",
+        "/api/v1/approvals?request_id=tenant:request",
+    ],
+)
+def test_external_resource_ids_share_one_fail_closed_http_policy(target: str) -> None:
+    response = M2ReadonlyHttpAdapter(_service()).dispatch(_request(target))
+    assert response.status_code == 400
+    assert response.envelope.error.code is M2ErrorCode.INVALID_REQUEST
+    assert response.envelope.request_id == "api-1"
+
+
 def test_unknown_route_and_non_get_method_have_stable_status_without_body_echo() -> None:
     adapter = M2ReadonlyHttpAdapter(_service())
     missing = adapter.dispatch(_request("/api/v1/private/token-secret"))

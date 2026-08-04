@@ -21,6 +21,11 @@ from openbimagent.server.contracts import (
     m2_error_is_retryable,
     make_m2_api_error,
 )
+from openbimagent.server.resource_identity import (
+    M2_RESOURCE_ID_POLICY_VERSION,
+    is_m2_resource_id,
+    validate_m2_resource_id,
+)
 from openbimagent.server.payload_privacy import (
     M2_REMOTE_PAYLOAD_POLICY_VERSION,
     RemotePayloadPrivacyError,
@@ -289,6 +294,31 @@ def test_artifact_metadata_never_exposes_path_and_only_completed_is_downloadable
         )
 
 
+@pytest.mark.parametrize(
+    "value",
+    [".", "..", "../request-1", "request/1", r"request\1", "D:request-1", "name with spaces", "会话-1"],
+)
+def test_external_resource_identity_policy_rejects_path_or_ambiguous_values(value: str) -> None:
+    assert is_m2_resource_id(value) is False
+    with pytest.raises(ValueError, match="外部资源标识"):
+        validate_m2_resource_id(value)
+    with pytest.raises(ValidationError, match="外部资源标识"):
+        M2ControlRequest(
+            operation="attempt.cancel",
+            resource_id=value,
+            idempotency_key="cancel-invalid-resource",
+        )
+
+
+def test_external_resource_identity_policy_is_versioned_and_preserves_safe_ids() -> None:
+    assert M2_RESOURCE_ID_POLICY_VERSION == "0.1"
+    for value in ("request-1", "session_parent", "artifact.v1", "tenant@resource"):
+        assert is_m2_resource_id(value) is True
+        assert validate_m2_resource_id(value) == value
+    assert is_m2_resource_id("a" * 200) is True
+    assert is_m2_resource_id("a" * 201) is False
+
+
 def test_control_request_has_exact_operation_payload_and_no_actor_override() -> None:
     approval = M2ControlRequest(
         operation="approval.decide",
@@ -323,6 +353,40 @@ def test_control_request_has_exact_operation_payload_and_no_actor_override() -> 
             idempotency_key="cancel-2",
             actor={"actor_id": "human:spoof"},
         )
+
+
+def test_protocol_schemas_declare_shared_resource_identity_policy() -> None:
+    control_runtime = M2ControlRequest.model_json_schema()["properties"]["resource_id"]
+    artifact_runtime = M2ArtifactMetadata.model_json_schema()["properties"]["artifact_id"]
+    control_baseline = json.loads(
+        (ROOT / "schemas" / "m2_control_request.schema.json").read_text(encoding="utf-8")
+    )["properties"]["resource_id"]
+    artifact_baseline = json.loads(
+        (ROOT / "schemas" / "m2_artifact_metadata.schema.json").read_text(encoding="utf-8")
+    )["properties"]["artifact_id"]
+    for schema in (control_runtime, artifact_runtime, control_baseline, artifact_baseline):
+        assert schema["x-openbimagent-resource-id-policy"] == "0.1"
+        assert schema["pattern"] == "^[A-Za-z0-9_@-][A-Za-z0-9_.@-]{0,199}$"
+    assert artifact_runtime["maxLength"] == artifact_baseline["maxLength"] == 128
+
+    control = M2ControlRequest(
+        operation="attempt.cancel",
+        resource_id="request-1",
+        idempotency_key="cancel-schema-resource",
+    ).model_dump(mode="json")
+    artifact = M2ArtifactMetadata(
+        artifact_id="artifact-1",
+        kind="ifc",
+        media_type="application/x-step",
+        sha256="a" * 64,
+        size_bytes=1,
+        status="completed",
+    ).model_dump(mode="json")
+    for invalid in (".", "..", "D:secret", "request/1"):
+        control["resource_id"] = invalid
+        artifact["artifact_id"] = invalid
+        assert validate_artifact("m2_control_request", control)
+        assert validate_artifact("m2_artifact_metadata", artifact)
 
 
 def test_json_schemas_declare_remote_payload_runtime_policy() -> None:

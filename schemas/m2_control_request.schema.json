@@ -16,7 +16,11 @@
   "properties": {
     "protocol_version": {"const": "1.0"},
     "operation": {"enum": ["approval.decide", "attempt.resume", "attempt.steer", "attempt.cancel"]},
-    "resource_id": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9_.:@/-]+$"},
+    "resource_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_@-][A-Za-z0-9_.@-]{0,199}$",
+      "x-openbimagent-resource-id-policy": "0.1"
+    },
     "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9_.:@/-]+$"},
     "approved": {"type": ["boolean", "null"]},
     "instruction": {"type": ["string", "null"], "minLength": 1, "maxLength": 20000},
