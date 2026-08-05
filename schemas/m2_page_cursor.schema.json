@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/m2_page_cursor.schema.json",
+  "title": "M2PageCursorV1",
+  "type": "object",
+  "required": ["protocol_version", "policy_version", "resource", "scope_sha256", "snapshot_sha256", "offset", "limit", "integrity_sha256"],
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": {"const": "1.0"},
+    "policy_version": {"const": "0.1"},
+    "resource": {"enum": ["sessions", "attempts", "lineages", "approvals"]},
+    "scope_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "snapshot_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "offset": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+    "integrity_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Unkeyed corruption detector only; does not authenticate cursor origin."
+    }
+  },
+  "x-openbimagent-pagination-policy": "0.1",
+  "x-openbimagent-authenticated": false
+}

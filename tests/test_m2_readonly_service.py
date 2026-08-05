@@ -140,6 +140,60 @@ def test_attempts_and_approvals_exclude_private_text_and_actor() -> None:
     assert "TOP-SECRET" not in str(approval)
 
 
+def test_readonly_lists_are_bounded_and_cursor_is_bound_to_query_scope() -> None:
+    entries = [
+        {
+            "id": f"session-{index:03d}",
+            "title": f"Session {index}",
+            "created_at": NOW.isoformat(),
+            "last_active": f"2026-08-04T00:{index:02d}:00+00:00",
+            "event_count": index,
+        }
+        for index in range(3)
+    ]
+    service = _service(session_reader=lambda: entries)
+    first = service.list_sessions(request_id="api-page-1", limit=2)
+    assert first.ok is True
+    assert first.data["count"] == 2
+    assert first.data["has_more"] is True
+    assert first.data["next_cursor"]
+    assert len(first.data["items"]) <= 2
+
+    second = service.list_sessions(request_id="api-page-2", limit=2, cursor=first.data["next_cursor"])
+    assert second.ok is True
+    assert second.data["count"] == 1
+    assert second.data["has_more"] is False
+
+    class TwoAttempts(FakeControlPlane):
+        def list_attempts(self, **filters):
+            second_attempt = self.attempt.model_copy(
+                update={"request_id": "request-2", "attempt_number": 2}
+            )
+            return (self.attempt, second_attempt)
+
+    attempt_service = _service(control_plane=TwoAttempts())
+    attempts = attempt_service.list_attempts(request_id="api-page-3", lineage_id="lineage-1", limit=1)
+    assert attempts.ok is True
+    assert attempts.data["next_cursor"]
+    cross_scope = attempt_service.list_attempts(
+        request_id="api-page-4",
+        parent_session_id="session-parent",
+        limit=1,
+        cursor=attempts.data["next_cursor"],
+    )
+    assert cross_scope.error.code is M2ErrorCode.INVALID_REQUEST
+
+
+def test_invalid_page_budget_and_cursor_map_to_safe_protocol_errors() -> None:
+    service = _service()
+    for limit in (0, 101):
+        envelope = service.list_sessions(request_id="api-limit", limit=limit)
+        assert envelope.error.code is M2ErrorCode.INVALID_REQUEST
+    malformed = service.list_approvals(request_id="api-cursor", cursor="not-a-page-cursor")
+    assert malformed.error.code is M2ErrorCode.INVALID_REQUEST
+    assert "not-a-page-cursor" not in str(malformed.model_dump(mode="json"))
+
+
 def test_lineage_and_attempt_filters_fail_closed() -> None:
     service = _service()
     assert service.get_lineage(request_id="api-1", lineage_id="lineage-1").data["count"] == 1
@@ -329,7 +383,12 @@ def test_openapi_declares_shared_resource_identity_policy() -> None:
     assert boundaries["resource_id_pattern"] == "^[A-Za-z0-9_@-][A-Za-z0-9_.@-]{0,199}$"
     for path_item in document["paths"].values():
         for parameter in path_item["get"]["parameters"]:
-            if parameter["name"] != "X-Request-ID" and parameter["name"] not in {"status", "pending_only"}:
+            if parameter["name"] != "X-Request-ID" and parameter["name"] not in {
+                "status",
+                "pending_only",
+                "limit",
+                "cursor",
+            }:
                 assert parameter["schema"]["x-openbimagent-resource-id-policy"] == "0.1"
                 assert parameter["schema"]["pattern"] == "^[A-Za-z0-9_@-][A-Za-z0-9_.@-]{0,199}$"
 
@@ -343,6 +402,34 @@ def test_openapi_declares_stable_error_retry_policy() -> None:
     assert error_schema["x-openbimagent-retry-policy"] == "0.1"
     assert error_schema["allOf"][0]["then"]["properties"]["retryable"] == {"const": True}
     assert error_schema["allOf"][0]["else"]["properties"]["retryable"] == {"const": False}
+
+
+def test_openapi_declares_readonly_pagination_policy_without_authenticity_claim() -> None:
+    document = build_m2_readonly_openapi()
+    boundaries = document["x-openbimagent-boundaries"]
+    assert boundaries["readonly_pagination_policy"] == {
+        "authenticated": False,
+        "cursor_chars_max": 1024,
+        "default_limit": 50,
+        "max_limit": 100,
+        "snapshot_bound": True,
+        "version": "0.1",
+    }
+    for path in (
+        "/api/v1/sessions",
+        "/api/v1/attempts",
+        "/api/v1/lineages/{lineage_id}",
+        "/api/v1/approvals",
+    ):
+        parameters = {item["name"]: item for item in document["paths"][path]["get"]["parameters"]}
+        assert parameters["limit"]["schema"] == {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 50,
+        }
+        assert parameters["cursor"]["schema"]["maxLength"] == 1024
+        assert parameters["cursor"]["schema"]["x-openbimagent-pagination-policy"] == "0.1"
 
 
 def test_openapi_declares_readonly_request_metadata_budget() -> None:

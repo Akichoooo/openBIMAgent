@@ -117,16 +117,38 @@ def test_all_openapi_routes_dispatch_to_existing_readonly_service() -> None:
 
 def test_query_parameters_are_typed_and_forwarded_without_private_echo() -> None:
     response = M2ReadonlyHttpAdapter(_service()).dispatch(
-        _request("/api/v1/attempts?lineage_id=lineage-1&status=completed&parent_session_id=session-1")
+        _request(
+            "/api/v1/attempts?lineage_id=lineage-1&status=completed&parent_session_id=session-1&limit=25"
+        )
     )
     assert response.status_code == 200
     assert response.envelope.data["count"] == 1
     assert "private task text" not in str(response.envelope.model_dump(mode="json"))
 
     approvals = M2ReadonlyHttpAdapter(_service()).dispatch(
-        _request("/api/v1/approvals?request_id=request-1&pending_only=true")
+        _request("/api/v1/approvals?request_id=request-1&pending_only=true&limit=50")
     )
     assert approvals.status_code == 200
+
+
+def test_list_pagination_query_is_typed_bounded_and_fail_closed() -> None:
+    adapter = M2ReadonlyHttpAdapter(_service())
+    first = adapter.dispatch(_request("/api/v1/sessions?limit=1"))
+    assert first.status_code == 200
+    assert first.envelope.data["count"] == 1
+    assert first.envelope.data["has_more"] is False
+
+    for target in (
+        "/api/v1/sessions?limit=0",
+        "/api/v1/sessions?limit=101",
+        "/api/v1/sessions?limit=1.5",
+        "/api/v1/sessions?cursor=not-a-page-cursor",
+        "/api/v1/lineages/lineage-1?limit=0",
+    ):
+        response = adapter.dispatch(_request(target))
+        assert response.status_code == 400
+        assert response.envelope.error.code is M2ErrorCode.INVALID_REQUEST
+        assert target not in str(response.envelope.model_dump(mode="json"))
 
 
 @pytest.mark.parametrize(

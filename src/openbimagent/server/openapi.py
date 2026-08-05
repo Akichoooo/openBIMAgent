@@ -19,6 +19,13 @@ from openbimagent.server.correlation_identity import (
     M2_CORRELATION_ID_PATTERN,
     M2_CORRELATION_ID_POLICY_VERSION,
 )
+from openbimagent.server.pagination import (
+    M2_PAGE_CURSOR_CHARS_MAX,
+    M2_PAGE_LIMIT_DEFAULT,
+    M2_PAGE_LIMIT_MAX,
+    M2_PAGINATION_CURSOR_AUTHENTICATED,
+    M2_PAGINATION_POLICY_VERSION,
+)
 from openbimagent.server.payload_privacy import M2_REMOTE_PAYLOAD_POLICY_VERSION
 from openbimagent.server.readonly_http import M2_READONLY_REQUEST_METADATA_BUDGET
 from openbimagent.server.resource_identity import (
@@ -96,25 +103,30 @@ def build_m2_readonly_openapi() -> dict[str, Any]:
         ],
         "paths": {
             "/api/v1/health": _get_operation("health", "Read-only contract health"),
-            "/api/v1/sessions": _get_operation("sessions", "List sessions"),
+            "/api/v1/sessions": _get_operation(
+                "sessions", "List sessions", query_parameters=("limit", "cursor")
+            ),
             "/api/v1/sessions/{session_id}": _get_operation(
                 "sessions", "Get session metadata", path_parameter="session_id"
             ),
             "/api/v1/attempts": _get_operation(
                 "attempts",
                 "List attempts",
-                query_parameters=("lineage_id", "status", "parent_session_id"),
+                query_parameters=("lineage_id", "status", "parent_session_id", "limit", "cursor"),
             ),
             "/api/v1/attempts/{request_id}": _get_operation(
                 "attempts", "Get attempt", path_parameter="request_id"
             ),
             "/api/v1/lineages/{lineage_id}": _get_operation(
-                "attempts", "Get lineage attempts", path_parameter="lineage_id"
+                "attempts",
+                "Get lineage attempts",
+                path_parameter="lineage_id",
+                query_parameters=("limit", "cursor"),
             ),
             "/api/v1/approvals": _get_operation(
                 "approvals",
                 "List approvals",
-                query_parameters=("request_id", "pending_only"),
+                query_parameters=("request_id", "pending_only", "limit", "cursor"),
             ),
             "/api/v1/artifacts/{artifact_id}": _get_operation(
                 "artifacts", "Get artifact metadata", path_parameter="artifact_id"
@@ -141,6 +153,14 @@ def build_m2_readonly_openapi() -> dict[str, Any]:
             "sse_stream_id_pattern": M2_SSE_STREAM_ID_PATTERN,
             "sse_stream_id_policy_distinct_from_attempt_identity": True,
             "readonly_request_metadata_budget": dict(M2_READONLY_REQUEST_METADATA_BUDGET),
+            "readonly_pagination_policy": {
+                "version": M2_PAGINATION_POLICY_VERSION,
+                "default_limit": M2_PAGE_LIMIT_DEFAULT,
+                "max_limit": M2_PAGE_LIMIT_MAX,
+                "cursor_chars_max": M2_PAGE_CURSOR_CHARS_MAX,
+                "snapshot_bound": True,
+                "authenticated": M2_PAGINATION_CURSOR_AUTHENTICATED,
+            },
         },
     }
 
@@ -205,6 +225,22 @@ def _get_operation(
             schema = {
                 "type": "string",
                 "enum": ["pending", "running", "completed", "failed", "cancelled"],
+            }
+        elif name == "limit":
+            schema = {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": M2_PAGE_LIMIT_MAX,
+                "default": M2_PAGE_LIMIT_DEFAULT,
+            }
+        elif name == "cursor":
+            schema = {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": M2_PAGE_CURSOR_CHARS_MAX,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "x-openbimagent-pagination-policy": M2_PAGINATION_POLICY_VERSION,
+                "x-openbimagent-authenticated": M2_PAGINATION_CURSOR_AUTHENTICATED,
             }
         else:
             schema = _id_schema()

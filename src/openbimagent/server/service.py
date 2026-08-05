@@ -18,6 +18,12 @@ from openbimagent.server.contracts import (
     M2ErrorCode,
     make_m2_api_error,
 )
+from openbimagent.server.pagination import (
+    M2_PAGE_LIMIT_DEFAULT,
+    M2PageResource,
+    M2PaginationError,
+    paginate_m2_items,
+)
 from openbimagent.server.resource_identity import is_m2_resource_id
 
 M2_READONLY_SERVICE_VERSION = "0.1"
@@ -77,11 +83,26 @@ class M2ReadOnlyService:
             },
         )
 
-    def list_sessions(self, *, request_id: str) -> M2ApiEnvelope:
+    def list_sessions(
+        self,
+        *,
+        request_id: str,
+        limit: int = M2_PAGE_LIMIT_DEFAULT,
+        cursor: str | None = None,
+    ) -> M2ApiEnvelope:
         try:
             items = [self._session_metadata(item) for item in self._session_index_reader()]
             items.sort(key=lambda item: (item["last_active"], item["session_id"]), reverse=True)
-            return self._success(request_id, {"items": items, "count": len(items)})
+            return self._page_success(
+                request_id,
+                items,
+                resource="sessions",
+                scope={},
+                limit=limit,
+                cursor=cursor,
+            )
+        except M2PaginationError as exc:
+            return self._error(request_id, exc.code, str(exc))
         except Exception:
             return self._internal_error(request_id, "会话索引不可用")
 
@@ -89,10 +110,11 @@ class M2ReadOnlyService:
         invalid = self._validate_resource(request_id, session_id, "session_id")
         if invalid is not None:
             return invalid
-        listed = self.list_sessions(request_id=request_id)
-        if not listed.ok:
-            return listed
-        for item in listed.data["items"]:
+        try:
+            items = [self._session_metadata(item) for item in self._session_index_reader()]
+        except Exception:
+            return self._internal_error(request_id, "会话索引不可用")
+        for item in items:
             if item["session_id"] == session_id:
                 return self._success(request_id, {"session": item})
         return self._not_found(request_id, "session")
@@ -104,6 +126,8 @@ class M2ReadOnlyService:
         lineage_id: str | None = None,
         status: str | None = None,
         parent_session_id: str | None = None,
+        limit: int = M2_PAGE_LIMIT_DEFAULT,
+        cursor: str | None = None,
     ) -> M2ApiEnvelope:
         for value, name in (
             (lineage_id, "lineage_id"),
@@ -120,7 +144,21 @@ class M2ReadOnlyService:
                 parent_session_id=parent_session_id,
             )
             items = [self._attempt_metadata(view) for view in views]
-            return self._success(request_id, {"items": items, "count": len(items)})
+            items.sort(key=lambda item: (item["lineage_id"], item["attempt_number"], item["request_id"]))
+            return self._page_success(
+                request_id,
+                items,
+                resource="attempts",
+                scope={
+                    "lineage_id": lineage_id,
+                    "status": status,
+                    "parent_session_id": parent_session_id,
+                },
+                limit=limit,
+                cursor=cursor,
+            )
+        except M2PaginationError as exc:
+            return self._error(request_id, exc.code, str(exc))
         except ValueError:
             return self._invalid_request(request_id, "非法 attempt 查询条件")
         except ControlPlaneError:
@@ -140,14 +178,32 @@ class M2ReadOnlyService:
         except Exception:
             return self._internal_error(request_id, "attempt 事实不可用")
 
-    def get_lineage(self, *, request_id: str, lineage_id: str) -> M2ApiEnvelope:
+    def get_lineage(
+        self,
+        *,
+        request_id: str,
+        lineage_id: str,
+        limit: int = M2_PAGE_LIMIT_DEFAULT,
+        cursor: str | None = None,
+    ) -> M2ApiEnvelope:
         invalid = self._validate_resource(request_id, lineage_id, "lineage_id")
         if invalid is not None:
             return invalid
         try:
             views = self._control_plane.get_lineage(lineage_id)
             items = [self._attempt_metadata(view) for view in views]
-            return self._success(request_id, {"lineage_id": lineage_id, "items": items, "count": len(items)})
+            items.sort(key=lambda item: (item["attempt_number"], item["request_id"]))
+            return self._page_success(
+                request_id,
+                items,
+                resource="lineages",
+                scope={"lineage_id": lineage_id},
+                limit=limit,
+                cursor=cursor,
+                extra={"lineage_id": lineage_id},
+            )
+        except M2PaginationError as exc:
+            return self._error(request_id, exc.code, str(exc))
         except ControlPlaneError:
             return self._not_found(request_id, "lineage")
         except Exception:
@@ -159,6 +215,8 @@ class M2ReadOnlyService:
         request_id: str,
         attempt_request_id: str | None = None,
         pending_only: bool = False,
+        limit: int = M2_PAGE_LIMIT_DEFAULT,
+        cursor: str | None = None,
     ) -> M2ApiEnvelope:
         if attempt_request_id is not None:
             invalid = self._validate_resource(request_id, attempt_request_id, "request_id")
@@ -170,7 +228,17 @@ class M2ReadOnlyService:
                 pending_only=pending_only,
             )
             items = [self._approval_metadata(view) for view in views]
-            return self._success(request_id, {"items": items, "count": len(items)})
+            items.sort(key=lambda item: (item["requested_at"], item["approval_id"]))
+            return self._page_success(
+                request_id,
+                items,
+                resource="approvals",
+                scope={"request_id": attempt_request_id, "pending_only": pending_only},
+                limit=limit,
+                cursor=cursor,
+            )
+        except M2PaginationError as exc:
+            return self._error(request_id, exc.code, str(exc))
         except ControlPlaneError:
             return self._conflict(request_id, "只读 approval 审计事实冲突")
         except Exception:
@@ -274,6 +342,23 @@ class M2ReadOnlyService:
     @staticmethod
     def _success(request_id: str, data: dict[str, Any]) -> M2ApiEnvelope:
         return M2ApiEnvelope(request_id=request_id, ok=True, data=data)
+
+    @staticmethod
+    def _page_success(
+        request_id: str,
+        items: Sequence[Mapping[str, Any]],
+        *,
+        resource: M2PageResource,
+        scope: Mapping[str, Any],
+        limit: int,
+        cursor: str | None,
+        extra: Mapping[str, Any] | None = None,
+    ) -> M2ApiEnvelope:
+        page = paginate_m2_items(items, resource=resource, scope=scope, limit=limit, cursor=cursor)
+        data = page.model_dump(mode="json")
+        if extra:
+            data = {**dict(extra), **data}
+        return M2ReadOnlyService._success(request_id, data)
 
     @staticmethod
     def _error(

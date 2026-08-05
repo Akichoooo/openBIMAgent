@@ -28,6 +28,7 @@ M2_READONLY_REQUEST_METADATA_BUDGET = {
 }
 _ASCII_TARGET = re.compile(r"^[\x21-\x7e]{1,2048}$")
 _HEADER_NAME = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,128}$")
+_PAGE_CURSOR = re.compile(r"^[A-Za-z0-9_-]{1,1024}$")
 _STATUS = {"pending", "running", "completed", "failed", "cancelled"}
 _ERROR_STATUS = {
     M2ErrorCode.INVALID_REQUEST: 400,
@@ -157,35 +158,59 @@ class M2ReadonlyHttpAdapter:
             _require_query(query, (), request_id=request_id)
             return self._service.health(request_id=request_id)
         if path == "/api/v1/sessions":
-            _require_query(query, (), request_id=request_id)
-            return self._service.list_sessions(request_id=request_id)
+            _require_query(query, ("limit", "cursor"), request_id=request_id)
+            limit, cursor = _pagination(query, request_id=request_id)
+            return self._service.list_sessions(request_id=request_id, limit=limit, cursor=cursor)
         if path == "/api/v1/attempts":
-            _require_query(query, ("lineage_id", "status", "parent_session_id"), request_id=request_id)
+            _require_query(
+                query,
+                ("lineage_id", "status", "parent_session_id", "limit", "cursor"),
+                request_id=request_id,
+            )
             lineage_id = _optional_resource(query, "lineage_id", request_id=request_id)
             parent_session_id = _optional_resource(query, "parent_session_id", request_id=request_id)
             status = query.get("status")
             if status is not None and status not in _STATUS:
                 raise _RequestError("非法 status 查询参数", request_id=request_id)
+            limit, cursor = _pagination(query, request_id=request_id)
             return self._service.list_attempts(
                 request_id=request_id,
                 lineage_id=lineage_id,
                 status=status,
                 parent_session_id=parent_session_id,
+                limit=limit,
+                cursor=cursor,
             )
         if path == "/api/v1/approvals":
-            _require_query(query, ("request_id", "pending_only"), request_id=request_id)
+            _require_query(query, ("request_id", "pending_only", "limit", "cursor"), request_id=request_id)
             attempt_request_id = _optional_resource(query, "request_id", request_id=request_id)
             pending_only = _optional_bool(query, "pending_only", request_id=request_id)
+            limit, cursor = _pagination(query, request_id=request_id)
             return self._service.list_approvals(
                 request_id=request_id,
                 attempt_request_id=attempt_request_id,
                 pending_only=pending_only,
+                limit=limit,
+                cursor=cursor,
+            )
+
+        lineage_prefix = "/api/v1/lineages/"
+        if path.startswith(lineage_prefix):
+            _require_query(query, ("limit", "cursor"), request_id=request_id)
+            resource_id = path.removeprefix(lineage_prefix)
+            if not is_m2_resource_id(resource_id):
+                raise _RequestError("非法资源标识", request_id=request_id)
+            limit, cursor = _pagination(query, request_id=request_id)
+            return self._service.get_lineage(
+                request_id=request_id,
+                lineage_id=resource_id,
+                limit=limit,
+                cursor=cursor,
             )
 
         for prefix, handler in (
             ("/api/v1/sessions/", self._service.get_session),
             ("/api/v1/attempts/", self._service.get_attempt),
-            ("/api/v1/lineages/", self._service.get_lineage),
             ("/api/v1/artifacts/", self._service.get_artifact_metadata),
         ):
             if path.startswith(prefix):
@@ -196,7 +221,6 @@ class M2ReadonlyHttpAdapter:
                 keyword = {
                     "/api/v1/sessions/": "session_id",
                     "/api/v1/attempts/": "attempt_request_id",
-                    "/api/v1/lineages/": "lineage_id",
                     "/api/v1/artifacts/": "artifact_id",
                 }[prefix]
                 return handler(request_id=request_id, **{keyword: resource_id})
@@ -270,6 +294,22 @@ def _optional_bool(query: Mapping[str, str], name: str, *, request_id: str) -> b
     if value == "true":
         return True
     raise _RequestError(f"非法 {name} 查询参数", request_id=request_id)
+
+
+def _pagination(query: Mapping[str, str], *, request_id: str) -> tuple[int, str | None]:
+    raw_limit = query.get("limit")
+    if raw_limit is None:
+        limit = 50
+    elif not raw_limit.isdigit() or raw_limit.startswith("0"):
+        raise _RequestError("非法 limit 查询参数", request_id=request_id)
+    else:
+        limit = int(raw_limit)
+    if not 1 <= limit <= 100:
+        raise _RequestError("limit 查询参数必须在 1..100", request_id=request_id)
+    cursor = query.get("cursor")
+    if cursor is not None and not _PAGE_CURSOR.fullmatch(cursor):
+        raise _RequestError("非法 cursor 查询参数", request_id=request_id)
+    return limit, cursor
 
 
 def _error_envelope(*, request_id: str, code: M2ErrorCode, message: str) -> M2ApiEnvelope:
