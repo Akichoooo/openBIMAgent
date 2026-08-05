@@ -49,9 +49,43 @@ def test_authenticated_principal_is_provider_neutral_secret_free_contract() -> N
     assert OPERATOR_PRINCIPAL.roles == (M2ControlRole.OPERATOR,)
     payload = OPERATOR_PRINCIPAL.model_dump(mode="json")
     assert validate_artifact("m2_authenticated_principal", payload) == []
+    schema = (
+        Path(__file__).resolve().parents[1] / "schemas" / "m2_authenticated_principal.schema.json"
+    ).read_text(encoding="utf-8")
+    assert '"x-openbimagent-remote-payload-policy-version": "0.1"' in schema
     serialized = str(payload).lower()
     for forbidden in ("token", "cookie", "password", "secret", "claims", "issuer", "subject"):
         assert forbidden not in serialized
+
+
+@pytest.mark.parametrize(
+    "display_name",
+    [
+        "Bearer abcd.secret.token",
+        "api_key=top-secret",
+        "Traceback (most recent call last)",
+        "D:/private/identity.json",
+        "/home/operator/private.txt",
+        r"\\server\share\identity.json",
+    ],
+)
+def test_authenticated_principal_rejects_sensitive_display_name(display_name: str) -> None:
+    with pytest.raises(ValidationError):
+        M2AuthenticatedPrincipal(
+            actor=OPERATOR.model_copy(update={"display_name": display_name}),
+            roles=(M2ControlRole.OPERATOR,),
+            authentication_context_sha256="a" * 64,
+        )
+
+
+@pytest.mark.parametrize("actor_id", ["D:/private/operator", "//server/share/operator"])
+def test_authenticated_principal_rejects_path_shaped_actor_id(actor_id: str) -> None:
+    with pytest.raises(ValidationError):
+        M2AuthenticatedPrincipal(
+            actor=ActorRef(actor_id=actor_id, actor_type=ActorType.HUMAN),
+            roles=(M2ControlRole.OPERATOR,),
+            authentication_context_sha256="a" * 64,
+        )
 
 
 @pytest.mark.parametrize("forbidden_field", ["token", "claims", "issuer", "subject", "cookie"])

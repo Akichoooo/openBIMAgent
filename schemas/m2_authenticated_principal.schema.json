@@ -41,6 +41,7 @@
     }
   },
   "x-openbimagent-provider-neutral": true,
+  "x-openbimagent-remote-payload-policy-version": "0.1",
   "x-openbimagent-secret-fields-allowed": false,
   "x-openbimagent-authentication-mechanism-selected": false
 }

@@ -157,6 +157,7 @@ def build_m2_readonly_openapi() -> dict[str, Any]:
             "idempotency_store_protocol_version": M2_IDEMPOTENCY_STORE_PROTOCOL_VERSION,
             "idempotency_store_implemented": False,
             "authenticated_principal_protocol_version": M2_AUTHENTICATED_PRINCIPAL_PROTOCOL_VERSION,
+            "authenticated_principal_remote_payload_policy_version": M2_REMOTE_PAYLOAD_POLICY_VERSION,
             "authentication_mechanism_selected": False,
             "authentication_secrets_in_principal": False,
             "error_retry_policy_version": M2_ERROR_RETRY_POLICY_VERSION,

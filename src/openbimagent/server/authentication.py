@@ -11,6 +11,7 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from openbimagent.orchestrator.actor import ActorRef, ActorType
+from openbimagent.server.payload_privacy import validate_remote_payload
 
 M2_AUTHENTICATED_PRINCIPAL_PROTOCOL_VERSION = "0.1"
 
@@ -42,6 +43,7 @@ class M2AuthenticatedPrincipal(BaseModel):
             raise ValueError("远程认证主体类型只允许 human 或 service")
         if len(set(self.roles)) != len(self.roles):
             raise ValueError("认证主体角色不得重复")
+        validate_remote_payload(self.model_dump(mode="json"))
         return self
 
 
