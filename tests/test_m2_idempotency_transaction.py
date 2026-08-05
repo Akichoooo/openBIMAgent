@@ -11,11 +11,14 @@ from openbimagent.schema_gate.gate import validate_artifact
 from openbimagent.server.contracts import M2ControlRequest, M2ErrorCode
 from openbimagent.server.control_preflight import M2ControlPreflight, M2ControlRole
 from openbimagent.server.idempotency_transaction import (
+    M2_IDEMPOTENCY_STORE_PROTOCOL_VERSION,
+    M2IdempotencyCasResult,
     M2IdempotencyRecord,
     M2IdempotencyRecordState,
     M2IdempotencyTransaction,
     M2IdempotencyTransactionDisposition,
     M2IdempotencyTransactionError,
+    M2IdempotencyStore,
 )
 
 PREFLIGHT = M2ControlPreflight()
@@ -42,6 +45,84 @@ def _reserved(*, reservation_id: str = "reservation-1", revision: int = 1) -> M2
         semantic_fingerprint=plan.semantic_fingerprint,
         reservation_id=reservation_id,
     )
+
+
+def test_store_protocol_is_runtime_checkable_and_freezes_exact_port() -> None:
+    class ContractOnlyStore:
+        def read(self, idempotency_scope_sha256: str):
+            return None
+
+        def compare_and_swap(self, command):
+            return M2IdempotencyCasResult(
+                applied=True,
+                idempotency_scope_sha256=command.idempotency_scope_sha256,
+                observed_revision=command.replacement.revision,
+                record=command.replacement,
+            )
+
+    assert M2_IDEMPOTENCY_STORE_PROTOCOL_VERSION == "0.1"
+    assert isinstance(ContractOnlyStore(), M2IdempotencyStore)
+    assert not hasattr(ContractOnlyStore(), "save")
+    assert not hasattr(ContractOnlyStore(), "delete")
+
+
+def test_cas_result_schema_matches_model_and_rejects_drift() -> None:
+    command = TRANSACTION.reserve(plan=_plan(), existing=None, reservation_id="reservation-1").mutation
+    assert command is not None
+    result = M2IdempotencyCasResult(
+        applied=True,
+        idempotency_scope_sha256=command.idempotency_scope_sha256,
+        observed_revision=1,
+        record=command.replacement,
+    )
+    payload = result.model_dump(mode="json")
+    assert validate_artifact("m2_idempotency_cas_result", payload) == []
+    payload["record"]["receipt_id"] = "receipt-not-allowed"
+    assert validate_artifact("m2_idempotency_cas_result", payload)
+
+
+def test_cas_result_requires_exact_applied_and_conflict_facts() -> None:
+    command = TRANSACTION.reserve(
+        plan=_plan(), existing=None, reservation_id="reservation-1"
+    ).mutation
+    assert command is not None
+    applied = M2IdempotencyCasResult(
+        applied=True,
+        idempotency_scope_sha256=command.idempotency_scope_sha256,
+        observed_revision=1,
+        record=command.replacement,
+    )
+    assert applied.record == command.replacement
+
+    conflict = M2IdempotencyCasResult(
+        applied=False,
+        idempotency_scope_sha256=command.idempotency_scope_sha256,
+        observed_revision=None,
+        record=None,
+    )
+    assert conflict.applied is False
+
+    with pytest.raises(ValueError, match="成功 CAS"):
+        M2IdempotencyCasResult(
+            applied=True,
+            idempotency_scope_sha256=command.idempotency_scope_sha256,
+            observed_revision=None,
+            record=None,
+        )
+    with pytest.raises(ValueError, match="scope"):
+        M2IdempotencyCasResult(
+            applied=False,
+            idempotency_scope_sha256="0" * 64,
+            observed_revision=1,
+            record=command.replacement,
+        )
+    with pytest.raises(ValueError, match="revision"):
+        M2IdempotencyCasResult(
+            applied=False,
+            idempotency_scope_sha256=command.idempotency_scope_sha256,
+            observed_revision=2,
+            record=command.replacement,
+        )
 
 
 def test_missing_record_produces_create_only_cas_command() -> None:
@@ -242,6 +323,19 @@ def test_transaction_error_maps_to_safe_api_error() -> None:
     assert api_error.request_id == "api-1"
     assert api_error.retryable is False
     assert api_error.details == {}
+
+
+def test_store_contract_does_not_ship_a_concrete_backend() -> None:
+    import openbimagent.server.idempotency_transaction as module
+
+    forbidden = {
+        "InMemoryIdempotencyStore",
+        "FileIdempotencyStore",
+        "SqliteIdempotencyStore",
+        "PostgresIdempotencyStore",
+        "RedisIdempotencyStore",
+    }
+    assert forbidden.isdisjoint(vars(module))
 
 
 def test_transaction_has_no_store_runtime_ipc_or_file_side_effects(tmp_path: Path) -> None:

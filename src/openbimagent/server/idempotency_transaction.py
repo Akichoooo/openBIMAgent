@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -14,6 +15,7 @@ from openbimagent.server.contracts import M2ApiError, M2ErrorCode, make_m2_api_e
 from openbimagent.server.control_preflight import M2ControlProxyPlan
 
 M2_IDEMPOTENCY_TRANSACTION_VERSION = "0.1"
+M2_IDEMPOTENCY_STORE_PROTOCOL_VERSION = "0.1"
 _ID_PATTERN = r"^[A-Za-z0-9_.:@/-]+$"
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
 
@@ -89,6 +91,41 @@ class M2IdempotencyCasCommand(BaseModel):
         if self.replacement.revision != expected_replacement_revision:
             raise ValueError("CAS replacement revision 必须严格递增")
         return self
+
+
+class M2IdempotencyCasResult(BaseModel):
+    """未来 store adapter 返回的 CAS 观察事实；不包含异常、重试或副作用策略。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    store_protocol_version: str = Field(default=M2_IDEMPOTENCY_STORE_PROTOCOL_VERSION, pattern=r"^0\.1$")
+    applied: bool
+    idempotency_scope_sha256: str = Field(pattern=_SHA256_PATTERN)
+    observed_revision: int | None = Field(default=None, ge=1)
+    record: M2IdempotencyRecord | None = None
+
+    @model_validator(mode="after")
+    def _observed_fact_is_exact(self) -> "M2IdempotencyCasResult":
+        if self.applied and (self.record is None or self.observed_revision is None):
+            raise ValueError("成功 CAS 必须返回已提交 record 与 revision")
+        if self.record is None:
+            if self.observed_revision is not None:
+                raise ValueError("无 record 的 CAS 结果不能声明 revision")
+            return self
+        if self.record.idempotency_scope_sha256 != self.idempotency_scope_sha256:
+            raise ValueError("CAS 结果 record 与 scope 不一致")
+        if self.record.revision != self.observed_revision:
+            raise ValueError("CAS 结果 record 与 revision 不一致")
+        return self
+
+
+@runtime_checkable
+class M2IdempotencyStore(Protocol):
+    """正式 P3 持久 adapter 必须实现的最小读取/CAS 端口。"""
+
+    def read(self, idempotency_scope_sha256: str) -> M2IdempotencyRecord | None: ...
+
+    def compare_and_swap(self, command: M2IdempotencyCasCommand) -> M2IdempotencyCasResult: ...
 
 
 class M2IdempotencyTransactionDecision(BaseModel):
@@ -228,10 +265,13 @@ class M2IdempotencyTransaction:
 
 
 __all__ = [
+    "M2_IDEMPOTENCY_STORE_PROTOCOL_VERSION",
     "M2_IDEMPOTENCY_TRANSACTION_VERSION",
     "M2IdempotencyCasCommand",
+    "M2IdempotencyCasResult",
     "M2IdempotencyRecord",
     "M2IdempotencyRecordState",
+    "M2IdempotencyStore",
     "M2IdempotencyTransaction",
     "M2IdempotencyTransactionDecision",
     "M2IdempotencyTransactionDisposition",

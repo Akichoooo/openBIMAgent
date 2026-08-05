@@ -23,6 +23,7 @@ from openbimagent.server.correlation_identity import (
     M2_CORRELATION_ID_PATTERN,
     M2_CORRELATION_ID_POLICY_VERSION,
 )
+from openbimagent.server.idempotency_transaction import M2_IDEMPOTENCY_STORE_PROTOCOL_VERSION
 from openbimagent.server.pagination import (
     M2_PAGE_CURSOR_CHARS_MAX,
     M2_PAGE_LIMIT_DEFAULT,
@@ -152,6 +153,8 @@ def build_m2_readonly_openapi() -> dict[str, Any]:
             "artifact_metadata_remote_payload_policy_version": M2_REMOTE_PAYLOAD_POLICY_VERSION,
             "remote_payload_policy_version": M2_REMOTE_PAYLOAD_POLICY_VERSION,
             "remote_payload_runtime_gate_required": True,
+            "idempotency_store_protocol_version": M2_IDEMPOTENCY_STORE_PROTOCOL_VERSION,
+            "idempotency_store_implemented": False,
             "error_retry_policy_version": M2_ERROR_RETRY_POLICY_VERSION,
             "error_retryable_codes": ["RateLimited", "RuntimeUnavailable"],
             "resource_id_policy_version": M2_RESOURCE_ID_POLICY_VERSION,

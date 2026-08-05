@@ -24,7 +24,7 @@ INVALID_PLAN = {
 def test_loads_all_schemas() -> None:
     """schemas/ 目录全部 JSON Schema 均加载，关键版本化协议必须存在。"""
     names = gate.SchemaGate().schema_names()
-    assert len(names) == 42
+    assert len(names) == 43
     assert "plan.schema.json" in names
     assert "blender_execution_plan.schema.json" in names
     assert "scad_scene_ir.schema.json" in names  # 阶段3b 新增:SCAD 环编译 IR
