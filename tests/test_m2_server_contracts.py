@@ -388,6 +388,29 @@ def test_artifact_relative_path_policy_is_versioned_and_preserves_canonical_posi
     assert is_m2_artifact_relative_path("a" * 513) is False
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("kind", "token=artifact-secret"),
+        ("kind", "D:/private/artifact-kind"),
+        ("source_attempt_id", "D:/private/request-1"),
+    ],
+)
+def test_artifact_metadata_applies_shared_remote_payload_privacy_policy(field: str, value: str) -> None:
+    payload = {
+        "artifact_id": "artifact-privacy",
+        "kind": "ifc",
+        "media_type": "application/x-step",
+        "sha256": "a" * 64,
+        "size_bytes": 128,
+        "status": "completed",
+        "source_attempt_id": "request-1",
+    }
+    payload[field] = value
+    with pytest.raises(ValidationError, match="远程载荷"):
+        M2ArtifactMetadata(**payload)
+
+
 def test_artifact_metadata_never_exposes_path_and_only_completed_is_downloadable() -> None:
     artifact = M2ArtifactMetadata(
         artifact_id="artifact-1",
@@ -508,13 +531,17 @@ def test_api_schema_declares_shared_correlation_identity_policy() -> None:
 
 def test_protocol_schemas_declare_shared_resource_identity_policy() -> None:
     control_runtime = M2ControlRequest.model_json_schema()["properties"]["resource_id"]
-    artifact_runtime = M2ArtifactMetadata.model_json_schema()["properties"]["artifact_id"]
+    artifact_schema = M2ArtifactMetadata.model_json_schema()
+    artifact_runtime = artifact_schema["properties"]["artifact_id"]
+    assert artifact_schema["x-openbimagent-remote-payload-policy"] == "0.1"
     control_baseline = json.loads(
         (ROOT / "schemas" / "m2_control_request.schema.json").read_text(encoding="utf-8")
     )["properties"]["resource_id"]
-    artifact_baseline = json.loads(
+    artifact_baseline_schema = json.loads(
         (ROOT / "schemas" / "m2_artifact_metadata.schema.json").read_text(encoding="utf-8")
-    )["properties"]["artifact_id"]
+    )
+    artifact_baseline = artifact_baseline_schema["properties"]["artifact_id"]
+    assert artifact_baseline_schema["x-openbimagent-remote-payload-policy"] == "0.1"
     for schema in (control_runtime, artifact_runtime, control_baseline, artifact_baseline):
         assert schema["x-openbimagent-resource-id-policy"] == "0.1"
         assert schema["pattern"] == "^[A-Za-z0-9_@-][A-Za-z0-9_.@-]{0,199}$"

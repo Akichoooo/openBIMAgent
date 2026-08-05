@@ -3,6 +3,7 @@
   "$id": "https://openbimagent.local/schemas/m2_artifact_metadata.schema.json",
   "title": "M2ArtifactMetadataV1",
   "type": "object",
+  "x-openbimagent-remote-payload-policy": "0.1",
   "required": [
     "protocol_version",
     "artifact_id",

@@ -268,6 +268,33 @@ def test_artifact_unsafe_relative_path_maps_to_safe_conflict(relative_path: str)
     assert envelope.error.details == {}
 
 
+@pytest.mark.parametrize(
+    ("kind", "source_attempt_id"),
+    [
+        ("token=artifact-secret", "request-1"),
+        ("ifc", "D:/private/request-1"),
+    ],
+)
+def test_artifact_sensitive_metadata_maps_to_safe_conflict(kind: str, source_attempt_id: str) -> None:
+    artifact = ArtifactRecord(
+        artifact_id="artifact-1",
+        kind=kind,
+        path="D:/private/result.ifc",
+        relative_path="result.ifc",
+        media_type="application/x-step",
+        sha256="b" * 64,
+        size_bytes=1024,
+        source_attempt_id=source_attempt_id,
+        status=ArtifactStatus.COMPLETED,
+    )
+    envelope = _service(artifact=artifact).get_artifact_metadata(
+        request_id="api-1", artifact_id="artifact-1"
+    )
+    assert envelope.error.code is M2ErrorCode.CONFLICT
+    assert envelope.error.message == "artifact 元数据不满足远程协议"
+    assert envelope.error.details == {}
+
+
 def test_artifact_protocol_drift_maps_to_safe_conflict() -> None:
     artifact = ArtifactRecord(
         artifact_id="artifact-1",
@@ -318,6 +345,7 @@ def test_openapi_31_baseline_is_deterministic_and_matches_signed_file() -> None:
     assert document["servers"] == []
     boundaries = document["x-openbimagent-boundaries"]
     assert boundaries["artifact_relative_path_policy_version"] == "0.1"
+    assert boundaries["artifact_metadata_remote_payload_policy_version"] == "0.1"
     assert boundaries["artifact_relative_path_io_performed"] is False
     assert boundaries["artifact_symlink_validation_deferred_to_p2"] is True
     assert OPENAPI_BASELINE.read_bytes() == canonical_openapi_bytes(document)

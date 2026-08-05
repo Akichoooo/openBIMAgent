@@ -285,7 +285,11 @@ class M2SseEvent(BaseModel):
 class M2ArtifactMetadata(BaseModel):
     """远程可见的不可变工件元数据；不暴露服务端绝对 path。"""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        json_schema_extra={"x-openbimagent-remote-payload-policy": M2_REMOTE_PAYLOAD_POLICY_VERSION},
+    )
 
     protocol_version: str = Field(default=M2_API_PROTOCOL_VERSION, pattern=r"^1\.0$")
     artifact_id: str = Field(
@@ -317,7 +321,8 @@ class M2ArtifactMetadata(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _download_only_completed(self) -> "M2ArtifactMetadata":
+    def _metadata_is_safe_and_download_only_completed(self) -> "M2ArtifactMetadata":
+        validate_remote_payload(self.model_dump(mode="json"))
         if self.download_available and self.status != "completed":
             raise ValueError("只有 completed 工件可作为正式下载")
         return self

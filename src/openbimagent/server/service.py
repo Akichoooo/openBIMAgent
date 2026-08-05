@@ -271,9 +271,9 @@ class M2ReadOnlyService:
                 source_attempt_id=record.source_attempt_id,
                 download_available=False,
             )
+            return self._success(request_id, {"artifact": metadata.model_dump(mode="json")})
         except Exception:
             return self._conflict(request_id, "artifact 元数据不满足远程协议")
-        return self._success(request_id, {"artifact": metadata.model_dump(mode="json")})
 
     @staticmethod
     def _session_metadata(entry: Mapping[str, Any]) -> dict[str, Any]:
