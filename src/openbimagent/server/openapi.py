@@ -10,6 +10,7 @@ import json
 from copy import deepcopy
 from typing import Any
 
+from openbimagent.server.authentication import M2_AUTHENTICATED_PRINCIPAL_PROTOCOL_VERSION
 from openbimagent.server.artifact_path import (
     M2_ARTIFACT_RELATIVE_PATH_CHARS_MAX,
     M2_ARTIFACT_RELATIVE_PATH_POLICY_VERSION,
@@ -155,6 +156,9 @@ def build_m2_readonly_openapi() -> dict[str, Any]:
             "remote_payload_runtime_gate_required": True,
             "idempotency_store_protocol_version": M2_IDEMPOTENCY_STORE_PROTOCOL_VERSION,
             "idempotency_store_implemented": False,
+            "authenticated_principal_protocol_version": M2_AUTHENTICATED_PRINCIPAL_PROTOCOL_VERSION,
+            "authentication_mechanism_selected": False,
+            "authentication_secrets_in_principal": False,
             "error_retry_policy_version": M2_ERROR_RETRY_POLICY_VERSION,
             "error_retryable_codes": ["RateLimited", "RuntimeUnavailable"],
             "resource_id_policy_version": M2_RESOURCE_ID_POLICY_VERSION,

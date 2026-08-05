@@ -348,6 +348,9 @@ def test_openapi_31_baseline_is_deterministic_and_matches_signed_file() -> None:
     assert boundaries["artifact_metadata_remote_payload_policy_version"] == "0.1"
     assert boundaries["idempotency_store_protocol_version"] == "0.1"
     assert boundaries["idempotency_store_implemented"] is False
+    assert boundaries["authenticated_principal_protocol_version"] == "0.1"
+    assert boundaries["authentication_mechanism_selected"] is False
+    assert boundaries["authentication_secrets_in_principal"] is False
     assert boundaries["artifact_relative_path_io_performed"] is False
     assert boundaries["artifact_symlink_validation_deferred_to_p2"] is True
     assert OPENAPI_BASELINE.read_bytes() == canonical_openapi_bytes(document)

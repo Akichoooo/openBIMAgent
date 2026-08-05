@@ -14,7 +14,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from openbimagent.orchestrator.actor import ActorRef, ActorType
+from openbimagent.orchestrator.actor import ActorRef
+from openbimagent.server.authentication import M2AuthenticatedPrincipal, M2ControlRole
 from openbimagent.server.contracts import (
     M2ApiError,
     M2ControlOperation,
@@ -25,14 +26,6 @@ from openbimagent.server.contracts import (
 from openbimagent.server.resource_identity import M2_RESOURCE_ID_PATTERN, is_m2_resource_id
 
 M2_CONTROL_PREFLIGHT_VERSION = "0.1"
-
-
-class M2ControlRole(StrEnum):
-    """首个 M2 单用户模式的最小角色集合。"""
-
-    VIEWER = "viewer"
-    OPERATOR = "operator"
-    ADMIN = "admin"
 
 
 class M2IdempotencyDisposition(StrEnum):
@@ -99,20 +92,15 @@ class M2ControlPreflight:
     def prepare(
         self,
         *,
-        actor: ActorRef,
-        role: M2ControlRole,
+        principal: M2AuthenticatedPrincipal,
         request: M2ControlRequest,
     ) -> M2ControlProxyPlan:
-        if actor.actor_type in {ActorType.RUNTIME, ActorType.LEGACY}:
+        if M2ControlRole.OPERATOR not in principal.roles:
             raise M2ControlPreflightError(
                 M2ErrorCode.FORBIDDEN,
-                "认证主体类型不允许执行远程控制",
+                "当前认证主体无权执行远程控制",
             )
-        if role is not M2ControlRole.OPERATOR:
-            raise M2ControlPreflightError(
-                M2ErrorCode.FORBIDDEN,
-                "当前角色无权执行远程控制",
-            )
+        actor = principal.actor
         if not is_m2_resource_id(request.resource_id):
             raise M2ControlPreflightError(
                 M2ErrorCode.INVALID_REQUEST,
@@ -127,7 +115,7 @@ class M2ControlPreflight:
         }
         return M2ControlProxyPlan(
             actor=actor,
-            role=role,
+            role=M2ControlRole.OPERATOR,
             operation=request.operation,
             resource_id=request.resource_id,
             idempotency_key=request.idempotency_key,

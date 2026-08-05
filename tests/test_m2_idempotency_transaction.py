@@ -8,6 +8,7 @@ import pytest
 
 from openbimagent.orchestrator.actor import ActorRef, ActorType
 from openbimagent.schema_gate.gate import validate_artifact
+from openbimagent.server.authentication import M2AuthenticatedPrincipal
 from openbimagent.server.contracts import M2ControlRequest, M2ErrorCode
 from openbimagent.server.control_preflight import M2ControlPreflight, M2ControlRole
 from openbimagent.server.idempotency_transaction import (
@@ -24,6 +25,11 @@ from openbimagent.server.idempotency_transaction import (
 PREFLIGHT = M2ControlPreflight()
 TRANSACTION = M2IdempotencyTransaction()
 ACTOR = ActorRef(actor_id="human:operator", actor_type=ActorType.HUMAN)
+PRINCIPAL = M2AuthenticatedPrincipal(
+    actor=ACTOR,
+    roles=(M2ControlRole.OPERATOR,),
+    authentication_context_sha256="a" * 64,
+)
 
 
 def _plan(*, instruction: str = "inspect persisted facts"):
@@ -33,7 +39,7 @@ def _plan(*, instruction: str = "inspect persisted facts"):
         idempotency_key="steer-key-1",
         instruction=instruction,
     )
-    return PREFLIGHT.prepare(actor=ACTOR, role=M2ControlRole.OPERATOR, request=request)
+    return PREFLIGHT.prepare(principal=PRINCIPAL, request=request)
 
 
 def _reserved(*, reservation_id: str = "reservation-1", revision: int = 1) -> M2IdempotencyRecord:

@@ -6,6 +6,11 @@ import pytest
 from pydantic import ValidationError
 
 from openbimagent.orchestrator.actor import ActorRef, ActorType
+from openbimagent.schema_gate.gate import validate_artifact
+from openbimagent.server.authentication import (
+    M2_AUTHENTICATED_PRINCIPAL_PROTOCOL_VERSION,
+    M2AuthenticatedPrincipal,
+)
 from openbimagent.server.contracts import M2ControlRequest, M2ErrorCode
 from openbimagent.server.control_preflight import (
     M2ControlPreflight,
@@ -17,6 +22,11 @@ from openbimagent.server.control_preflight import (
 
 PREFLIGHT = M2ControlPreflight()
 OPERATOR = ActorRef(actor_id="human:operator", actor_type=ActorType.HUMAN, display_name="Operator")
+OPERATOR_PRINCIPAL = M2AuthenticatedPrincipal(
+    actor=OPERATOR,
+    roles=(M2ControlRole.OPERATOR,),
+    authentication_context_sha256="a" * 64,
+)
 
 
 def _request(operation: str, **overrides) -> M2ControlRequest:
@@ -31,6 +41,57 @@ def _request(operation: str, **overrides) -> M2ControlRequest:
         payload["instruction"] = "check persisted facts first"
     payload.update(overrides)
     return M2ControlRequest(**payload)
+
+
+def test_authenticated_principal_is_provider_neutral_secret_free_contract() -> None:
+    assert M2_AUTHENTICATED_PRINCIPAL_PROTOCOL_VERSION == "0.1"
+    assert OPERATOR_PRINCIPAL.actor == OPERATOR
+    assert OPERATOR_PRINCIPAL.roles == (M2ControlRole.OPERATOR,)
+    payload = OPERATOR_PRINCIPAL.model_dump(mode="json")
+    assert validate_artifact("m2_authenticated_principal", payload) == []
+    serialized = str(payload).lower()
+    for forbidden in ("token", "cookie", "password", "secret", "claims", "issuer", "subject"):
+        assert forbidden not in serialized
+
+
+@pytest.mark.parametrize("forbidden_field", ["token", "claims", "issuer", "subject", "cookie"])
+def test_authenticated_principal_rejects_authentication_secret_or_provider_fields(
+    forbidden_field: str,
+) -> None:
+    payload = OPERATOR_PRINCIPAL.model_dump(mode="json")
+    payload[forbidden_field] = "sensitive"
+    with pytest.raises(ValidationError):
+        M2AuthenticatedPrincipal.model_validate(payload)
+    assert validate_artifact("m2_authenticated_principal", payload)
+
+
+def test_control_preflight_rejects_separate_actor_and_role_arguments() -> None:
+    with pytest.raises(TypeError):
+        PREFLIGHT.prepare(  # type: ignore[call-arg]
+            actor=OPERATOR,
+            role=M2ControlRole.OPERATOR,
+            request=_request("attempt.cancel"),
+        )
+
+
+@pytest.mark.parametrize("actor_type", [ActorType.AGENT, ActorType.RUNTIME, ActorType.LEGACY])
+def test_authenticated_principal_rejects_untrusted_remote_actor_types(actor_type: ActorType) -> None:
+    with pytest.raises(ValidationError):
+        M2AuthenticatedPrincipal(
+            actor=ActorRef(actor_id=f"{actor_type.value}:spoof", actor_type=actor_type),
+            roles=(M2ControlRole.OPERATOR,),
+            authentication_context_sha256="a" * 64,
+        )
+
+
+@pytest.mark.parametrize("roles", [(), (M2ControlRole.OPERATOR, M2ControlRole.OPERATOR)])
+def test_authenticated_principal_requires_nonempty_unique_roles(roles: tuple[M2ControlRole, ...]) -> None:
+    with pytest.raises(ValidationError):
+        M2AuthenticatedPrincipal(
+            actor=OPERATOR,
+            roles=roles,
+            authentication_context_sha256="a" * 64,
+        )
 
 
 @pytest.mark.parametrize(
@@ -53,7 +114,7 @@ def _request(operation: str, **overrides) -> M2ControlRequest:
 )
 def test_operator_request_maps_to_exact_ipc_proxy_plan(operation: str, expected_payload: dict) -> None:
     request = _request(operation)
-    plan = PREFLIGHT.prepare(actor=OPERATOR, role=M2ControlRole.OPERATOR, request=request)
+    plan = PREFLIGHT.prepare(principal=OPERATOR_PRINCIPAL, request=request)
     assert plan.actor == OPERATOR
     assert plan.operation.value == operation
     assert plan.ipc_operation == operation
@@ -68,18 +129,15 @@ def test_operator_request_maps_to_exact_ipc_proxy_plan(operation: str, expected_
 
 def test_fingerprints_are_deterministic_and_operation_scoped() -> None:
     first = PREFLIGHT.prepare(
-        actor=OPERATOR,
-        role=M2ControlRole.OPERATOR,
+        principal=OPERATOR_PRINCIPAL,
         request=_request("attempt.cancel", idempotency_key="shared-key"),
     )
     repeated = PREFLIGHT.prepare(
-        actor=OPERATOR,
-        role=M2ControlRole.OPERATOR,
+        principal=OPERATOR_PRINCIPAL,
         request=_request("attempt.cancel", idempotency_key="shared-key"),
     )
     other_operation = PREFLIGHT.prepare(
-        actor=OPERATOR,
-        role=M2ControlRole.OPERATOR,
+        principal=OPERATOR_PRINCIPAL,
         request=_request("attempt.steer", idempotency_key="shared-key"),
     )
     assert first == repeated
@@ -89,10 +147,13 @@ def test_fingerprints_are_deterministic_and_operation_scoped() -> None:
 
 def test_display_name_does_not_change_idempotency_scope() -> None:
     request = _request("attempt.cancel")
-    first = PREFLIGHT.prepare(actor=OPERATOR, role=M2ControlRole.OPERATOR, request=request)
+    first = PREFLIGHT.prepare(principal=OPERATOR_PRINCIPAL, request=request)
     renamed = PREFLIGHT.prepare(
-        actor=OPERATOR.model_copy(update={"display_name": "Renamed"}),
-        role=M2ControlRole.OPERATOR,
+        principal=M2AuthenticatedPrincipal(
+            actor=OPERATOR.model_copy(update={"display_name": "Renamed"}),
+            roles=(M2ControlRole.OPERATOR,),
+            authentication_context_sha256="a" * 64,
+        ),
         request=request,
     )
     assert first.idempotency_scope_sha256 == renamed.idempotency_scope_sha256
@@ -101,16 +162,13 @@ def test_display_name_does_not_change_idempotency_scope() -> None:
 
 @pytest.mark.parametrize("role", [M2ControlRole.VIEWER, M2ControlRole.ADMIN])
 def test_non_operator_roles_cannot_execute_control(role: M2ControlRole) -> None:
+    principal = M2AuthenticatedPrincipal(
+        actor=OPERATOR,
+        roles=(role,),
+        authentication_context_sha256="a" * 64,
+    )
     with pytest.raises(M2ControlPreflightError) as exc_info:
-        PREFLIGHT.prepare(actor=OPERATOR, role=role, request=_request("attempt.cancel"))
-    assert exc_info.value.code is M2ErrorCode.FORBIDDEN
-
-
-@pytest.mark.parametrize("actor_type", [ActorType.RUNTIME, ActorType.LEGACY])
-def test_external_actor_cannot_claim_runtime_or_legacy(actor_type: ActorType) -> None:
-    actor = ActorRef(actor_id=f"{actor_type.value}:spoof", actor_type=actor_type)
-    with pytest.raises(M2ControlPreflightError) as exc_info:
-        PREFLIGHT.prepare(actor=actor, role=M2ControlRole.OPERATOR, request=_request("attempt.cancel"))
+        PREFLIGHT.prepare(principal=principal, request=_request("attempt.cancel"))
     assert exc_info.value.code is M2ErrorCode.FORBIDDEN
 
 
@@ -129,7 +187,7 @@ def test_path_style_or_ambiguous_resource_ids_fail_closed(resource_id: str) -> N
         reason="",
     )
     with pytest.raises(M2ControlPreflightError) as exc_info:
-        PREFLIGHT.prepare(actor=OPERATOR, role=M2ControlRole.OPERATOR, request=bypassed_request)
+        PREFLIGHT.prepare(principal=OPERATOR_PRINCIPAL, request=bypassed_request)
     assert exc_info.value.code is M2ErrorCode.INVALID_REQUEST
 
 
@@ -141,8 +199,7 @@ def test_generic_request_contract_rejects_invalid_characters_before_preflight(re
 
 def test_idempotency_reconcile_returns_new_or_original_receipt() -> None:
     plan = PREFLIGHT.prepare(
-        actor=OPERATOR,
-        role=M2ControlRole.OPERATOR,
+        principal=OPERATOR_PRINCIPAL,
         request=_request("attempt.cancel"),
     )
     new = PREFLIGHT.reconcile(plan=plan, existing=None)
@@ -161,13 +218,11 @@ def test_idempotency_reconcile_returns_new_or_original_receipt() -> None:
 
 def test_same_scope_different_semantics_is_idempotency_conflict() -> None:
     original = PREFLIGHT.prepare(
-        actor=OPERATOR,
-        role=M2ControlRole.OPERATOR,
+        principal=OPERATOR_PRINCIPAL,
         request=_request("attempt.steer", idempotency_key="shared-key", instruction="first"),
     )
     changed = PREFLIGHT.prepare(
-        actor=OPERATOR,
-        role=M2ControlRole.OPERATOR,
+        principal=OPERATOR_PRINCIPAL,
         request=_request("attempt.steer", idempotency_key="shared-key", instruction="second"),
     )
     fact = M2IdempotencyFact(
@@ -182,8 +237,7 @@ def test_same_scope_different_semantics_is_idempotency_conflict() -> None:
 
 def test_mismatched_persisted_scope_fails_closed() -> None:
     plan = PREFLIGHT.prepare(
-        actor=OPERATOR,
-        role=M2ControlRole.OPERATOR,
+        principal=OPERATOR_PRINCIPAL,
         request=_request("attempt.cancel"),
     )
     fact = M2IdempotencyFact(
@@ -209,8 +263,7 @@ def test_preflight_has_no_runtime_ipc_or_file_side_effects(tmp_path: Path) -> No
     before = tuple(tmp_path.rglob("*"))
     preflight = M2ControlPreflight()
     plan = preflight.prepare(
-        actor=OPERATOR,
-        role=M2ControlRole.OPERATOR,
+        principal=OPERATOR_PRINCIPAL,
         request=_request("attempt.cancel"),
     )
     preflight.reconcile(plan=plan, existing=None)

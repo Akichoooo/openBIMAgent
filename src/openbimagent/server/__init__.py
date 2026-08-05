@@ -3,6 +3,10 @@
 当前仅包含 pre-G7 的协议与 Schema 准备，不启动 HTTP server，不获取 Runtime lease。
 """
 
+from openbimagent.server.authentication import (
+    M2_AUTHENTICATED_PRINCIPAL_PROTOCOL_VERSION,
+    M2AuthenticatedPrincipal,
+)
 from openbimagent.server.correlation_identity import (
     M2_CORRELATION_ID_PATTERN,
     M2_CORRELATION_ID_POLICY_VERSION,
@@ -102,6 +106,7 @@ from openbimagent.server.sse_projection import (
 
 __all__ = [
     "M2_API_PROTOCOL_VERSION",
+    "M2_AUTHENTICATED_PRINCIPAL_PROTOCOL_VERSION",
     "M2_CONTROL_PREFLIGHT_VERSION",
     "M2_CORRELATION_ID_PATTERN",
     "M2_CORRELATION_ID_POLICY_VERSION",
@@ -127,6 +132,7 @@ __all__ = [
     "M2_SSE_STREAM_ID_POLICY_VERSION",
     "M2ApiEnvelope",
     "M2ApiError",
+    "M2AuthenticatedPrincipal",
     "M2ArtifactMetadata",
     "M2ControlOperation",
     "M2ControlPreflight",
