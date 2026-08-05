@@ -233,6 +233,41 @@ def test_artifact_metadata_never_exposes_path_or_enables_download() -> None:
     assert payload["download_available"] is False
 
 
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        r"folder\result.ifc",
+        "C:result.ifc",
+        r"\\server\share\result.ifc",
+        r"\\?\C:\result.ifc",
+        "result.ifc:secret",
+        "folder/../result.ifc",
+        "folder/NUL.txt",
+    ],
+)
+def test_artifact_unsafe_relative_path_maps_to_safe_conflict(relative_path: str) -> None:
+    artifact = ArtifactRecord.model_construct(
+        artifact_id="artifact-1",
+        kind="ifc",
+        path="D:/private/result.ifc",
+        relative_path=relative_path,
+        media_type="application/x-step",
+        sha256="b" * 64,
+        size_bytes=1024,
+        immutable=True,
+        generator=None,
+        source_attempt_id="request-1",
+        dependencies=(),
+        status=ArtifactStatus.COMPLETED,
+    )
+    envelope = _service(artifact=artifact).get_artifact_metadata(
+        request_id="api-1", artifact_id="artifact-1"
+    )
+    assert envelope.error.code is M2ErrorCode.CONFLICT
+    assert envelope.error.message == "artifact 元数据不满足远程协议"
+    assert envelope.error.details == {}
+
+
 def test_artifact_protocol_drift_maps_to_safe_conflict() -> None:
     artifact = ArtifactRecord(
         artifact_id="artifact-1",
@@ -281,6 +316,10 @@ def test_openapi_31_baseline_is_deterministic_and_matches_signed_file() -> None:
     document = build_m2_readonly_openapi()
     assert document["openapi"] == "3.1.0"
     assert document["servers"] == []
+    boundaries = document["x-openbimagent-boundaries"]
+    assert boundaries["artifact_relative_path_policy_version"] == "0.1"
+    assert boundaries["artifact_relative_path_io_performed"] is False
+    assert boundaries["artifact_symlink_validation_deferred_to_p2"] is True
     assert OPENAPI_BASELINE.read_bytes() == canonical_openapi_bytes(document)
     assert b"#/$defs/" not in canonical_openapi_bytes(document)
     assert b"#/components/schemas/M2ApiError" in canonical_openapi_bytes(document)

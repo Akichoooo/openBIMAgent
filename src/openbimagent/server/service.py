@@ -11,6 +11,7 @@ from typing import Any, Protocol
 
 from openbimagent.orchestrator.contracts import ArtifactRecord
 from openbimagent.orchestrator.control_plane import ControlPlaneError
+from openbimagent.server.artifact_path import validate_m2_artifact_relative_path
 from openbimagent.server.contracts import (
     M2_API_PROTOCOL_VERSION,
     M2ApiEnvelope,
@@ -257,6 +258,8 @@ class M2ReadOnlyService:
         if record.artifact_id != artifact_id or not record.immutable:
             return self._conflict(request_id, "artifact 身份或不可变属性冲突")
         try:
+            if record.relative_path is not None:
+                validate_m2_artifact_relative_path(record.relative_path)
             metadata = M2ArtifactMetadata(
                 artifact_id=record.artifact_id,
                 kind=record.kind,

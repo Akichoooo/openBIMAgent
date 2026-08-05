@@ -10,6 +10,10 @@ import json
 from copy import deepcopy
 from typing import Any
 
+from openbimagent.server.artifact_path import (
+    M2_ARTIFACT_RELATIVE_PATH_CHARS_MAX,
+    M2_ARTIFACT_RELATIVE_PATH_POLICY_VERSION,
+)
 from openbimagent.server.contracts import (
     M2_ERROR_RETRY_POLICY_VERSION,
     M2ApiEnvelope,
@@ -141,6 +145,10 @@ def build_m2_readonly_openapi() -> dict[str, Any]:
             "runtime_created": False,
             "write_control_enabled": False,
             "arbitrary_path_parameters": False,
+            "artifact_relative_path_policy_version": M2_ARTIFACT_RELATIVE_PATH_POLICY_VERSION,
+            "artifact_relative_path_chars_max": M2_ARTIFACT_RELATIVE_PATH_CHARS_MAX,
+            "artifact_relative_path_io_performed": False,
+            "artifact_symlink_validation_deferred_to_p2": True,
             "remote_payload_policy_version": M2_REMOTE_PAYLOAD_POLICY_VERSION,
             "remote_payload_runtime_gate_required": True,
             "error_retry_policy_version": M2_ERROR_RETRY_POLICY_VERSION,

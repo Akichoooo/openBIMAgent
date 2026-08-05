@@ -21,6 +21,11 @@ from openbimagent.server.contracts import (
     m2_error_is_retryable,
     make_m2_api_error,
 )
+from openbimagent.server.artifact_path import (
+    M2_ARTIFACT_RELATIVE_PATH_POLICY_VERSION,
+    is_m2_artifact_relative_path,
+    validate_m2_artifact_relative_path,
+)
 from openbimagent.server.correlation_identity import (
     M2_CORRELATION_ID_POLICY_VERSION,
     is_m2_correlation_id,
@@ -340,6 +345,47 @@ def test_sse_schemas_declare_stream_identity_policy() -> None:
     ):
         assert schema["x-openbimagent-sse-stream-id-policy"] == "0.1"
         assert schema["pattern"] == "^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        ".",
+        "..",
+        "./result.ifc",
+        "folder/../result.ifc",
+        "/result.ifc",
+        r"folder\result.ifc",
+        r"folder/result\file.ifc",
+        "C:result.ifc",
+        "C:/result.ifc",
+        r"\\server\share\result.ifc",
+        r"\\?\C:\result.ifc",
+        "result.ifc:secret",
+        "result?.ifc",
+        "result*.ifc",
+        "result|draft.ifc",
+        'result"draft.ifc',
+        "result<draft>.ifc",
+        "CON",
+        "aux.json",
+        "folder/NUL.txt",
+    ],
+)
+def test_artifact_relative_path_policy_rejects_windows_and_ambiguous_paths(value: str) -> None:
+    assert is_m2_artifact_relative_path(value) is False
+    with pytest.raises(ValueError, match="工件相对路径"):
+        validate_m2_artifact_relative_path(value)
+
+
+def test_artifact_relative_path_policy_is_versioned_and_preserves_canonical_posix() -> None:
+    assert M2_ARTIFACT_RELATIVE_PATH_POLICY_VERSION == "0.1"
+    for value in ("result.ifc", "agent-1/result.ifc", "nested.v1/data_01.json"):
+        assert is_m2_artifact_relative_path(value) is True
+        assert validate_m2_artifact_relative_path(value) == value
+    assert is_m2_artifact_relative_path("a" * 512) is True
+    assert is_m2_artifact_relative_path("a" * 513) is False
 
 
 def test_artifact_metadata_never_exposes_path_and_only_completed_is_downloadable() -> None:
