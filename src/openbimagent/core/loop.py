@@ -11,6 +11,7 @@ system prompt + 工具定义 < 2000 token;状态外置(session JSONL 树),中断
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import subprocess
@@ -127,6 +128,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "properties": {
                     "image_path": {"type": "string"},
                     "phase": {"type": "string", "enum": ["scad", "blender"]},
+                    "camera_view": {"type": "string", "default": "viewport"},
                 },
                 "required": ["image_path", "phase"],
             },
@@ -273,6 +275,8 @@ class AgentLoop:
         role: str = "orchestrator",
         subagent_runtime: LocalSubagentRuntime | None = None,
         depth: int = 0,
+        mcp_clients: dict[str, Any] | None = None,
+        vision_checker: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ) -> None:
         """挂载工具(≤8,超出报错)并绑定 session 树;system prompt 超 token 预算即配置错误。"""
         if len(tools) > MAX_TOOLS:
@@ -292,6 +296,10 @@ class AgentLoop:
         self.workdir = Path(workdir) if workdir else Path.cwd()
         self.role = role
         self.subagent_runtime = subagent_runtime
+        self.mcp_clients = dict(mcp_clients or {})
+        self.vision_checker = vision_checker
+        # 进程内成功结果缓存只做同一 AgentLoop 的重试去重；跨重启幂等仍由宿主 receipt 协议负责。
+        self._mcp_result_cache: dict[tuple[str, str, str], dict[str, Any]] = {}
         self.depth = depth
         if depth > 0 and "subagent" in self.tools:
             raise ValueError("child AgentLoop 不得挂载 subagent 工具(禁嵌套)")
@@ -405,9 +413,15 @@ class AgentLoop:
         return result
 
     def _dispatch(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
-        """权限审批门:deny 直接拒;ask 走 approval_callback;allow 直接执行。异常转为 error 结果回灌。"""
+        """权限审批门:未挂载工具、typed 写操作和自由脚本先过白名单/ceiling，再执行。"""
+        if name not in self.tools:
+            return _tool_result("denied", f"工具 {name} 未挂载到当前 AgentLoop。", {"permission": "tool_not_mounted"})
         perm_key = _permission_key(name, args)
         perm = check_permission(perm_key, self.permission_rules)
+        # typed execute_plan 是宿主写操作，权限 ceiling 不允许角色配置降到 allow。
+        if name == "mcp_call" and args.get("tool") == "execute_plan" and perm is Permission.ALLOW:
+            perm = Permission.ASK
+        approval_granted = False
         if perm is Permission.DENY:
             return _tool_result("denied", f"工具 {perm_key} 被权限规则拒绝(deny)。", {"permission": "deny"})
         if perm is Permission.ASK:
@@ -418,7 +432,10 @@ class AgentLoop:
             )
             if not approved:
                 return _tool_result("rejected", f"工具 {perm_key} 被用户拒绝。", {"permission": "rejected"})
+            approval_granted = True
         try:
+            if name == "mcp_call" and args.get("tool") == "execute_plan" and not approval_granted:
+                return _tool_result("rejected", "typed execute_plan 未获得显式审批。", {"permission": "approval_required"})
             return self._run_tool(name, args)
         except NotImplementedError as exc:
             return _tool_result("error", f"工具 {name} 尚未实现: {exc}", {"error": str(exc)})
@@ -496,12 +513,69 @@ class AgentLoop:
         )
 
     def _tool_mcp_call(self, args: dict[str, Any]) -> dict[str, Any]:
-        """TODO(M0 阶段2+):接 mcp_clients(blender-mcp / vectorworks-mcp),写操作前先 record_snapshot。"""
-        raise NotImplementedError("TODO(M0 阶段2+): mcp_call 接入 MCP 客户端")
+        """通过已注入的 MCP client 执行治理入口；typed plan 是唯一建模写路径。"""
+        server = str(args.get("server", ""))
+        tool = str(args.get("tool", ""))
+        client = self.mcp_clients.get(server)
+        if client is None:
+            raise RuntimeError(f"未配置 MCP server: {server}")
+        if tool in {"execute_code", "execute_vs_code"}:
+            raise PermissionError("AgentLoop 只允许 typed execute_plan，拒绝自由脚本执行")
+        if tool == "execute_plan":
+            plan = args.get("plan")
+            if not isinstance(plan, dict):
+                raise ValueError("typed execute_plan 必须提供 plan 对象")
+            output_path = args.get("output_path")
+            if not output_path:
+                raise ValueError("typed execute_plan 必须提供 output_path")
+            approved = bool(args.get("approved", False))
+            idempotency_key = str(plan.get("idempotency_key", ""))
+            canonical_sha256 = str(plan.get("canonical_sha256", ""))
+            if not idempotency_key or not canonical_sha256:
+                raise ValueError("typed execute_plan 必须携带 canonical_sha256 和 idempotency_key")
+            cache_key = (server, idempotency_key, canonical_sha256)
+            cached = self._mcp_result_cache.get(cache_key)
+            if cached is not None:
+                return _tool_result("ok", "复用同一 typed plan 的既有 receipt(未重复宿主副作用)。", cached)
+            result = _run_async(
+                client.execute_plan(plan, output_path=output_path, approved=approved)
+            )
+            public = _safe_public_result(result)
+            self._mcp_result_cache[cache_key] = public
+            return _tool_result("ok", _compact_result(public), public)
+        if tool not in {"ping", "describe_capabilities"}:
+            raise PermissionError(f"MCP 工具 {server}.{tool} 不在 AgentLoop 治理白名单")
+        method = getattr(client, "health_check" if tool == "ping" else "describe_capabilities", None)
+        if method is None:
+            raise RuntimeError(f"MCP client 不支持 {tool}")
+        result = _run_async(method())
+        return _tool_result("ok", _compact_result(result), _safe_public_result(result))
 
     def _tool_vision_check(self, args: dict[str, Any]) -> dict[str, Any]:
-        """TODO(M0 阶段2+):接 vision 双环(SCAD 快检 / Blender 精检),评分事件落 customType=score。"""
-        raise NotImplementedError("TODO(M0 阶段2+): vision_check 接入视觉双环")
+        """调用只读视觉 critic；评分事件由 checker 写入 session，禁止返回几何修改能力。"""
+        if self.vision_checker is None:
+            raise RuntimeError("未配置 vision_checker")
+        image_path = self._resolve(args["image_path"])
+        if not image_path.is_file():
+            raise FileNotFoundError(f"截图不存在: {image_path}")
+        phase = str(args["phase"])
+        if phase not in {"scad", "blender"}:
+            raise ValueError(f"vision phase 非法: {phase}")
+        result = self.vision_checker({
+            "image_path": str(image_path),
+            "phase": phase,
+            "camera_view": str(args.get("camera_view") or "viewport"),
+            "session": self.session,
+        })
+        if not isinstance(result, dict):
+            raise TypeError("vision_checker 必须返回 dict")
+        if result.get("geometry_patch") or result.get("execute_code"):
+            raise PermissionError("critic 只判不改，视觉结果不得携带几何修改或执行代码")
+        return _tool_result(
+            str(result.get("status", "ok")),
+            str(result.get("llm_view", _compact_result(result))),
+            _safe_public_result(result),
+        )
 
     def _tool_subagent(self, args: dict[str, Any]) -> dict[str, Any]:
         """派发或管理受控 child Session；模型不能指定 model/tools/permissions。"""
@@ -623,6 +697,31 @@ class AgentLoop:
                 "reason": reason,
             },
         )
+
+
+def _run_async(awaitable: Any) -> Any:
+    """在同步 AgentLoop 中运行 async MCP/vision handler；已有事件循环时拒绝嵌套。"""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(awaitable)
+    raise RuntimeError("AgentLoop 同步工具执行不能嵌套运行中的 asyncio event loop")
+
+
+def _safe_public_result(value: Any) -> dict[str, Any]:
+    """结果 UI 视图只保留可序列化公开字段，不落原始调用参数。"""
+    if hasattr(value, "model_dump"):
+        value = value.model_dump(mode="json")
+    if isinstance(value, dict):
+        return {str(k): v for k, v in value.items() if k not in {"code", "arguments", "token", "secret"}}
+    return {"value": str(value)}
+
+
+def _compact_result(value: Any) -> str:
+    """供模型回灌的紧凑结果视图；避免把长响应原样塞回上下文。"""
+    public = _safe_public_result(value)
+    text = json.dumps(public, ensure_ascii=False, default=str, separators=(",", ":"))
+    return text[:MAX_BASH_OUTPUT_CHARS] + ("...[截断]" if len(text) > MAX_BASH_OUTPUT_CHARS else "")
 
 
 def _tool_result(status: str, llm_view: str, ui_view: dict[str, Any]) -> dict[str, Any]:

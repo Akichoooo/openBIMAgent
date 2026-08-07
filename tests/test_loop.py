@@ -9,7 +9,7 @@ from openbimagent.core.loop import AgentLoop
 from openbimagent.core.permissions import Permission
 from openbimagent.orchestrator.contracts import SubagentStatus
 from openbimagent.orchestrator.runtime import ChildRunOutput, LocalSubagentRuntime
-from openbimagent.session.schema import EventType
+from openbimagent.session.schema import CustomType, EventType
 from openbimagent.session.store import SessionStore
 
 
@@ -173,7 +173,102 @@ def test_loop_unimplemented_tool_returns_error_result(session, workdir) -> None:
     final = loop.run("看看场景")
     assert final == "MCP 还没接,先到这里。"
     result = session.load()[3].payload
-    assert result.status == "error" and "TODO(M0 阶段2+)" in result.result_llm_view
+    assert result.status == "error" and "未配置 MCP server" in result.result_llm_view
+
+
+def test_loop_mcp_typed_plan_uses_client_and_never_raw_args(session, workdir) -> None:
+    class FakeClient:
+        def __init__(self):
+            self.calls = []
+        async def execute_plan(self, plan, *, output_path, approved=False):
+            self.calls.append((plan, output_path, approved))
+            return {"status": "completed", "output_path": output_path, "plan_id": plan["plan_id"]}
+
+    client = FakeClient()
+    secret_code = "bpy.ops.mesh.primitive_cube_add()"
+    plan = {
+        "plan_id": "p1", "code": secret_code,
+        "canonical_sha256": "a" * 64, "idempotency_key": "blender-plan:" + "a" * 64,
+    }
+    loop = AgentLoop(
+        ["mcp_call"], session, chat_fn=FakeProvider([]), workdir=workdir,
+        mcp_clients={"blender": client}, permission_rules={"mcp_call:blender.execute_plan": Permission.ALLOW},
+        approval_callback=lambda *_: True,
+    )
+    result = loop._execute_tool({"id": "mcp_1", "name": "mcp_call", "arguments": {
+        "server": "blender", "tool": "execute_plan", "plan": plan,
+        "output_path": str(workdir / "scene.blend"), "approved": True,
+    }})
+    assert result["status"] == "ok"
+    assert client.calls[0][0]["plan_id"] == "p1"
+    assert secret_code not in session.path.read_text(encoding="utf-8")
+    assert session.load()[-1].payload.status == "ok"
+
+    replay = loop._tool_mcp_call({"server": "blender", "tool": "execute_plan", "plan": plan,
+                                   "output_path": str(workdir / "scene.blend"), "approved": True})
+    assert replay["status"] == "ok"
+    assert len(client.calls) == 1  # 同一 loop 复用 receipt，不重复宿主副作用
+
+
+def test_loop_mcp_rejects_free_script_and_approval_denial_never_reaches_client(session, workdir) -> None:
+    class FakeClient:
+        def __init__(self):
+            self.calls = 0
+
+        async def execute_plan(self, *args, **kwargs):
+            self.calls += 1
+            return {"status": "completed"}
+    client = FakeClient()
+    loop = AgentLoop(
+        ["mcp_call"], session, chat_fn=FakeProvider([]), workdir=workdir,
+        mcp_clients={"blender": client}, permission_rules={"mcp_call:blender.execute_plan": Permission.ASK},
+        approval_callback=lambda *_: False,
+    )
+    denied = loop._execute_tool({"id": "mcp_2", "name": "mcp_call", "arguments": {
+        "server": "blender", "tool": "execute_plan", "plan": {
+            "plan_id": "p2", "canonical_sha256": "b" * 64, "idempotency_key": "blender-plan:" + "b" * 64,
+        },
+        "output_path": str(workdir / "scene.blend"),
+    }})
+    assert denied["status"] == "rejected" and client.calls == 0
+    with pytest.raises(PermissionError, match="自由脚本"):
+        loop._tool_mcp_call({"server": "blender", "tool": "execute_code", "arguments": {"code": "secret"}})
+
+
+def test_loop_vision_checker_is_read_only_and_traceable(session, workdir) -> None:
+    image = workdir / "shot.png"
+    image.write_bytes(b"not-black")
+    calls = []
+    def checker(payload):
+        calls.append(payload)
+        assert payload["camera_view"] == "front"
+        payload["session"].append_new(EventType.CUSTOM, {
+            "customType": CustomType.SCREENSHOT, "camera_view": payload["camera_view"],
+            "image_path": payload["image_path"], "phase": payload["phase"],
+        })
+        payload["session"].append_new(EventType.CUSTOM, {
+            "customType": CustomType.SCORE, "rubric_scores": {"geometry": 9.0},
+            "reasoning": "只读观察", "anchor_ref": str(image), "actionable_feedback": "保持当前几何，无需返工", "critic_model": "test",
+        })
+        return {"status": "ok", "llm_view": "overall=9", "image_path": payload["image_path"]}
+    loop = AgentLoop(["vision_check"], session, chat_fn=FakeProvider([]), workdir=workdir, vision_checker=checker)
+    out = loop._tool_vision_check({"image_path": "shot.png", "phase": "blender", "camera_view": "front"})
+    assert out["status"] == "ok" and calls[0]["image_path"].endswith("shot.png")
+    events = session.load()
+    assert any(e.type is EventType.CUSTOM and e.payload.customType is CustomType.SCORE for e in events)
+    score = next(e for e in events if e.type is EventType.CUSTOM and e.payload.customType is CustomType.SCORE)
+    export = workdir / "bimbench.json"
+    session.export_bimbench(export)
+    exported = json.loads(export.read_text(encoding="utf-8"))
+    assert exported["critic_scores"]["rubric_scores"] == {"geometry": 9.0}
+    assert exported["final_artefacts"]["screenshots"] == [{
+        "camera_view": "front", "image_path": str(image), "phase": "blender",
+    }]
+    assert score.payload.anchor_ref.endswith("shot.png")
+    with pytest.raises(PermissionError, match="只判不改"):
+        AgentLoop(["vision_check"], session, chat_fn=FakeProvider([]), workdir=workdir,
+                  vision_checker=lambda _: {"geometry_patch": {"x": 1}})._tool_vision_check(
+                      {"image_path": "shot.png", "phase": "blender"})
 
 
 def test_loop_subagent_tool_uses_runtime_v1(session, workdir, tmp_path) -> None:
