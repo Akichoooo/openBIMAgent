@@ -22,8 +22,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, BinaryIO, Iterator
 
+from openbimagent.schema_gate.gate import gate_or_fix
 from openbimagent.session.schema import (
     CustomPayload,
+    CustomType,
     EventType,
     MessagePayload,
     SessionEvent,
@@ -359,11 +361,114 @@ class SessionStore:
         out.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
 
     def export_bimbench(self, out_path: Path) -> None:
-        """离线导出 BIMBench 评测格式(草案见 07 报告 §4)。
+        """将当前会话 head 主干投影为 BIMBench 评测记录。
 
-        TODO(M3): trajectory / final_artefacts / critic_scores 提炼。
+        导出是只读、确定性且安全的视图:
+        - 只沿当前 head 的 parentId 链取主干,不混入兄弟分支;
+        - trajectory 仅保留角色/工具名/事件类型,不带工具参数、结果正文或控制秘密;
+        - final_artefacts 取主干最后一次 artifact_committed,截图取全部主干截图;
+        - critic_scores 与模型身份均取主干最后一条事实;
+        - trace_sha256 用原始 JSONL 字节计算,便于复核导出来源。
         """
-        raise NotImplementedError("TODO(M3): export_bimbench")
+        with self._lock:
+            events = self.get_event_chain()
+            trace_bytes = self.path.read_bytes()
+        payloads = [event.payload.model_dump(mode="json") for event in events]
+        score_indices = [
+            index
+            for index, (event, payload) in enumerate(zip(events, payloads, strict=True))
+            if event.type is EventType.CUSTOM and payload.get("customType") == CustomType.SCORE.value
+        ]
+        latest_score_index = score_indices[-1] if score_indices else None
+        previous_score_index = score_indices[-2] if len(score_indices) > 1 else -1
+        artifact_indices = [
+            index
+            for index, (event, payload) in enumerate(zip(events, payloads, strict=True))
+            if event.type is EventType.CUSTOM
+            and payload.get("customType") == CustomType.ARTIFACT_COMMITTED.value
+        ]
+        latest_artifact_index = artifact_indices[-1] if artifact_indices else None
+        round_start = max(previous_score_index, latest_artifact_index if artifact_indices else -1)
+        screenshot_indices = {
+            index
+            for index, (event, payload) in enumerate(zip(events, payloads, strict=True))
+            if event.type is EventType.CUSTOM
+            and payload.get("customType") == CustomType.SCREENSHOT.value
+            and index > round_start
+            and (latest_score_index is None or index <= latest_score_index)
+        }
+
+        trajectory: list[dict[str, Any]] = []
+        latest_artifact: dict[str, Any] | None = None
+        screenshots: list[dict[str, Any]] = []
+        latest_score: dict[str, Any] | None = None
+        model_name: str | None = None
+
+        for index, (event, payload) in enumerate(zip(events, payloads, strict=True)):
+            if event.type is EventType.MESSAGE:
+                trajectory.append({"role": payload.get("role"), "content": payload.get("content", "")})
+                candidate = payload.get("gen_ai.request.model")
+                if isinstance(candidate, str) and candidate:
+                    model_name = candidate
+                continue
+            if event.type is EventType.TOOL_CALL:
+                trajectory.append({"role": "tool_call", "tool_name": payload.get("toolName")})
+                continue
+            if event.type is not EventType.CUSTOM:
+                continue
+
+            custom_type = payload.get("customType")
+            if index in screenshot_indices:
+                trajectory.append({"role": "custom", "custom_type": CustomType.SCREENSHOT.value})
+                screenshots.append(
+                    {
+                        "camera_view": payload.get("camera_view"),
+                        "image_path": payload.get("image_path"),
+                        "phase": payload.get("phase"),
+                    }
+                )
+            elif index == latest_score_index:
+                trajectory.append({"role": "custom", "custom_type": CustomType.SCORE.value})
+                latest_score = {
+                    "rubric_scores": payload.get("rubric_scores", {}),
+                    "critic_model": payload.get("critic_model"),
+                    "anchor_ref": payload.get("anchor_ref"),
+                    "actionable_feedback": payload.get("actionable_feedback"),
+                }
+            elif index == latest_artifact_index and custom_type == CustomType.ARTIFACT_COMMITTED.value:
+                trajectory.append({"role": "custom", "custom_type": CustomType.ARTIFACT_COMMITTED.value})
+                artifact = payload.get("artifact")
+                if isinstance(artifact, dict):
+                    # 绝不导出绝对 path,仅保留可复核的不可变工件元数据。
+                    latest_artifact = {
+                        key: artifact[key]
+                        for key in (
+                            "artifact_id",
+                            "kind",
+                            "relative_path",
+                            "media_type",
+                            "sha256",
+                            "size_bytes",
+                            "immutable",
+                            "status",
+                        )
+                        if key in artifact
+                    }
+
+        trace_sha256 = hashlib.sha256(trace_bytes).hexdigest()
+        record = {
+            "schema_version": "1.0",
+            "instance_id": self._playbook,
+            "model_name_or_path": model_name,
+            "trajectory": trajectory,
+            "final_artefacts": {"artifact": latest_artifact, "screenshots": screenshots},
+            "critic_scores": latest_score,
+            "trace_sha256": trace_sha256,
+        }
+        gate_or_fix("bimbench_export", record)
+        out = Path(out_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     @classmethod
     def create(

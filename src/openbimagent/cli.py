@@ -121,9 +121,10 @@ def _build_parser() -> argparse.ArgumentParser:
     tree_p.add_argument("--sessions-dir", default=DEFAULT_SESSIONS_DIR, type=Path)
     tree_p.add_argument("--title", default=None, help="新会话标题")
 
-    exp_p = sub.add_parser("export", help="导出会话 JSONL(/export 的 CLI 形态)")
+    exp_p = sub.add_parser("export", help="导出会话 JSONL 或 BIMBench 评测 JSON")
     exp_p.add_argument("session_id", help="会话 id")
-    exp_p.add_argument("out_path", nargs="?", default=None, type=Path, help="导出路径(默认 <id>.jsonl)")
+    exp_p.add_argument("out_path", nargs="?", default=None, type=Path, help="导出路径(默认按格式推导)")
+    exp_p.add_argument("--format", choices=["jsonl", "bimbench"], default="jsonl", help="导出格式(默认 jsonl)")
     exp_p.add_argument("--sessions-dir", default=DEFAULT_SESSIONS_DIR, type=Path)
 
     control_p = sub.add_parser("control", help="只读查询 Subagent Runtime 控制面")
@@ -481,9 +482,18 @@ def _cmd_export(args: argparse.Namespace) -> int:
     store = _open_session(args.sessions_dir, args.session_id)
     if store is None:
         return 1
-    out_path = args.out_path or (Path(".") / f"{args.session_id}.jsonl")
-    store.export_jsonl(out_path)
-    print(f"导出: {out_path}")
+    if args.out_path is not None:
+        out_path = args.out_path
+    elif args.format == "bimbench":
+        out_path = Path(".") / f"{args.session_id}.bimbench.json"
+    else:
+        out_path = Path(".") / f"{args.session_id}.jsonl"
+    if args.format == "bimbench":
+        store.export_bimbench(out_path)
+        print(f"BIMBench 导出: {out_path}")
+    else:
+        store.export_jsonl(out_path)
+        print(f"导出: {out_path}")
     return 0
 
 

@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/bimbench_export.schema.json",
+  "title": "BIMBenchExport",
+  "description": "安全的离线 BIMBench 会话投影；不包含工具原始参数、结果正文或审批秘密。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "instance_id", "model_name_or_path", "trajectory", "final_artefacts", "critic_scores", "trace_sha256"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "instance_id": { "type": ["string", "null"] },
+    "model_name_or_path": { "type": ["string", "null"] },
+    "trajectory": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "unevaluatedProperties": false,
+        "properties": {
+          "role": { "enum": ["user", "assistant", "tool_call", "custom"] },
+          "content": { "type": "string" },
+          "tool_name": { "type": "string", "minLength": 1 },
+          "custom_type": { "enum": ["artifact_committed", "screenshot", "score"] }
+        },
+        "oneOf": [
+          {
+            "required": ["role", "content"],
+            "properties": {
+              "role": { "enum": ["user", "assistant"] },
+              "content": { "type": "string" }
+            }
+          },
+          {
+            "required": ["role", "tool_name"],
+            "properties": {
+              "role": { "const": "tool_call" },
+              "tool_name": { "type": "string", "minLength": 1 }
+            }
+          },
+          {
+            "required": ["role", "custom_type"],
+            "properties": {
+              "role": { "const": "custom" },
+              "custom_type": { "enum": ["artifact_committed", "screenshot", "score"] }
+            }
+          }
+        ]
+      }
+    },
+    "final_artefacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact", "screenshots"],
+      "properties": {
+        "artifact": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["artifact_id", "kind", "relative_path", "media_type", "sha256", "size_bytes", "immutable", "status"],
+          "properties": {
+            "artifact_id": { "type": "string", "minLength": 1 },
+            "kind": { "type": "string", "minLength": 1 },
+            "relative_path": { "type": "string", "minLength": 1 },
+            "media_type": { "type": "string", "minLength": 1 },
+            "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "size_bytes": { "type": "integer", "minimum": 0 },
+            "immutable": { "const": true },
+            "status": { "type": "string", "minLength": 1 }
+          }
+        },
+        "screenshots": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["camera_view", "image_path", "phase"],
+            "properties": {
+              "camera_view": { "type": "string", "minLength": 1 },
+              "image_path": { "type": "string", "minLength": 1 },
+              "phase": { "enum": ["scad", "blender"] }
+            }
+          }
+        }
+      }
+    },
+    "critic_scores": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["rubric_scores", "critic_model", "anchor_ref", "actionable_feedback"],
+      "properties": {
+        "rubric_scores": { "type": "object", "minProperties": 1, "additionalProperties": { "type": "number" } },
+        "critic_model": { "type": "string", "minLength": 1 },
+        "anchor_ref": { "type": "string", "minLength": 1 },
+        "actionable_feedback": { "type": "string", "minLength": 1 }
+      }
+    },
+    "trace_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

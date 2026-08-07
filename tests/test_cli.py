@@ -131,6 +131,30 @@ def test_export_subcommand_default_path(tmp_path, capsys, monkeypatch) -> None:
     assert (tmp_path / f"{store.session_id}.jsonl").is_file()
 
 
+def test_export_subcommand_bimbench_format(tmp_path, capsys, monkeypatch) -> None:
+    """export --format bimbench 生成确定性评测 JSON,默认扩展名为 .bimbench.json。"""
+    sessions_dir = tmp_path / "sessions"
+    store = SessionStore.create(sessions_dir, title="bimbench-export", playbook="municipal-01")
+    store.append_new(
+        EventType.MESSAGE,
+        {"role": "assistant", "content": "done", "gen_ai.request.model": "model-v1"},
+    )
+    monkeypatch.chdir(tmp_path)
+    code = main([
+        "export",
+        store.session_id,
+        "--format",
+        "bimbench",
+        "--sessions-dir",
+        str(sessions_dir),
+    ])
+    assert code == 0
+    out = tmp_path / f"{store.session_id}.bimbench.json"
+    assert out.is_file()
+    assert json.loads(out.read_text(encoding="utf-8"))["model_name_or_path"] == "model-v1"
+    assert "BIMBench" in capsys.readouterr().out
+
+
 def _write_control_attempt(sessions_dir: Path):
     from openbimagent.orchestrator.contracts import ExecutionMode, SubagentHandle, SubagentRequest, SubagentStatus
     from openbimagent.orchestrator.state import RuntimeStateStore
