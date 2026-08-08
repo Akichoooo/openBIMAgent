@@ -54,6 +54,12 @@
 | [11_kimi_intake.md](research/11_kimi_intake.md) | 早期 Kimi/K3 主架构师评审：质量门、假设验证、Domain Pack 断层和选型建议 | 历史评审 2026-07-21 |
 | [12_glm_constraints_verify.md](research/12_glm_constraints_verify.md) | 市政 `constraints.yaml` 规范二轮核实与扩充依据 | GLM Relay 008，REFERENCE |
 
+## 审计
+
+| 文档 | 内容 |
+|---|---|
+| [AUDIT_PROMPT.md](AUDIT_PROMPT.md) | 交给 GPT/Claude 独立审计的提示词与检查清单 |
+
 ## 正式报告（outputs/）
 
 | 文档 | 内容 | 状态 |
