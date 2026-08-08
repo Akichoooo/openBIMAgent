@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import FastAPI, Request, Response
 
 from openbimagent.server.readonly_http import (
@@ -19,6 +21,7 @@ from openbimagent.server.readonly_http import (
     M2ReadonlyHttpRequest,
     M2ReadonlyHttpResponse,
 )
+from openbimagent.server.sse_endpoint import M2SseStreamBudget, add_sse_endpoint
 
 M2_FASTAPI_APP_TITLE = "openBIMAgent M2 Read-Only API"
 M2_FASTAPI_APP_VERSION = "0.1"
@@ -41,14 +44,24 @@ def _body_size(request: Request) -> int:
         return 0
 
 
-def build_m2_readonly_app(adapter: M2ReadonlyHttpAdapter) -> FastAPI:
-    """构建只读 FastAPI 应用；adapter 由调用方注入（持有注入的 service）。"""
+def build_m2_readonly_app(
+    adapter: M2ReadonlyHttpAdapter,
+    *,
+    sessions_dir: Path | None = None,
+    sse_budget: M2SseStreamBudget | None = None,
+) -> FastAPI:
+    """构建只读 FastAPI 应用；adapter 由调用方注入（持有注入的 service）。
+
+    ``sessions_dir`` 是可选的 SSE 端点目录；未提供时跳过 SSE 端点注册。
+    """
     app = FastAPI(
         title=M2_FASTAPI_APP_TITLE,
         version=M2_FASTAPI_APP_VERSION,
         docs_url="/api/v1/docs",
         openapi_url="/api/v1/openapi.json",
     )
+    if sessions_dir is not None:
+        add_sse_endpoint(app, sessions_dir=sessions_dir, budget=sse_budget)
 
     @app.api_route("/api/v1/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
     async def _readonly_gateway(request: Request) -> Response:
