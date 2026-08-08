@@ -7,14 +7,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 
-from openbimagent.server.readonly_http import M2ReadonlyHttpAdapter
-from openbimagent.server.sse_endpoint import M2SseStreamBudget, add_sse_endpoint
-from openbimagent.server.service import M2ReadOnlyService
 
 PAGE = r"""<!DOCTYPE html>
 <html lang="zh-CN">
