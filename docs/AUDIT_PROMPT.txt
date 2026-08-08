@@ -1,0 +1,139 @@
+openBIMAgent 审计提示词
+============================
+
+将本提示词与仓库代码一起交给 GPT/Claude 进行独立审计。
+
+仓库地址：https://github.com/Akichoooo/openBIMAgent.git
+
+审计范围
+-------
+
+全仓审计：src/、tests/、mcp_servers/、agents/、domain_packs/、docs/architecture/、schemas/
+
+
+1. 架构审计
+-----------
+
+1.1 设计原则合规
+- [ ] 原则 2（Agent + 两个 MCP）：是否有第三种集成方式混入？
+- [ ] 原则 4（极简内核）：循环 + ≤8 工具，是否遵守？
+- [ ] 原则 5（工具结果双视图）：LLM 视图与 UI 视图是否分离？
+- [ ] 原则 8（工件即协议）：模型间是否只经工件文件交接？
+- [ ] 原则 11（领域执行显式输入）：Solver 输入是否必须来自版本化工件/CLI 参数？
+
+1.2 关键不变量
+- [ ] CompiledUtilityIR v1 是否保持冻结、禁止额外字段？
+- [ ] typed 宿主主链是否回退 execute_code/execute_vs_code？
+- [ ] UNKNOWN 是否包装为 PASS？
+- [ ] 简并向量（1e+97）是否在语义投影中被正确处理？
+- [ ] 双宿主语义比较是否只允许 host_handle、presentation_material 差异？
+
+
+2. 安全审计
+-----------
+
+2.1 矢量工作 MCP 运行器
+- [ ] ForEachObject 是否使用精确白名单条件查询？
+- [ ] 图层归属验证是否避免了 GetParent/GetLName/FLayer/NextLayer/FInLayer/NextObj？
+- [ ] 句柄验证是否使用 GetObjectUuid 或句柄相等？
+- [ ] GetTypeN 是否用于验证新建或 GetObject 返回的句柄？
+- [ ] 未命中、API 缺失、对象未命名时是否失败关闭？
+
+2.2 M2 API 安全
+- [ ] 只读服务是否不获取 Runtime lease？
+- [ ] 写控制是否只通过 Runtime IPC 代理？
+- [ ] 认证主体是否映射为稳定 ActorRef？
+- [ ] 幂等键同键同义是否复用，同键异义是否 409？
+- [ ] SSE 响应是否不泄露 token、内部路径或敏感参数？
+- [ ] 远程 Playbook 是否 HTTPS 强制、SHA-256 锁定、域名白名单？
+
+2.3 通用安全
+- [ ] .env 是否在 .gitignore 中？
+- [ ] 任何 API 密钥、令牌、凭据是否在代码之外？
+- [ ] 错误响应是否包含敏感信息？
+
+
+3. 测试审计
+-----------
+
+3.1 覆盖率
+- [ ] 每个模块是否有负向测试（失败关闭、无效输入、权限拒绝）？
+- [ ] 每个协议 Schema 是否有 extra="forbid" 验证？
+- [ ] 每个 if 失败分支是否有对应测试？
+
+3.2 关键测试
+- [ ] test_vw_runner.py — 24 个测试，覆盖 ForEachObject 查询、NIL 句柄拒绝、空名称拒绝、幂等、恢复、文档检查
+- [ ] test_m2_*.py — 283 个测试，覆盖认证、预检、幂等、SSE 投影、HTTP 适配、FastAPI 网关
+- [ ] test_m1_5_t7_benchmark.py — B1-B10 场景，确定性 canonical hash、幂等、恢复
+
+3.3 模拟与真实
+- [ ] fake host 是否匹配真实 Vectorworks PROCEDURE 返回值（Locus3D/EndPoly3D 返回 None）？
+- [ ] 测试是否区分离线模拟证据与真实宿主证据？
+
+
+4. 协议审计
+-----------
+
+4.1 Schema 版本
+- [ ] schemas/ 下每个 JSON Schema 是否有 version 字段？
+- [ ] Pydantic 模型是否默认 extra="forbid"？
+- [ ] canonical JSON 是否按稳定 ID 排序？
+
+4.2 幂等
+- [ ] 幂等键是否包含 actor_id + operation + idempotency_key？
+- [ ] ACQUIRED/IN_PROGRESS/COMMITTED/REPLAY 状态机是否正确？
+- [ ] CAS 操作是否并发安全？
+
+4.3 接口
+- [ ] REST 基础路径是否为 /api/v1/？
+- [ ] SSE 协议版本是否为 1.0？
+- [ ] 未知 API major、事件类型、操作类型是否失败关闭？
+
+
+5. 提交审计
+-----------
+
+5.1 提交历史
+- 25586b1 — M1 G6/G7 边界提交
+- 171801c — M2 P2 FastAPI + P0 契约
+- 16d1658 — M2 P4 SSE 端点
+- 4967b43 — M2 P3 受控写控制
+- cb12339 — M2 P5 CLI 服务
+- a0d64a4 — M2 P6 Web UI + M3 报告
+- 4fa6eb1 — M2 P7 远程 Playbook
+- 444393d — 文档更新
+
+5.2 所有提交均已推送至 origin/main
+
+
+6. 已知限制
+-----------
+
+- GetPolyPt3D 在 Vectorworks 2024 中返回 1e+97 垃圾值（语义投影中第二个顶点坐标）
+- M2 P6/P7（Web/远程 Playbook）为基础实现，非完整产品
+- 测试中的 SyntaxWarning: invalid escape sequence '\ ' 为 VS Index 测试既有问题
+- SAFE_DELETE_FAIL_CLOSED 为 Windows 回收站不可用时保护提示，非测试失败
+
+
+审计输出格式
+-----------
+
+请按以下格式输出审计结果：
+
+## 审计结果
+
+### 通过
+- [项1] — 说明
+- [项2] — 说明
+
+### 警告
+- ⚠️ [项1] — 严重程度:低/中/高 | 说明
+
+### 失败
+- ❌ [项1] — 严重程度:低/中/高 | 修复建议
+
+### 建议
+- [项1] — 说明
+
+### 未覆盖
+- [项1] — 审计范围未覆盖的方面
