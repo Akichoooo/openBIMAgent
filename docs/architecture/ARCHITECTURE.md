@@ -1,8 +1,10 @@
 # openBIMAgent 总体架构
 
-版本:v0.8.4(municipal verified rule promotion v1)· 2026-08-01
-依据:`docs/research/01-11` 全部调研与评审 · 决议:`docs/architecture/DECISIONS_DRAFT.md`
-姊妹篇:[COMPONENTS.md](COMPONENTS.md)(组件/agent/模型配置/上下文管理详设)
+版本：v0.9（M1 typed dual-host delivery）· 2026-08-03
+依据：`docs/research/01-12` 调研与评审 · 决议：`DECISIONS_DRAFT.md`
+姊妹篇：[COMPONENTS.md](COMPONENTS.md) · 实时进度：[PROJECT_HANDOFF_STATUS.md](PROJECT_HANDOFF_STATUS.md) · 全路线：[PROJECT_MASTER_WORKFLOW.md](PROJECT_MASTER_WORKFLOW.md)
+
+> 当前实现状态：M1 G1–G5 已通过；Blender 真实 G6 已通过；Vectorworks 2024 typed adapter 已离线闭合，GUI approved job 与真实双宿主比较待完成。实时测试数字、提交和工件身份不在本文重复维护。
 
 ## 0. 设计原则
 
@@ -48,7 +50,7 @@ flowchart TB
   VWM -->|文件 IPC| VWH[Vectorworks 宿主 runner + vs.*]
   BLM -.-> CACHE[(asset_cache)]
 
-  DLV --> OUT[交付: .blend · 英雄镜头 · 漫游视频 · BIM构件/IFC]
+  DLV --> OUT[交付: .blend · .vwx · Semantic Snapshot<br/>IFC/IDS · RuleEvidence · Artifact Manifest]
   PACKS[domain_packs/<br/>_base · 市政管网 · 江户街区 · …] -.注入.-> CLA
 ```
 
@@ -149,6 +151,8 @@ Domain Pack 不是提示词包。提示词和 Playbook 负责语义澄清、角�
 
 **M1 G5 恢复与副作用安全**：宿主写入前的 rejected/timed_out 审批均失败关闭且不得调用 typed executor。运行中 attempt 可通过 `checkpoint_artifact()` 将宿主 receipt/state 以 `partial` 不可变工件绑定到当前 request；checkpoint 文件名只由幂等键派生，同键同内容复用、异义冲突，引用随 RuntimeState 原子落盘。Runtime 重启仍不自动重跑旧 attempt，而是签发 `RuntimeRestarted` 终态，并把 checkpoint 与恢复错误共同写入 failed recovery Manifest；显式 `resume` 创建同 lineage 的新 request/agent/child 和递增 attempt，在任务上下文中只引用旧终态及工件 path/SHA-256。离线 Vectorworks fake host 可选用原子状态快照，重建 executor 后按 plan idempotency key、canonical hash 和 applied operation IDs 对账，只执行未确认操作；完成 receipt 再携带 lineage/attempt/resume/source attempt 进入统一 deliver。交付崩溃窗口按既有不可变副本恢复，同键同语义复用、同键异义冲突，不同键保留历史。
 
+**M1 G6 typed 真实宿主边界**：Blender 与 Vectorworks 的正式市政链均直接消费版本化 typed plan，不允许回退 `execute_code` / `execute_vs_code`。Blender 侧限定 primitive allowlist、固定 collection、授权根目录、受控保存、逐操作 receipt、原子 sidecar 和实际场景反投影；completed receipt 返回前必须确认 `.blend` 存在并绑定 plan/output/state identity。Vectorworks 侧通过 approved job + 文件 IPC 在宿主 runner 中执行 typed operations，首次只允许空白未命名文档，在任何几何副作用前把主单位确定性设置为米并读回确认，使用固定设计图层、增量 record fields、首次 Save As/后续 Save、逐操作 receipt、partial recovery 和真实文档反投影。两侧 `SemanticSnapshot v1` 统一投影到 6 位小数，比较器仍只允许 `host_handle` 与 `presentation_material` 差异。当前 Blender 5.2.0 LTS 真机已通过；Vectorworks 2024 GUI approved job 待人工宿主执行，故 G6 仍为进行中。
+
 ## 6. 子代理、trace 与事件协议
 
 - 子代理 = Markdown + YAML frontmatter;禁嵌套;并发 ≤4;child session;返回 = 摘要 + 工件路径 + <200 字核心提示。
@@ -210,8 +214,10 @@ Domain Pack 不是提示词包。提示词和 Playbook 负责语义澄清、角�
 
 ## 9. 里程碑
 
-- **M0 原型(本次审核)**:core 骨架 + session JSONL + Schema 门禁 + **HITL 基座全项** + blender-mcp fork 八项改造(Blender 5.2 spike 先行)+ SCAD 环 + `_base`/`江户`/`单资产` 包 → 单资产端到端 + 每批 HTML 验收页。
-- **M1**:Blender 精检环全维 + 防放水五件套 + vectorworks-mcp 拆分 + 预置库 + asset_cache + orchestrator 并发。
-- **M1.5(毕设线)**:市政管网包(constraints 二轮核实 + VW 构件 + domain_gate + Blender 剖切漫游)+ 领域评测。
-- **M2**:server/SSE + CLI/TUI(含会话侧边栏);远程 playbook;Web UI 技术验证;Bonsai 路径评估。
-- **M3**:trace 评测导出 + BIMBench 对接(论文按需)。
+- **M0 原型（历史完成）**：core 骨架、Session JSONL、Schema 门禁、HITL 基座、Blender MCP fork、SCAD 环、基础 Domain Pack 与单资产 E2E。
+- **M1 工程化双宿主（G6 进行中）**：版本化市政 IR、typed Blender/Vectorworks 执行、不可变交付、双宿主语义协议、IFC/IDS、RuleEvidence、恢复安全与真实宿主验收。
+- **M1.5 市政领域深化**：多节点拓扑、路线与复杂标高、水力 Solver、规范覆盖扩展、宿主构件表达和领域 benchmark。
+- **M2 产品化服务与客户端**：FastAPI/OpenAPI、SSE、CLI/TUI、远程 playbook、Web UI 技术验证、Bonsai/第三宿主评估。
+- **M3 评测与学术输出**：trace 评测导出、BIMBench、系统/消融实验、论文和答辩材料。
+
+完整工作包、先后依赖和完成定义统一见 [PROJECT_MASTER_WORKFLOW.md](PROJECT_MASTER_WORKFLOW.md)。

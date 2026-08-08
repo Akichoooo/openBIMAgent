@@ -1,6 +1,8 @@
 # openBIMAgent 组件与运行配置详设
 
-版本:v0.8.4(municipal verified rule promotion v1)· 2026-08-01 · 姊妹篇:[ARCHITECTURE.md](ARCHITECTURE.md)
+版本：v0.9（M1 typed dual-host delivery）· 2026-08-03 · 姊妹篇：[ARCHITECTURE.md](ARCHITECTURE.md) · 实时进度：[PROJECT_HANDOFF_STATUS.md](PROJECT_HANDOFF_STATUS.md)
+
+> 本文维护稳定组件事实，不重复维护实时测试数字。当前 G6 状态和真实宿主工件统一见交接状态文档。
 
 本文档回答四个问题:**每个组件干什么、每个 agent 怎么配、多厂家模型怎么统管、上下文怎么扛住。**
 
@@ -95,7 +97,16 @@
 - 完成态 Manifest 只接受 completed 工件。已声明领域门禁时必须为 `PASS`；未声明时只接受并保留 `SKIPPED`。`domain_gate_required` 与状态必须严格匹配，`FAIL/UNKNOWN` 不能交付，调用者也不能用 `SKIPPED` 绕过实际门禁。
 - `deliver.gate` 返回验收通过的解析路径；Pipeline 仅在 C5 accepted 且 plan 成功后提交 Manifest。Core Loop 的 `deliver` 工具使用结构化工件列表、稳定幂等键和显式 `PASS`，不接受自由清单文本。
 
-### 2.9 orchestrator(G5 子代理恢复与副作用安全)
+### 2.9 typed host adapters（G6 真实宿主边界）
+
+- Blender 与 Vectorworks 均使用版本化 typed operation allowlist，正式市政链不得降级到自由 `execute_code` / `execute_vs_code`。
+- Blender adapter 固定 collection `M1-Municipal-Utility`，只允许 `empty/cylinder/uv_sphere/polyline_curve`，在授权根目录内受控保存，并持久化逐操作 receipt、sidecar 和真实场景 `SemanticSnapshot v1`；completed receipt 必须同时验证 `.blend` 存在及 plan/output/state identity。
+- Vectorworks adapter 固定设计图层 `M1-Municipal-Utility`，typed operations 为 `create_object/set_record/connect_topology`；首次执行要求空白未命名文档，在任何对象副作用前将主单位设置为 meters style 9 并读回确认，首次 `SaveActiveDocument`、后续普通 Save，保存后核对活动文档路径和真实 `.vwx`。
+- 两侧均使用 canonical plan SHA-256 和宿主幂等键；sidecar 采用临时文件、`flush/fsync`、`os.replace` 原子写入；partial recovery 仅重放未确认 operation。
+- 宿主快照统一将浮点投影到 6 位小数；跨宿主比较只忽略内部 `host_handle` 和表现层 `presentation_material`。
+- 当前 Blender 5.2.0 LTS 已完成真实 G6；Vectorworks 2024 typed adapter 已通过离线契约和 API arity 审计，但 GUI approved job 仍待执行。
+
+### 2.10 orchestrator（G5 子代理恢复与副作用安全）
 
 - 角色文件 = Markdown + YAML frontmatter。基础字段:`name/model/tools/permissions`;Runtime v1 字段:`context_mode/max_turns/artifact_contract/nesting`;正文为 system prompt。角色文件是受信任的能力上限,调用者不能通过请求提升 model/tools/permissions。
 - 派发:PASS / FIX(带可执行返工指令)/ ESCALATE(升模型或问人);禁嵌套;并发 ≤4。
@@ -112,14 +123,14 @@
 - **P1f Operator Console**：`console.py` 将 `ReadOnlyControlPlane` 和 `RuntimeIpcClient` 组合为独立 loopback HTTP 操作界面。GET snapshot 展示 attempts/approvals/resumes/steers；POST control 代理 Ping、Approve/Reject、Resume、Steer、Cancel。浏览器不读取 IPC discovery/token，ActorRef 在 Console 启动时固定；写请求必须通过 Host、Origin、CSRF、Content-Type、请求大小和契约校验。服务使用标准库与内嵌静态页面，不新增 Web 框架或 Node 构建链，也不获取 Runtime lease。
 - `AgentLoop.subagent` 支持 `dispatch/status/cancel/join/resume/steer`;resume 必须带稳定 `idempotency_key`；dispatch 对模型只暴露 `role/task/context_mode/execution_mode/artifact_contract`,所有 child AgentLoop 都移除 `subagent` 工具以维持禁嵌套。
 
-### 2.6 vision(双环自检 + 评分分层)
+### 2.11 vision（双环自检 + 评分分层）
 
 - 评分分层:确定性维由 Solver/规则执行器针对 compiled utility IR 生成 evidence，再走 domain_gate 四态裁决；软评分维走 VLM 六维。
 - 两环维度裁剪与 rubric 定稿见 ARCH §3;收敛四选一 + best-so-far(ADR-0004)。
 - **critic 强制 CoT**;评分事件落盘 `rubric_scores` + `reasoning` + `anchor_ref` + `actionable_feedback`。
 - 环阈值在 playbook `acceptance`;超限 ESCALATE 不死循环。
 
-### 2.7 session(trace + 多会话,schema 定稿自 07 报告)
+### 2.12 session（trace + 多会话，schema 定稿自 07 报告）
 
 每条记录 `{id, parentId, timestamp, type, payload}`:
 

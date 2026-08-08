@@ -4,7 +4,7 @@
 
 生效日期：2026-08-03
 
-状态：**ACTIVE — T1–T5 OFFLINE PASS / T6 STARTING**
+状态：**ACTIVE — T1–T5 OFFLINE PASS / T6 NEXT**
 
 > 本文件定义 M1.5 的范围、实施顺序、协议边界、验收证据、权限和停止条件。实时 HEAD、测试数字、阻塞和恢复位置仍以 [`PROJECT_HANDOFF_STATUS.md`](PROJECT_HANDOFF_STATUS.md) 为唯一来源；稳定总路线以 [`PROJECT_MASTER_WORKFLOW.md`](PROJECT_MASTER_WORKFLOW.md) 为唯一来源。
 >

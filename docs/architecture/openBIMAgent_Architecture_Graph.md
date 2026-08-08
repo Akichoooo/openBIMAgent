@@ -1,10 +1,14 @@
-# openBIMAgent 全景架构图 (v2.0 - 源码精简透视版)
+# openBIMAgent 全景架构图（v2.1 · 当前状态注记版）
 
-> **注**：本架构图依据 `src/openbimagent/` 源码（`loop.py`, `dispatch.py`, `scad_loop.py`, `rubric.py`, `constraints.yaml`）及权威设计文档全量重构绘制。适用于学术专刊投稿（如《软件学报》2026 专刊“面向智能体信息系统的软件新技术”）。支持 Mermaid 渲染的 Markdown 编辑器可查看。
+> **注**：本图最初用于学术展示，基础结构仍有效，但图中部分文案保留早期“通用 Scene Graph + 双视觉环”视角。2026-08-03 已补充当前 M1 typed 双宿主状态说明；实时架构以 `ARCHITECTURE.md`、组件事实以 `COMPONENTS.md`、当前进度以 `PROJECT_HANDOFF_STATUS.md` 为准。
+>
+> **当前关键增量**：市政主链已形成 `MunicipalRuleSet → Solver → CompiledUtilityIR → Blender/Vectorworks typed plan → SemanticSnapshot → IFC/IDS/RuleEvidence → ArtifactManifest`；Vectorworks 正式链不再以任意 `vs.*` 脚本作为验收证据。Blender 真实 G6 已通过，Vectorworks GUI approved job 待执行。下方 Mermaid 作为 REFERENCE，不应单独用于判断实现状态。
 
-![[openBIMAgent_Architecture_Graph.png]]
-![openBIMAgent 全景架构图](openBIMAgent_Architecture_Graph.png)
-> 📎 **矢量图下载/预览**：[openBIMAgent_Architecture_Graph.svg](openBIMAgent_Architecture_Graph.svg)
+> 下列 PNG/SVG 是 v2.0 历史导出快照，尚未按 2026-08-03 typed 双宿主增量重新渲染；当前可维护源是本页下方 Mermaid。
+>
+> ![openBIMAgent 全景架构图 v2.0 历史快照](openBIMAgent_Architecture_Graph.png)
+>
+> [v2.0 历史 SVG](openBIMAgent_Architecture_Graph.svg)
 
 
 ```mermaid
@@ -75,9 +79,9 @@ flowchart TD
 
     subgraph M4_B ["分支B · vectorworks-mcp 路径 (BIM 构件类)"]
         direction TB
-        VWM["vectorworks-mcp 自研<br/>三层划分: Trigger → Executor → Work<br/>vs_index 双门禁: arity 参数个数校验 + 函数名白名单"]
-        VWH["Vectorworks 宿主<br/>(文件 IPC + vs.* 脚本 runner)"]
-        NO_LOOP["输出精确 BIM 构件/工程图<br/>(结构确定, 不走环2视觉)"]
+        VWM["vectorworks-mcp 自研<br/>typed execute_plan + approved job + 文件 IPC<br/>vs_index 双门禁: arity 校验 + 函数名白名单"]
+        VWH["Vectorworks 2024 宿主 runner<br/>空白未命名文档 + 米制单位 + 受控保存<br/>逐操作 receipt + sidecar + 恢复"]
+        NO_LOOP["输出精确 BIM 构件 + SemanticSnapshot<br/>(typed operation allowlist，不走自由脚本主链)"]
         
         VWM --> VWH
         VWH --> NO_LOOP
@@ -93,14 +97,14 @@ flowchart TD
   VIS2 -->|通过| LIGHT
   NO_LOOP --> LIGHT
   
-  DGATE{"domain_gate 确定性校验<br/>(constraints.yaml 驱动: 25条国标级硬约束<br/>例: MU-DRAIN-001 最小管径300mm / MU-ELEV-001 覆土≥0.7m)<br/>二元 pass/fail (机器直验, 不过 VLM)"}
+  DGATE{"domain_gate 确定性校验<br/>(RuleEvidence 四态: PASS / FAIL / UNKNOWN / SKIPPED<br/>当前表 4.1.9 已晋级 12 条 production 水平净距规则)<br/>FAIL / UNKNOWN 失败关闭，不交给 VLM"}
   LIGHT --> DGATE
   
   DLV{"Deliver 交付门禁<br/>(C5 节点: 人工审签)"}
   DGATE -->|通过| DLV
   
-  OUTA(["产出A: .blend / 英雄镜头照片 / 漫游视频"])
-  OUTB(["产出B: IFC4x3 实体 / 构件 / 2D 工程图纸"])
+  OUTA(["产出A: .blend / Blender SemanticSnapshot / 渲染与漫游"])
+  OUTB(["产出B: .vwx / Vectorworks SemanticSnapshot / IFC4X3 / IDS / RuleEvidence / Manifest"])
   DLV -->|签发| OUTA
   DLV -->|签发| OUTB
 

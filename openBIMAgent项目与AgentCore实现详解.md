@@ -1,7 +1,10 @@
 # openBIMAgent 项目与 Agent Core 实现详解
 
-> 更新日期：2026-08-01
-> 当前判断：**M0 已附条件收官；Subagent Runtime v1 已完成到 P1f，接近本地产品级；MunicipalRuleSet v1.1 与市政 Solver v0.4 已形成可审计工程 Alpha 切片；生产级 VectorworksBuilder、IFC/IDS 和真实双宿主端到端交付仍未完成。整体处于工程 Alpha / 受控内测前期。**
+> 原始整理日期：2026-08-01 · 状态：**REFERENCE / 实现编年说明**
+> 最新状态同步：2026-08-03。本文主体保留 2026-08-01 的模块级实现记录，其中历史测试数字和“待实现”描述不再作为当前事实来源。
+> 当前权威入口：实时进度与接管提示词见 `docs/architecture/PROJECT_HANDOFF_STATUS.md`；M0–M3 总路线见 `docs/architecture/PROJECT_MASTER_WORKFLOW.md`；文档治理与 K3 映射见 `docs/architecture/DOCUMENTATION_GOVERNANCE.md`。
+>
+> **2026-08-03 当前判断**：M1 G1–G5 已通过；生产级 typed `VectorworksBuilder`、Blender/Vectorworks typed host adapter、`SemanticSnapshot v1`、IFC4X3/IDS、RuleEvidence、ArtifactManifest 和恢复安全链均已实现。Blender 5.2.0 LTS 真实 G6 已通过；Vectorworks 2024 adapter 已离线闭合，但 GUI approved job、真实 `.vwx`/sidecar、幂等重放和双宿主真实比较待完成。项目仍是工程 Alpha / 受控 Beta 候选待真机验证。
 
 ## 1. 项目是什么
 
@@ -182,7 +185,7 @@ P0 已新增真实 Subagent Runtime v1：
 - P1e 新增单机 `RuntimeIpcServer/RuntimeIpcClient`：`runtime-serve` 持有唯一 Runtime lease 并绑定 `127.0.0.1`，`control-write` 经 discovery、私有 token、ActorRef 和幂等键提交 Approval/Resume/Steer/Cancel。服务端不接受外部 runtime/legacy actor，不保存 token，不允许客户端自行重建 Runtime；请求采用白名单 payload、大小上限、超时和 message_id 校验。
 - P1f 新增本地 `OperatorConsoleServer/OperatorConsoleService`：`operator-console` 独立展示 attempts、approvals、resumes、steers，并在服务端代理 Ping、Approve/Reject、Resume、Steer、Cancel。它不获取 Runtime lease，浏览器不读取 IPC bearer token，ActorRef 在启动时固定；HTTP 强制 loopback、Host/Origin/CSRF、JSON、64 KiB 上限、16 并发和 CSP 等安全头。
 - 可靠性语义采用失败关闭：不可变 Artifact 通过原子“存在即失败”发布；child 声明的输出文件缺失时不会误报 `completed`，而会生成结构化 `FAILED`、错误工件、manifest 和 delivery receipt。
-- 10 个 K3/Kimi 既有 `agents/*.md` 均纳入 profile 解析回归，保持 Markdown + YAML frontmatter、禁嵌套和 artifact-mediated 协作约束。
+- 10 个早期 K3/Kimi 会话规划形成的 `agents/*.md` 均纳入 profile 解析回归，保持 Markdown + YAML frontmatter、禁嵌套和 artifact-mediated 协作约束。K3/Kimi 是早期架构/接力身份，不是项目里程碑；当前映射见 `DOCUMENTATION_GOVERNANCE.md`。
 
 本轮补齐统一 `judge()`：
 
@@ -308,7 +311,7 @@ Agent Core
 
 - `ping`。
 - `describe_capabilities`。
-- `execute_vs_code(code, approved=False)`。
+- 当前正式市政主链使用 typed `execute_plan` 与 approved job；`execute_vs_code(code, approved=False)` 仅保留为历史兼容/受审批逃生路径，不能作为 G6 验收证据。
 - `vs_index.json` arity 校验，防止参数错误导致宿主崩溃。
 - `full/modeling/minimal` toolset。
 - handoff 摘要、参数 hash、高风险审批。
@@ -353,7 +356,7 @@ Vectorworks 成功结果会写入：
 batches/vectorworks/batch_XX_vectorworks_result.json
 ```
 
-当前接口已打通，但市政领域的生产级 `VectorworksBuilder` 尚未实现；它需要 Solver/compiled utility IR 和 IFC 映射共同驱动。
+2026-08-03 同步：市政 typed `VectorworksBuilder` 和真实宿主 adapter 已实现并通过离线契约，正式链由 `CompiledUtilityIR v1` 生成 `VectorworksExecutionPlan v1`，不再以自由 `vs.*` 脚本作为验收证据；Vectorworks 2024 GUI approved job 仍待执行。
 
 ## 5. 最小可用 domain_gate
 
@@ -403,12 +406,11 @@ evaluate_domain_gate(
 
 仍缺：
 
-- 路线寻优、多井自动布置、复杂标高协调和水力 Solver（两井一直管 Solver v0 已实现）。
+- 多井、多管段、路线寻优、复杂标高协调和水力 Solver（两井一直管 Solver v0 已实现）。
 - 水平/垂直净距全量确定性执行器（当前已核验并生产执行表 4.1.9 中适用当前污水切片的 12 条建筑物/给水/燃气/电力/通信规则）。
 - 规范安全措施减距的独立项目例外、专业审批和审计协议。
-- 生产级 Vectorworks `vs.*`/IFC Builder。
-- IFC/IDS 真实验证。
-- 双宿主端到端冒烟与交付证据。
+- Vectorworks 2024 GUI approved typed job 与真实 `.vwx`/sidecar 验收。
+- 真实双宿主语义比较与 G7 最终交付证据。
 
 ## 7. Deliver Gate
 
@@ -545,29 +547,28 @@ Runtime P0–P1f 的阶段协议、测试演进和最终边界已合并到 `outp
 | domain_gate 裁决 | 最小可用 | 显式 evidence 四态；不是完整规则计算器 |
 | compiled utility IR v1 | 已实现 | 严格契约、Schema Gate、拓扑/坡度数值门禁、canonical hash、evidence 投影 |
 | 市政 Solver | v0.4 最小切片已实现 | 两井一直管 DN300 混凝土污水；MunicipalRuleSet v1.1 从受信任 constraints 编译并以 RuleVerification 晋级；表 4.1.9 的 12 条已核验水平净距规则可 PASS/FAIL；XY 几何防止 Z 高差误放行；调用方禁自填限值，例外减距和水力仍 UNKNOWN |
-| 市政 Vectorworks Builder | 未实现 | 需 compiled IR + IFC 映射 |
+| 市政 Vectorworks Builder | typed plan 与宿主 adapter 已实现 | 离线契约通过；Vectorworks 2024 GUI approved job 待执行 |
 | Deliver Gate | 已实现 | 文件 + 分数 + 审批 |
 | 通用 AgentLoop 内 MCP/vision/deliver tools | 未接通 | pipeline 已有独立生产链；subagent 已接 Runtime v1 |
-| 双宿主真实 E2E | 未完成 | 需要 Gemini、Blender、Vectorworks 环境 |
+| 双宿主真实 E2E | G6 进行中 | Blender 真实执行已通过；Vectorworks GUI 和真实快照比较待完成 |
 
 ## 11. 当前最重要的后续路线
 
-### P0：真实可运行闭环
+### P0：完成当前 M1 G6–G7
 
-1. 给 CLI 增加 Blender/Vectorworks client 创建、`vectorworks_builder` 和 domain evidence 输入。
-2. 用有效 `GEMINI_API_KEY` 验证 official profile 的真实模型名、文本、图像和 tool call。
-3. 在真实 Vectorworks 宿主跑 `ping → describe_capabilities → execute_vs_code`。
-4. 在真实 Blender 宿主跑单资产 Playbook。
-5. 跑双 target Playbook，验证部分失败、审批、重试和结果文件。
+1. 在 Vectorworks 2024 空白未命名文档中运行 approved typed job。
+2. 验证真实 `.vwx`、sidecar、13/13 receipt、6 个稳定对象、米制单位、records、geometry 和 topology。
+3. 幂等重放同一 job，确认没有重复副作用。
+4. 将 Vectorworks 真实 `SemanticSnapshot v1` 与 Blender 真机快照严格比较。
+5. 完成 G7 全量测试、Schema、静态检查、正式 benchmark、交付清单和最终报告。
 
-### P1：市政毕设主线
+### P1：市政毕设深化
 
-1. `compiled_utility_ir.schema.json` 与 Pydantic v1 契约已完成。
-2. 实现路线、标高、坡度、管径、井位和拓扑 Solver，输出合法 compiled utility IR。
-3. 将 `constraints.yaml` 编译为确定性规则执行器，并按对象生成 RuleEvidence。
-4. 用现有 evidence 投影接通 domain_gate 自动裁决，消除外部手工 evidence 注入。
-5. 实现市政 `VectorworksBuilder`，从 compiled IR 生成 `vs.*` 对象并绑定 IFC 语义。
-6. 接 IFC/IDS 校验和纵断面交付。
+1. 扩展多井、多管段、支路与汇流拓扑。
+2. 实现路线候选、平面避障、复杂标高和纵断面协调。
+3. 建立水力 Solver 输入、工况、Evidence 和 UNKNOWN 边界。
+4. 扩充水平/垂直净距及安全措施减距例外审批协议。
+5. 扩展宿主构件、IFC 映射和中大型领域 benchmark。
 
 ### P2：架构统一与效率
 
@@ -580,4 +581,4 @@ Runtime P0–P1f 的阶段协议、测试演进和最终边界已合并到 `outp
 
 ## 12. 一句话结论
 
-这个项目已经不是“只有架构文档的设计稿”，而是具备 Clarify、Planner、Schema、Session、Provider、Orchestrator、视觉双环、两套 MCP 和 Deliver 的可测试 Agent 基座。本轮进一步补齐了 Google official 方言、Vectorworks Agent 客户端、双 target 分发、四态 domain gate 和统一 judge。当前最大的边界不在 Agent 框架，而在**市政 Solver/compiled IR、生产级 Vectorworks BIM Builder、CLI 双端配置和真实双宿主 E2E 验收**。
+这个项目已经不是“只有架构文档的设计稿”，而是具备 Clarify、Planner、Schema、Session、Provider、Orchestrator、视觉双环、Subagent Runtime、两套 typed MCP 主链、RuleEvidence、IFC/IDS、不可变交付和恢复审计的可测试工程 Alpha。当前最近的硬边界是 **Vectorworks 2024 GUI approved job、真实双宿主语义比较和 G7 Beta 候选总验收**；其后才进入多节点市政、水力 Solver、M2 产品化和 M3 评测论文路线。
