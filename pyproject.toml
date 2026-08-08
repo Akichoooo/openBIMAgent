@@ -12,6 +12,8 @@ dependencies = [
     "google-genai",
     "fastmcp",
     "ifcopenshell>=0.8.5",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
 ]
 
 [dependency-groups]

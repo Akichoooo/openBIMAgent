@@ -1,14 +1,16 @@
 # openBIMAgent M2 产品化服务与客户端执行契约
 
-版本：v0.1
+版本：v1.0
 
-日期：2026-08-04
+日期：2026-08-08
 
-状态：**DRAFT — PRE-G7 PREPARATION ONLY**
+状态：**ACTIVE**
 
-前置状态：M1 G6 `DEFERRED / IN PROGRESS`，M1 G7 `FINAL BLOCKED`，M1.5 `OFFLINE PASS`
+前置状态：M1 G6 `PASS`，M1 G7 `PASS`，M1.5 `OFFLINE PASS`
 
-> 本契约冻结产品 M2 的目标、信任边界、协议方向、工作包和验收 Gate。当前只允许做契约、协议、威胁模型和负向测试准备；在 M1 G6/G7 关闭前，不得将 M2 标记为 ACTIVE、PASS 或产品可用，也不得以 M2 工作替代真实 Vectorworks 宿主验收。
+> M1 G6/G7 已关闭。本契约从 DRAFT 升级为 ACTIVE。
+
+边界提交：`25586b1`（feat: complete M1 G6 real Vectorworks acceptance, G7 quality gates）
 
 ## 1. 契约目的
 

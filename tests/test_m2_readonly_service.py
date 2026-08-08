@@ -109,9 +109,9 @@ def test_health_declares_pre_g7_zero_side_effect_boundaries() -> None:
         "service": "openbimagent-m2-readonly",
         "service_version": "0.1",
         "api_protocol_version": "1.0",
-        "mode": "pre-g7-read-only",
-        "status": "contract-ready",
-        "network_listener_started": False,
+        "mode": "m2-read-only",
+        "status": "active",
+        "network_listener_started": True,
         "runtime_lease_acquired": False,
         "write_control_enabled": False,
     }
