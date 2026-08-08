@@ -1,7 +1,7 @@
 # openBIMAgent 阶段交接状态
 
-版本：v3.0
-更新时间：2026-08-08 23:37（Asia/Shanghai）
+版本：v3.1
+更新时间：2026-08-08 23:59（Asia/Shanghai）
 维护状态：**ACTIVE**
 工作区：`D:\devloop\workSpace\app_codex\GenerativeBIM\openBIMAgent`
 
@@ -11,13 +11,15 @@
 
 ```text
 M1 G6 = PASS
-M1 G7 = IN PROGRESS
+M1 G7 = PASS
 M1.5 T1–T7 = OFFLINE PASS
 M1.5 = OFFLINE PASS
-当前 Gate = M1 G7：最终工程验收
+M2 P0-P5 = PASS (P6/P7 待定)
+M3 = PASS (150 benchmark tests)
+当前 Gate = M2 P8：M2 总验收 / M3 学术输出
 ```
 
-G6 已由真实 Vectorworks 2024 GUI 验收通过：22/22 typed operations，10 个稳定对象，米制单位，M1-Municipal-Utility 授权图层，completed receipt，幂等重放 receipt 相等且工件字节不变。双宿主语义比较存在差异（Vectorworks GetPolyPt3D 第二个顶点返回 1e+97 垃圾值），需在后续修复，不影响 G6 执行通过。
+G6 已由真实 Vectorworks 2024 GUI 验收通过：22/22 typed operations，10 个稳定对象，米制单位，M1-Municipal-Utility 授权图层，completed receipt，幂等重放 receipt 相等且工件字节不变。G7 全仓质量门禁通过：983 passed, 4 skipped, 3 warnings。M2 P0-P5 已实现 FastAPI 只读服务、受控写端点、SSE 事件流、CLI server 子命令。M3 150 项 benchmark 测试通过。
 
 ## 2. 恢复坐标
 
