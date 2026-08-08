@@ -22,6 +22,7 @@ from openbimagent.server.readonly_http import (
     M2ReadonlyHttpResponse,
 )
 from openbimagent.server.sse_endpoint import M2SseStreamBudget, add_sse_endpoint
+from openbimagent.server.web_ui import add_web_ui
 
 M2_FASTAPI_APP_TITLE = "openBIMAgent M2 Read-Only API"
 M2_FASTAPI_APP_VERSION = "0.1"
@@ -62,6 +63,7 @@ def build_m2_readonly_app(
     )
     if sessions_dir is not None:
         add_sse_endpoint(app, sessions_dir=sessions_dir, budget=sse_budget)
+    add_web_ui(app)
 
     @app.api_route("/api/v1/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
     async def _readonly_gateway(request: Request) -> Response:
