@@ -383,21 +383,97 @@ def _object_name(operation: dict[str, Any]) -> str:
     return f"VW_M1_{digest}"
 
 
-def _object_layer_name(vs: Any, handle: Any) -> str:
-    layer_handle = vs.GetLayer(handle)
-    if layer_handle is None:
-        raise RuntimeError("Vectorworks 对象没有可读取的设计图层")
+def _vectorworks_nil_handle(handle: Any) -> bool:
+    """Return whether the embedded Vectorworks bridge returned a NIL handle.
+
+    Depending on the Vectorworks Python bridge and call site, NIL can surface as
+    ``None`` or numeric zero. Never pass such a value to an API requiring a
+    concrete HANDLE: Vectorworks opens a native ``Handle variable is NIL``
+    dialog before Python can enforce the failure-closed boundary.
+    """
+    return handle is None or handle is False or (
+        isinstance(handle, (int, float)) and handle == 0
+    )
+
+
+def _layer_name(vs: Any, layer_handle: Any) -> str:
+    if _vectorworks_nil_handle(layer_handle):
+        raise RuntimeError("Vectorworks 设计图层 handle 为 NIL")
     layer_name = vs.GetLName(layer_handle)
     if not isinstance(layer_name, str) or not layer_name:
-        raise RuntimeError("Vectorworks 对象设计图层名称为空")
+        raise RuntimeError("Vectorworks 设计图层名称为空")
     return layer_name
 
 
-def _assert_object_layer(vs: Any, handle: Any, expected: str) -> None:
-    actual = _object_layer_name(vs, handle)
-    if actual != expected:
+def _criteria_atom(value: str) -> str:
+    """Return a narrowly validated Vectorworks criteria atom."""
+    if re.fullmatch(r"[A-Za-z0-9_.:-]+", value) is None:
+        raise ValueError(f"Vectorworks criteria value is not allowlisted: {value!r}")
+    return value
+
+
+def _same_vectorworks_object(vs: Any, left: Any, right: Any) -> bool:
+    if _vectorworks_nil_handle(left) or _vectorworks_nil_handle(right):
+        return False
+    if left == right:
+        return True
+    get_uuid = getattr(vs, "GetObjectUuid", None)
+    if not callable(get_uuid):
+        return False
+    left_uuid = str(get_uuid(left) or "")
+    right_uuid = str(get_uuid(right) or "")
+    return bool(left_uuid and right_uuid and left_uuid == right_uuid)
+
+
+def _object_matches_layer_criteria(vs: Any, handle: Any, expected: str, object_name: str | None = None) -> bool:
+    """Prove layer scope with one bounded host query and no HANDLE traversal.
+
+    Vectorworks 2024 can emit native ``Handle variable is NIL`` dialogs while
+    Python traverses layer/object HANDLE chains. Avoid GetParent/GetLName,
+    FLayer/NextLayer, and FInLayer/NextObj entirely. Query the already named
+    object by exact layer and name criteria in one host call, then compare the
+    returned object identity.
+
+    ``object_name`` is the stable name from the typed plan, used directly
+    to build the ForEachObject criteria.  This avoids calling vs.GetName on
+    the handle, which may return inconsistent values in Vectorworks 2024.
+    """
+    if _vectorworks_nil_handle(handle):
+        return False
+    if object_name is None:
+        object_name = vs.GetName(handle)
+    if not isinstance(object_name, str) or not object_name:
+        handle_type = int(vs.GetTypeN(handle)) if hasattr(vs, "GetTypeN") else -1
+        handle_name = str(vs.GetName(handle)) if hasattr(vs, "GetName") else "N/A"
+        raise RuntimeError(
+            "Vectorworks 对象名称为空，无法验证图层范围 | "
+            f"object_name_param={object_name!r} "
+            f"handle_type={handle_type} "
+            f"handle_name={handle_name!r} "
+            f"expected_layer={expected!r}"
+        )
+    criteria = (
+        f"((L='{_criteria_atom(expected)}') & "
+        f"(N='{_criteria_atom(object_name)}'))"
+    )
+    for_each_object = getattr(vs, "ForEachObject", None)
+    if not callable(for_each_object):
+        raise RuntimeError("Vectorworks ForEachObject 不可用，无法验证图层范围")
+    matched = False
+
+    def _verify(candidate: Any) -> None:
+        nonlocal matched
+        if not matched and _same_vectorworks_object(vs, candidate, handle):
+            matched = True
+
+    for_each_object(_verify, criteria)
+    return matched
+
+
+def _assert_object_layer(vs: Any, handle: Any, expected: str, object_name: str | None = None) -> None:
+    if not _object_matches_layer_criteria(vs, handle, expected, object_name=object_name):
         raise PermissionError(
-            f"Vectorworks object escaped layer scope: expected={expected!r}, actual={actual!r}"
+            f"Vectorworks object is not contained by authorized layer: {expected!r}"
         )
 
 
@@ -438,8 +514,12 @@ def _create_typed_object(vs: Any, operation: dict[str, Any]) -> Any:
     name = _object_name(operation)
     existing = vs.GetObject(name)
     if existing is not None:
-        _assert_object_layer(vs, existing, layer_name)
-        return existing
+        existing_type = int(vs.GetTypeN(existing)) if hasattr(vs, "GetTypeN") else -1
+        if existing_type > 0:
+            _assert_object_layer(vs, existing, layer_name, object_name=name)
+            return existing
+        # Handle is invalid (type 0) — treat as no existing object
+        existing = None
     vs.Layer(layer_name)
     object_type = operation["object_type"]
     if object_type == "pipe_segment":
@@ -450,18 +530,34 @@ def _create_typed_object(vs: Any, operation: dict[str, Any]) -> Any:
         for point in centerline:
             vs.Add3DPt((point["x_m"], point["y_m"], point["z_m"]))
         vs.EndPoly3D()
+        handle = vs.LNewObj()
     else:
         position = operation.get("position") or {"x_m": 0.0, "y_m": 0.0, "z_m": 0.0}
+        # Groups are proper named containers in Vectorworks. Locus3D alone
+        # may not support SetName/GetName, causing the "Handle variable is
+        # NIL" dialog on SetName and empty name on GetName.  Wrapping it
+        # in a group gives us a handle that supports naming.
+        vs.BeginGroup()
         vs.Locus3D((position["x_m"], position["y_m"], position["z_m"]))
-    handle = vs.LNewObj()
-    if handle is None:
-        raise RuntimeError(f"Vectorworks 未返回新对象 handle: {operation['object_id']}")
+        vs.EndGroup()
+        handle = vs.LNewObj()
+    if _vectorworks_nil_handle(handle):
+        raise RuntimeError(
+            f"Vectorworks 未返回新对象 handle: operation={operation['operation_id']} "
+            f"object_type={object_type}"
+        )
+    handle_type = int(vs.GetTypeN(handle))
+    if handle_type <= 0:
+        raise RuntimeError(
+            f"Vectorworks 创建对象 handle 类型无效: type={handle_type} "
+            f"object_type={object_type} object_id={operation['object_id']}"
+        )
     class_name = operation.get("class_name")
     if class_name:
         vs.NameClass(class_name)
         vs.SetClass(handle, class_name)
     vs.SetName(handle, name)
-    _assert_object_layer(vs, handle, layer_name)
+    _assert_object_layer(vs, handle, layer_name, object_name=name)
     return handle
 
 
@@ -515,10 +611,21 @@ def _connect_typed_topology(vs: Any, operation: dict[str, Any]) -> None:
         vs.SetRField(handle, record_name, field_name, str(value))
 
 
+def _is_unnamed_document_reference(active_document: str) -> bool:
+    """Return whether Vectorworks reports an unsaved blank-document placeholder.
+
+    Vectorworks can report a new blank document as ``Untitled-1`` from
+    ``GetFPathName`` even though it is not a filesystem path.  Only this
+    narrow placeholder form is accepted; arbitrary unsaved document names
+    remain fail-closed and cannot receive typed host side effects.
+    """
+    return re.fullmatch(r"Untitled(?:[- ]\d+)?", active_document.strip(), flags=re.IGNORECASE) is not None
+
+
 def _save_controlled_document(vs: Any, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     active_before = str(vs.GetFPathName() or "")
-    if active_before:
+    if active_before and not _is_unnamed_document_reference(active_before):
         active_path = Path(active_before).resolve()
         if active_path != target:
             raise RuntimeError(
@@ -557,7 +664,7 @@ def _apply_typed_operation(vs: Any, operation: dict[str, Any]) -> str:
         raise ValueError(f"unsupported typed operation: {kind!r}")
     if handle is None:
         raise RuntimeError(f"Vectorworks operation 未返回对象: {operation['object_id']}")
-    _assert_object_layer(vs, handle, _AUTHORIZED_LAYER)
+    _assert_object_layer(vs, handle, _AUTHORIZED_LAYER, object_name=_object_name(operation))
     host_name = vs.GetName(handle)
     if not isinstance(host_name, str) or not host_name:
         host_name = _object_name(operation)
@@ -631,7 +738,7 @@ def _project_semantic_snapshot(plan: dict[str, Any], vs: Any) -> dict[str, Any]:
         handle = vs.GetObject(_object_name(operation))
         if handle is None:
             raise ValueError(f"semantic projection missing object: {expected_id}")
-        _assert_object_layer(vs, handle, _AUTHORIZED_LAYER)
+        _assert_object_layer(vs, handle, _AUTHORIZED_LAYER, object_name=_object_name(operation))
         field_definitions = definitions.get(expected_id)
         if not field_definitions:
             raise ValueError(f"semantic projection missing record definition: {expected_id}")
@@ -828,15 +935,23 @@ def execute_typed_plan(
         raise FileNotFoundError(
             f"Vectorworks partial state exists but controlled document is missing: {target}"
         )
-    elif active_document:
+    elif active_document and not _is_unnamed_document_reference(active_document):
         raise RuntimeError(
             "Vectorworks first execution requires an unnamed blank document before any "
-            f"typed host side effect: active={Path(active_document).resolve()}"
+            f"typed host side effect: active={active_document}"
         )
 
     # Typed plan coordinates are meters. Normalize the active document before any
     # host geometry is created, including recovery runs after a host restart.
     _ensure_document_units_meters(vs)
+
+    # Ensure the authorized layer exists BEFORE any operations, so that
+    # _create_typed_object's vs.Layer() call switches to an existing layer
+    # rather than creating one. If vs.Layer() creates a new layer, the
+    # subsequent vs.LNewObj() would return the layer handle, not the
+    # object handle, causing "Handle variable is NIL" on SetName.
+    vs.Layer(_AUTHORIZED_LAYER)
+    vs.LNewObj()  # consume the layer handle (if any)
 
     applied = set(state["applied_operation_ids"])
     confirmed = set(state["confirmed_object_ids"])

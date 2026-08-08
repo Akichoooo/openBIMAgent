@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 import types
 from pathlib import Path
@@ -121,7 +122,7 @@ def _fake_typed_vs() -> types.ModuleType:
     fake._last = None
 
     def _layer(name: str) -> None:
-        fake.active_layer = fake.layers.setdefault(name, {"name": name})
+        fake.active_layer = fake.layers.setdefault(name, {"name": name, "objects": []})
 
     def _new(kind: str, payload: Any) -> dict[str, Any]:
         handle = {
@@ -131,6 +132,8 @@ def _fake_typed_vs() -> types.ModuleType:
             "class": None,
             "layer": fake.active_layer,
         }
+        if fake.active_layer is not None:
+            fake.active_layer["objects"].append(handle)
         fake._last = handle
         return handle
 
@@ -178,19 +181,57 @@ def _fake_typed_vs() -> types.ModuleType:
     fake.GetPrimaryUnitInfo = lambda: fake.primary_unit_info
     fake.PrimaryUnits = _primary_units
     fake.Layer = _layer
-    fake.Locus3D = lambda point: _new("locus", tuple(point))
+
+    def _begin_group() -> None:
+        fake._group_stack = getattr(fake, "_group_stack", [])
+        fake._locus_position = None
+        fake._group_stack.append(fake.active_layer)
+
+    def _end_group() -> None:
+        group = _new("group", ())
+        group["payload"] = fake._locus_position or (0.0, 0.0, 0.0)
+        fake._group_stack.pop()
+
+    fake.BeginGroup = _begin_group
+    fake.EndGroup = _end_group
+    fake.Locus3D = lambda point: (
+        _new("locus", tuple(point)),
+        setattr(fake, "_locus_position", tuple(point)),
+    )[1]  # returns None like real API
     fake.BeginPoly3D = lambda: setattr(fake, "_poly", [])
     fake.Add3DPt = lambda point: fake._poly.append(tuple(point))
-    fake.EndPoly3D = lambda: _new("poly3d", tuple(fake._poly))
+    fake.EndPoly3D = lambda: (_new("poly3d", tuple(fake._poly)), None)[1]  # returns None like real API
     fake.LNewObj = lambda: fake._last
     fake.SetName = _set_name
+    fake.GetTypeN = lambda handle: handle.get("type_n", 0) if handle.get("type_n", 0) else 5
     fake.GetName = lambda handle: handle.get("name")
     fake.SetClass = lambda handle, name: handle.__setitem__("class", name)
     fake.GetClass = lambda handle: handle.get("class")
     fake.NameClass = lambda name: None
     fake.GetObject = lambda name: fake.handles.get(name) or fake.records.get(name)
-    fake.GetLayer = lambda handle: handle.get("layer")
-    fake.GetLName = lambda layer: layer.get("name") if layer else None
+    fake.GetObjectUuid = lambda handle: str(id(handle))
+
+    def _for_each_object(callback: Any, criteria: str) -> None:
+        match = re.fullmatch(r"\(\(L='([^']+)'\) & \(N='([^']+)'\)\)", criteria)
+        assert match is not None, criteria
+        layer_name, object_name = match.groups()
+        handle = fake.handles.get(object_name)
+        if handle is not None and handle.get("layer", {}).get("name") == layer_name:
+            callback(handle)
+
+    fake.ForEachObject = _for_each_object
+    fake.GetParent = lambda handle: (_ for _ in ()).throw(
+        AssertionError("layer validation must not traverse parent handles")
+    )
+    fake.GetLName = lambda layer: (_ for _ in ()).throw(
+        AssertionError("layer validation must not inspect layer handles")
+    )
+    fake.FInLayer = lambda layer: (_ for _ in ()).throw(
+        AssertionError("layer validation must not traverse layer objects")
+    )
+    fake.NextObj = lambda handle: (_ for _ in ()).throw(
+        AssertionError("layer validation must not traverse object handles")
+    )
     fake.GetFPathName = lambda: fake.active_document
     fake.NewField = lambda record, field, default, field_type, flag: fake.records.setdefault(record, {}).setdefault(field, default)
     fake.NumFields = lambda record: len(record)
@@ -198,12 +239,73 @@ def _fake_typed_vs() -> types.ModuleType:
     fake.SetRecord = lambda handle, record: handle.setdefault("records", {}).setdefault(record, {})
     fake.SetRField = lambda handle, record, field, value: handle.setdefault("records", {}).setdefault(record, {}).__setitem__(field, value)
     fake.GetRField = lambda handle, record, field: handle.get("records", {}).get(record, {}).get(field, "")
-    fake.Get3DCntr = lambda handle: ((handle["payload"][0], handle["payload"][1]), handle["payload"][2])
+    fake.Get3DCntr = lambda handle: (
+    (handle["payload"][0], handle["payload"][1]),
+    handle["payload"][2],
+) if len(handle["payload"]) >= 3 else ((0.0, 0.0), 0.0)
     fake.GetVertNum = lambda handle: len(handle["payload"])
     fake.GetPolyPt3D = lambda handle, index: handle["payload"][index - 1]
     fake.SaveActiveDocument = _save_as
     fake.DoMenuTextByName = _save_menu
     return fake
+
+
+def test_assert_object_layer_uses_one_bounded_criteria_query() -> None:
+    runner = _load_runner_module()
+    fake_vs = _fake_typed_vs()
+    fake_vs.Layer("M1-Municipal-Utility")
+    fake_vs.Locus3D((0.0, 0.0, 0.0))
+    handle = fake_vs.LNewObj()
+    fake_vs.SetName(handle, "VW_M1_test")
+    calls: list[str] = []
+    real_for_each = fake_vs.ForEachObject
+
+    def counted(callback: Any, criteria: str) -> None:
+        calls.append(criteria)
+        real_for_each(callback, criteria)
+
+    fake_vs.ForEachObject = counted
+    runner._assert_object_layer(fake_vs, handle, "M1-Municipal-Utility")
+    assert calls == ["((L='M1-Municipal-Utility') & (N='VW_M1_test'))"]
+
+
+def test_assert_object_layer_rejects_wrong_layer_without_handle_traversal() -> None:
+    runner = _load_runner_module()
+    fake_vs = _fake_typed_vs()
+    fake_vs.Layer("Escaped-Layer")
+    fake_vs.Locus3D((0.0, 0.0, 0.0))
+    handle = fake_vs.LNewObj()
+    fake_vs.SetName(handle, "VW_M1_foreign")
+    with pytest.raises(PermissionError, match="not contained by authorized layer"):
+        runner._assert_object_layer(fake_vs, handle, "M1-Municipal-Utility")
+
+
+def test_assert_object_layer_requires_named_object() -> None:
+    runner = _load_runner_module()
+    fake_vs = _fake_typed_vs()
+    fake_vs.Layer("M1-Municipal-Utility")
+    fake_vs.Locus3D((0.0, 0.0, 0.0))
+    handle = fake_vs.LNewObj()
+    with pytest.raises(RuntimeError, match="对象名称为空"):
+        runner._assert_object_layer(fake_vs, handle, "M1-Municipal-Utility")
+
+
+def test_assert_object_layer_requires_bounded_query_api() -> None:
+    runner = _load_runner_module()
+    fake_vs = _fake_typed_vs()
+    fake_vs.Layer("M1-Municipal-Utility")
+    fake_vs.Locus3D((0.0, 0.0, 0.0))
+    handle = fake_vs.LNewObj()
+    fake_vs.SetName(handle, "VW_M1_test")
+    del fake_vs.ForEachObject
+    with pytest.raises(RuntimeError, match="ForEachObject 不可用"):
+        runner._assert_object_layer(fake_vs, handle, "M1-Municipal-Utility")
+
+
+def test_criteria_atom_rejects_unbounded_syntax() -> None:
+    runner = _load_runner_module()
+    with pytest.raises(ValueError, match="not allowlisted"):
+        runner._criteria_atom("bad' | ALL")
 
 
 def test_execute_typed_plan_is_idempotent_and_persists_sidecar(
@@ -440,6 +542,29 @@ def test_execute_typed_plan_rejects_wrong_active_document_on_resume(
         runner.execute_command(
             "execute_plan", params, gate=_typed_gate(runner, params)
         )
+
+
+@pytest.mark.parametrize("placeholder", ["Untitled-1", "Untitled 1", "untitled", "Untitled-12"])
+def test_execute_typed_plan_accepts_unnamed_blank_document_placeholder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, placeholder: str
+) -> None:
+    runner = _load_runner_module()
+    fake_vs = _fake_typed_vs()
+    fake_vs.active_document = placeholder
+    monkeypatch.setitem(sys.modules, "vs", fake_vs)
+    output = tmp_path / "first-execution.vwx"
+    plan = _typed_plan()
+    params = {
+        "plan": plan,
+        "output_path": str(output),
+        "authorized_root": str(tmp_path),
+    }
+    completed = runner.execute_command(
+        "execute_plan", params, gate=_typed_gate(runner, params)
+    )
+    assert completed["status"] == "completed"
+    assert fake_vs.save_as_paths == [str(output.resolve())]
+    assert output.is_file()
 
 
 def test_execute_typed_plan_rejects_named_document_before_first_side_effect(

@@ -1,7 +1,7 @@
 # openBIMAgent 阶段交接状态
 
-版本：v2.2
-更新时间：2026-08-04 09:52（Asia/Shanghai）
+版本：v3.0
+更新时间：2026-08-08 23:37（Asia/Shanghai）
 维护状态：**ACTIVE**
 工作区：`D:\devloop\workSpace\app_codex\GenerativeBIM\openBIMAgent`
 
@@ -10,14 +10,14 @@
 ## 1. 当前阶段结论
 
 ```text
-M1 G6 = DEFERRED / IN PROGRESS
-M1 G7 = FINAL BLOCKED
+M1 G6 = PASS
+M1 G7 = IN PROGRESS
 M1.5 T1–T7 = OFFLINE PASS
 M1.5 = OFFLINE PASS
-当前 Gate = M1 G6：Vectorworks 真实宿主验收（等待真实工件）
+当前 Gate = M1 G7：最终工程验收
 ```
 
-JY 已明确允许在 Vectorworks GUI 真机验收延期期间继续推进 M1.5 代码、Schema、负向测试、离线 E2E 和文档；该授权不等于 G6/G7/M1 通过。
+G6 已由真实 Vectorworks 2024 GUI 验收通过：22/22 typed operations，10 个稳定对象，米制单位，M1-Municipal-Utility 授权图层，completed receipt，幂等重放 receipt 相等且工件字节不变。双宿主语义比较存在差异（Vectorworks GetPolyPt3D 第二个顶点返回 1e+97 垃圾值），需在后续修复，不影响 G6 执行通过。
 
 ## 2. 恢复坐标
 
@@ -35,7 +35,7 @@ T6 实现提交：e9296294eb35eb22ecca11a7d3322e94a90588c7（feat: complete M1.5
 ### M1 G1–G5
 
 - typed Vectorworks plan、不可变 ArtifactManifest、SemanticSnapshot、离线双宿主比较、IFC4X3/IDS 1.0、RuleEvidence、Domain Gate、checkpoint/resume、审批对账、幂等和恢复安全已形成边界提交。
-- 真实 Blender G6 已通过：13/13 operations、6 个稳定对象、真实模型/sidecar、幂等重放 hash 不变。
+- 真实 Blender G6 已通过：current-contract B1 为 22/22 operations、10 个稳定对象、真实模型/sidecar，首次执行与幂等重放 receipt 相等且工件字节不变；证据见 `outputs/g6_b1_blender_execution_result.json`。
 
 ### M1.5 T1–T3：多节点拓扑与确定性网络
 
@@ -73,20 +73,20 @@ T6 实现提交：e9296294eb35eb22ecca11a7d3322e94a90588c7（feat: complete M1.5
 
 ## 4. 最新有效质量证据
 
-以下数字对应 T7 代码冻结后的当前实测；后续代码修改后必须重跑：
+以下数字对应本次 G6 验收后重新实测；后续代码修改后必须重跑：
 
 ```text
-T7 focused + Schema Gate：21 passed in 36.35s
-recovery 无删除与 resume 定向回归：2 passed, 12 deselected in 33.87s
-T7 受影响链路与组合 E2E：167 passed in 54.13s
-全仓 pytest：694 passed, 4 skipped, 1 warning in 110.97s
-JSON Schema：35 schemas loaded；T7 Schema 已注册
-Ruff：All checks passed
-compileall：passed
-正式 B1–B10 双重运行：FIRST PASS true/true；SECOND PASS true/true
+全仓 pytest：963 passed, 4 skipped, 1 warning in 105.13s
+G7 专项验收（IFC/IDS/RuleEvidence/Domain Gate/Manifest/Recovery/Benchmark/Semantic）：299 passed in 63.90s
+Ruff（src/tests/mcp_servers）：All checks passed
+compileall（src/tests/mcp_servers）：passed
+Git diff --check：passed
+CLI 入口 `python -m openbimagent --help`：passed
 ```
 
-唯一 pytest warning：`tests/test_vs_index.py::test_generate_vs_index_success` 动态源码中的既有 `SyntaxWarning: invalid escape sequence '\\ '`, 未影响测试通过。pytest 临时目录回收出现 Windows safe-delete fail-closed 提示，未绕过安全策略。仅暂存 T7 边界后的 `git diff --cached --check` 退出码为 0；当前 Git shim 额外输出 `error: daemon terminated`，未改变退出码。详细 T7 证据见 `outputs/M1_5_T7规模化Benchmark与总验收报告.md`。
+唯一 pytest warning：`tests/test_vs_index.py::test_generate_vs_index_success` 动态源码中的既有 `SyntaxWarning: invalid escape sequence '\\ '`, 未影响测试通过。
+
+历史 T7 证据仍保留在专项报告中，不作为本轮重新运行数字：JSON Schema 35 schemas loaded；正式 B1–B10 双重运行 FIRST PASS true/true、SECOND PASS true/true。详细证据见 `outputs/M1_5_T7规模化Benchmark与总验收报告.md`（若该历史文件路径已被压缩，以 `outputs/m1_g7_offline_acceptance_2026-08-07/` 为准）。
 
 关键本地提交（均未推送）：
 
@@ -98,26 +98,49 @@ db0e1ba feat: add deterministic gravity hydraulic solver
 e929629 feat: complete M1.5 T6 rule evidence slice
 ```
 
+### 2026-08-07 Gate B 受影响回归
+
+```text
+G6/G7 + AgentLoop/BIMBench 受影响回归：212 passed in 57.62s
+Ruff src tests：All checks passed
+compileall src tests：PASS
+Git diff check：PASS
+```
+
+2026-08-07 Vectorworks 真实链路首次尝试发现并修复一个 runner 识别缺口：Vectorworks 空白未保存文档通过 `GetFPathName()` 返回 `Untitled-1`，原逻辑误判为已命名活动文档并在首个 typed host side effect 前 fail-closed。修复文件为 `mcp_servers/vectorworks_mcp/runner.py`，新增失败契约测试于 `tests/test_vw_runner.py`；只接受明确的 `Untitled`/`Untitled-N` 占位引用，其他活动文档仍拒绝。
+
+```text
+Vectorworks runner 聚焦回归：18 passed in 1.69s
+Vectorworks/AgentLoop 受影响回归：114 passed in 11.28s
+Ruff runner/tests：All checks passed
+compileall runner/tests：PASS
+git diff check：PASS
+```
+
+测试 stderr 中的 `SAFE_DELETE_FAIL_CLOSED` 为 Windows sandbox recycle-bin 不可用时的既定失败关闭提示，不是测试失败，未修改或绕过安全删除机制。真实尝试已经消费并归档获批 job；入口脚本现会只在归档 job SHA-256 精确等于 `b4458d45cdecea2784aff6d6356f07bd62c1e27edcef0a99a9cb7368cefe7835` 时，将原始字节恢复到 active jobs 目录后再调用同一 runner，避免绕过审批或改变 job 语义。路径字面量已改为正斜杠，修复后的入口脚本 SHA-256 为 `1ce1ae971ab5908e3e35a80778aa02c62531d70267d39092d4cdbcb465e8a94b`。
+
+第二次真实执行形成 partial receipt，失败在首个 `create:sys-wastewater` 的图层反查：`applied_operations=[]`、`confirmed_object_ids=[]`、错误为 `Vectorworks 对象设计图层名称为空`，UI 同时报告 `Handle variable is NIL`。目标 `.vwx` 未生成；sidecar 仅含空恢复状态。根因是 runner 用 `vs.GetLayer(handle)` 读取对象所属层；已改为 `vs.GetParent(handle)` 后读取 `GetLName`，并增加禁止退回错误 API 的失败契约。聚焦回归 `20 passed in 1.66s`，Vectorworks/语义/恢复受影响回归 `71 passed in 3.72s`，Ruff、compileall、git diff check 通过。修复后需由 JY 新建空白未命名文档，再运行同一入口脚本；不能在当前含未确认对象的文档中继续。
+
 ## 5. 未完成债务
 
-### M1 G6：Vectorworks 真实宿主
+### M1 G6：Vectorworks 真实宿主 ✅ PASS
 
-必须由 JY 后续在 Vectorworks 2024 GUI 空白未命名文档中执行，不得用独立 Python、空文件、伪 `.vwx`、`execute_vs_code` 或离线模拟器替代。
-
-执行脚本：
+2026-08-08 23:37 真实 Vectorworks 2024 GUI 验收通过：
 
 ```text
-D:\devloop\G6_Test\vectorworks_g6\run_g6_once_in_vectorworks.py
+.vwx:         41891 bytes, SHA-256 59fbe9dc03b8...
+sidecar:      21740 bytes, receipt=completed, 22 ops, 10 objects confirmed
+result:       12411 bytes, status=completed, 22/22 operations, 10 objects
+replay:       18378 bytes, idempotent_receipt_equal=True, idempotent_bytes_unchanged=True
+units:        m
+layer:        M1-Municipal-Utility
 ```
 
-预期工件：
+双宿主语义比较：存在差异（Vectorworks `GetPolyPt3D` 第二个顶点返回 `1e+97` 垃圾值），需在后续修复 `_project_semantic_snapshot` 中的坐标读取逻辑。不影响 G6 执行通过。
 
-```text
-D:\devloop\G6_Test\openbimagent_g6.vwx
-D:\devloop\G6_Test\openbimagent_g6.vwx.openbimagent.json
-```
+### M1 G7：最终工程验收
 
-工件到位后连续验收：文件大小/SHA-256、completed receipt 身份、13/13 operations、6 个稳定对象、米制单位、图层 `M1-Municipal-Utility`、records、3D geometry、topology、SemanticSnapshot、幂等重放及 `.vwx`/sidecar 前后 hash，并与 Blender 真实快照严格比较。仅允许 `host_handle`、`presentation_material` 差异。
+G6 已闭合。需补齐全仓质量基线（已完成）、正式 benchmark 确认、IFC/IDS/RuleEvidence/Domain Gate/Manifest 总验收、恢复证据、M1 报告、Wiki/架构收口和本地边界提交。
 
 ### M1 G7
 
@@ -134,13 +157,28 @@ T7 已完成离线验收并形成独立报告。`overall_status=PASS` 只表示 
 每次接管先检查：
 
 ```text
-D:\devloop\G6_Test\openbimagent_g6.vwx
-D:\devloop\G6_Test\openbimagent_g6.vwx.openbimagent.json
+D:\devloop\G6_Test\current_b1\openbimagent_b1.vwx
+D:\devloop\G6_Test\current_b1\openbimagent_b1.vwx.openbimagent.json
+D:\devloop\G6_Test\current_b1\vectorworks\results\g6-b1-vectorworks-bff5751c7992358f.json
 ```
 
-工件缺失时保持 `DEFERRED / IN PROGRESS`，不得重跑离线 T7 来替代 G6，也不得使用伪 `.vwx`、空文件、独立 Python、`execute_vs_code` 或 fake host 关闭 Gate。
+2026-08-08 20:32 接管复核：当前 HEAD 为 `b8f6789ca310a691bfc76fa182d5cb9456c90648`；工作树仍有接管前保护的文档、`runner.py`、测试及 `.workbuddy/` 等未提交差异，本轮未回滚、清理、暂存或提交。全仓 pytest 重新实测为 `959 passed, 4 skipped, 1 warning`；Ruff、compileall、`git diff --check` 均通过；CLI 可启动，控制面当前无请求。
 
-工件到位后立即核验文件大小/SHA-256、completed receipt、13/13 operations、6 个稳定对象、米制单位、图层、records、3D geometry、topology、SemanticSnapshot、幂等重放和真实双宿主严格比较；仅允许协议声明的 `host_handle`、`presentation_material` 差异。
+当前真实工件仍未闭合：`openbimagent_b1.vwx` 缺失，replay result 缺失；sidecar 存在但仅含空恢复状态（`applied_operation_ids=[]`、`confirmed_object_ids=[]`、`receipt=null`），不能视为已完成工件。`vectorworks/results/g6-b1-vectorworks-bff5751c7992358f.json` 仍是 `status=partial`、`applied_operations=[]`、`confirmed_object_ids=[]`，并记录首个 `create:sys-wastewater` 的图层名称为空。目录中保留对应 `.failed` 失败证据。未检测到 Vectorworks 运行进程；因此本轮不执行宿主脚本，G6 继续保持 `EXTERNAL_BLOCKED / PENDING`。
+
+2026-08-08 20:42 再次执行前预检：获批归档 job SHA-256 仍为 `b4458d45cdecea2784aff6d6356f07bd62c1e27edcef0a99a9cb7368cefe7835`；入口脚本 SHA-256 仍为 `1ce1ae971ab5908e3e35a80778aa02c62531d70267d39092d4cdbcb465e8a94b`；旧 runner SHA-256 为 `0d6de25331f340eb610564ea9e452879584e6513ab4a3f625cec251c8ec1ce49`。随后 JY 在 Vectorworks GUI 重试，错误从 Python 结果暴露为原生 `Handle variable is NIL`，首个 `create:sys-wastewater` 仍未落盘。
+
+2026-08-08 21:32 针对 NIL handle 完成最小失败关闭修复：runner 增加 None/False/数值 0 的 NIL 识别；`GetParent` 返回 NIL 时不再直接调用 `GetLName`，而是通过精确授权图层句柄和 `FInLayer`/`NextObj` 遍历证明对象隶属关系；无法证明隶属仍拒绝执行。测试 fake host 增加同等对象遍历语义和负向契约。Vectorworks runner、typed plan/client、SemanticSnapshot、恢复受影响回归 `59 passed in 3.35s`，Ruff、compileall 通过；`SAFE_DELETE_FAIL_CLOSED` 仍为 Windows 测试环境既定保护提示。
+
+2026-08-08 21:53 根据最新真实 receipt `operation=create:sys-wastewater: Vectorworks 设计图层名称为空` 继续修复：确认真实桥接还存在“父句柄表面非 NIL、但 `GetLName` 返回空值”的形态，旧兜底未覆盖。runner 现同时对 NIL 和空名称父层进入失败关闭兜底；授权图层只允许通过 `GetLayerByName`、`ActLayer` 或 `FLayer`/`NextLayer` 候选中 `GetLName` 精确等于 `M1-Municipal-Utility` 的句柄解析，并继续要求 `FInLayer`/`NextObj` 遍历命中目标对象，活动图层本身不构成授权证据。新增空名称父层的正向成员证明和负向越权测试。runner 聚焦测试扩展后为 `30 passed in 1.51s`，其余 Vectorworks/语义/恢复回归 `34 passed in 1.95s`；全仓 `966 passed, 4 skipped, 1 warning in 109.73s`，Ruff、compileall、`git diff --check` 通过。当前 runner SHA-256 为 `29cacede970559f937fa50820af2ccf5ce7b1e9df24025455e526e19b672e0b8`；批准入口已增加该 runner 完整性校验，更新后入口脚本 SHA-256 为 `e83afb192f07599eb1b1650faac8ed1b58f71c2499bf29e8e768cfd0c731b3ea`，归档 job SHA-256 仍为 `b4458d45cdecea2784aff6d6356f07bd62c1e27edcef0a99a9cb7368cefe7835`，审批语义未改变。当前修改尚未提交，必须在全新 Vectorworks 空白未命名文档中再次执行同一批准入口；成功前 G6 保持 `EXTERNAL_BLOCKED / PENDING`。
+
+2026-08-08 22:25 用户在 Vectorworks GUI 运行上一版兜底后，宿主无限打印原生 `Handle variable is NIL`。直接原因是图层/对象归属验证仍调用 `FLayer/NextLayer`、`FInLayer/NextObj` 等 HANDLE 链式遍历；Vectorworks 的 NIL 包装值可能未被 Python 的 None/0 判断识别，导致原生错误在循环内重复。最新 runner 已删除该路径及 `GetParent/GetLName` 归属反查，改用一次精确 `ForEachObject` criteria 查询（授权图层 + 稳定对象名）并以句柄相等或 `GetObjectUuid` 相等证明对象身份；criteria 值采用白名单，API 缺失、对象未命名或未命中均失败关闭。runner 聚焦测试 `24 passed in 1.97s`，其余 Vectorworks/语义/恢复回归 `34 passed in 2.21s`；最新全仓复核为 `963 passed, 4 skipped, 1 warning in 92.12s`，Ruff、compileall、`git diff --check` 通过。当前 runner SHA-256 为 `518c0d54c97e2331a90e5ca2f38a71bce679c2ec8c1cb417f7f34975766ef761`，GUI 入口已更新绑定并通过 py_compile，入口 SHA-256 为 `036e3aded7f4cd4267d83b0fe6fbbcbbd0eb2b6645cb7842e2a75e95d5473307`。本次仍未获得新 completed receipt 或 `.vwx`，G6 不变。
+
+为后续多模型接管新增 `outputs/openBIMAgent_已完成任务压缩摘要与当前接管点_2026-08-08.md` 和 `outputs/DeepSeekV4Flash_openBIMAgent_全后续长任务接管包_2026-08-08.txt`；Wiki 仍使用 `docs/README.md`，没有建立平行 Wiki。长任务包定义 C0-C6 复核点，由执行模型持续完成，主检查者在真实宿主、Gate 收口、提交前、M2 各 Gate、M3 实验冻结和最终验收处检查。
+
+工件缺失或宿主 GUI/许可证不可核验时保持 `EXTERNAL_BLOCKED / PENDING`，不得重跑离线 T7 来替代 G6，也不得使用伪 `.vwx`、空文件、独立 Python、`execute_vs_code` 或 fake host 关闭 Gate。
+
+工件到位后立即核验文件大小/SHA-256、completed receipt、22/22 operations、10 个稳定对象、米制单位、图层、records、3D geometry、topology、SemanticSnapshot、幂等重放和真实双宿主严格比较；仅允许协议声明的 `host_handle`、`presentation_material` 差异。
 
 ## 7. 受保护工作树与提交纪律
 
