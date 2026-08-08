@@ -79,6 +79,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_runtime_serve(args)
     if args.cmd == "operator-console":
         return _cmd_operator_console(args)
+    if args.cmd == "server":
+        return _cmd_server(args)
     parser.print_help()
     return 2
 
@@ -185,6 +187,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     console_p.add_argument("--display-name", default=None, help="可选显示名称，不参与授权身份")
     console_p.add_argument("--ipc-timeout", type=float, default=5.0)
+
+    server_p = sub.add_parser("server", help="启动 M2 只读 FastAPI 服务")
+    server_p.add_argument("--host", default="127.0.0.1", help="监听地址(默认 127.0.0.1)")
+    server_p.add_argument("--port", type=int, default=8765, help="监听端口(默认 8765)")
+    server_p.add_argument("--sessions-dir", default=DEFAULT_SESSIONS_DIR, type=Path, help="sessions 目录")
 
     return parser
 
@@ -672,6 +679,41 @@ def _cmd_operator_console(args: argparse.Namespace) -> int:
         if server is not None:
             server.stop()
     return 0
+
+
+def _cmd_server(args: argparse.Namespace) -> int:
+    """启动 M2 只读 FastAPI 服务(不持有 Runtime lease)。"""
+    import uvicorn
+
+    from openbimagent.orchestrator.control_plane import ReadOnlyControlPlane
+    from openbimagent.server.fastapi_app import build_m2_readonly_app
+    from openbimagent.server.readonly_http import M2ReadonlyHttpAdapter
+    from openbimagent.server.service import M2ReadOnlyService
+
+    sessions_dir = Path(args.sessions_dir)
+
+    def _session_index() -> list[dict]:
+        try:
+            return SessionStore.list_sessions(sessions_dir)
+        except Exception:
+            return []
+
+    def _artifact_lookup(_artifact_id: str):
+        return None
+
+    plane = ReadOnlyControlPlane(sessions_dir)
+    service = M2ReadOnlyService(
+        control_plane=plane,
+        session_index_reader=_session_index,
+        artifact_lookup=_artifact_lookup,
+    )
+    adapter = M2ReadonlyHttpAdapter(service)
+    app = build_m2_readonly_app(adapter, sessions_dir=sessions_dir)
+    print(
+        f"[server] M2 read-only API http://{args.host}:{args.port} "
+        f"sessions={sessions_dir.resolve()}"
+    )
+    uvicorn.run(app, host=args.host, port=args.port)
 
 
 def _open_session(sessions_dir: Path, session_id: str) -> SessionStore | None:
