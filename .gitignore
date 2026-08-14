@@ -38,3 +38,10 @@ architecture.mmd
 # OS
 .DS_Store
 Thumbs.db
+
+# CodeGraph & Agents
+.codegraph/
+
+# Temporary / Scratch data
+scratch/
+papers/

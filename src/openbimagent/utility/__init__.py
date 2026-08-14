@@ -118,6 +118,18 @@ from openbimagent.utility.rules import (
     compile_municipal_rule_set,
     select_clearance_rule,
 )
+from openbimagent.utility.self_healing_route import (
+    SelfHealingIteration,
+    SelfHealingResult,
+    SelfHealingViolation,
+    solve_self_healing_route,
+)
+from openbimagent.utility.spatial_graph import (
+    SpatialBIMGraph,
+    SpatialCrossing,
+    SpatialNode,
+    SpatialSegment,
+)
 from openbimagent.utility.solver import (
     AxisAlignedBoxObstacle,
     CLASH_TOLERANCE_M,
@@ -227,6 +239,13 @@ __all__ = [
     "T6RouteObstacleConstraint",
     "VerificationSourceTier",
     "VerificationStatus",
+    "SelfHealingIteration",
+    "SelfHealingResult",
+    "SelfHealingViolation",
+    "SpatialBIMGraph",
+    "SpatialCrossing",
+    "SpatialNode",
+    "SpatialSegment",
     "SolverEndpoint",
     "StraightGravitySolverInput",
     "UTILITY_SOLVER_INPUT_VERSION",
@@ -258,5 +277,6 @@ __all__ = [
     "solve_grid_route_t6",
     "solve_hydraulic_network",
     "solve_network_gravity_utility",
+    "solve_self_healing_route",
     "solve_straight_gravity_utility",
 ]

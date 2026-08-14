@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -75,14 +76,21 @@ def _request_status(
     body: str,
     headers: dict[str, str],
 ) -> int:
-    connection = _connection(server)
-    try:
-        connection.request(method, path, body=body, headers=headers)
-        response = connection.getresponse()
-        response.read()
-        return response.status
-    finally:
-        connection.close()
+    for attempt in range(3):
+        connection = _connection(server)
+        try:
+            connection.request(method, path, body=body, headers=headers)
+            response = connection.getresponse()
+            response.read()
+            return response.status
+        except (ConnectionAbortedError, ConnectionResetError, http.client.RemoteDisconnected):
+            if attempt == 2:
+                raise
+            time.sleep(0.05)
+        finally:
+            connection.close()
+    return 500
+
 
 
 def test_console_request_contract_rejects_missing_and_unknown_fields() -> None:

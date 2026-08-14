@@ -65,7 +65,11 @@ def build_m2_readonly_app(
         add_sse_endpoint(app, sessions_dir=sessions_dir, budget=sse_budget)
     add_web_ui(app)
 
-    @app.api_route("/api/v1/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+    @app.api_route(
+        "/api/v1/{path:path}",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        include_in_schema=False,
+    )
     async def _readonly_gateway(request: Request) -> Response:
         m2_request = M2ReadonlyHttpRequest(
             method=request.method,

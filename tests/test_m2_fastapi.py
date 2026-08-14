@@ -87,3 +87,11 @@ def test_openapi_json_accessible() -> None:
     resp = client.get("/api/v1/openapi.json", headers={"X-Request-ID": "test-007"})
     assert resp.status_code == 200
     assert resp.json()["info"]["title"] == "openBIMAgent M2 Read-Only API"
+
+
+def test_web_ui_accessible() -> None:
+    client = _app()
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert "openBIMAgent" in resp.text
+    assert "three.min.js" in resp.text
