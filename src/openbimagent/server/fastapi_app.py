@@ -89,7 +89,17 @@ def build_m2_readonly_app(
         payload = body.get("payload", {})
         try:
             res = default_plugin_registry.invoke(capability, **payload)
-            return {"status": "success", "capability": capability, "result": str(res)}
+            if hasattr(res, "model_dump"):
+                result_data = res.model_dump()
+            elif hasattr(res, "to_dict"):
+                result_data = res.to_dict()
+            elif hasattr(res, "_asdict"):
+                result_data = res._asdict()
+            elif isinstance(res, (dict, list, int, float, bool, str)) or res is None:
+                result_data = res
+            else:
+                result_data = str(res)
+            return {"status": "success", "capability": capability, "result": result_data}
         except Exception as exc:
             return {"status": "error", "capability": capability, "error": str(exc)}
 

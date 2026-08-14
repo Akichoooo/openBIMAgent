@@ -589,7 +589,7 @@ pre {
 
   <!-- Right Column: BIM Digital Workbench -->
   <div class="column">
-    <div class="tabs">
+    <div class="tabs" id="workbenchTabs">
       <div class="tab active" onclick="switchTab('tab-3d')">3D 视口</div>
       <div class="tab" onclick="switchTab('tab-rules')">GB 50289 规则树</div>
       <div class="tab" onclick="switchTab('tab-graph')">空间图谱 & 自愈</div>
@@ -864,6 +864,26 @@ class BIMSlotRegistry {
     }
   }
   render() {
+    // 1. 动态组装工作台标签页 (由 declared_slots 驱动)
+    const tabSlots = this.slots.filter(s => s.target_area === 'workbench' && s.slot_key.startsWith('workbench:tab.'));
+    const tabMap = {
+      'workbench:tab.viewport_3d': { id: 'tab-3d', label: '3D 视口' },
+      'workbench:tab.rules_tree': { id: 'tab-rules', label: 'GB 50289 规则树' },
+      'workbench:tab.spatial_graph': { id: 'tab-graph', label: '空间图谱 & 自愈' },
+      'workbench:tab.artifacts': { id: 'tab-artifacts', label: '交付工件' },
+      'workbench:tab.compiled_ir': { id: 'tab-ir', label: 'Compiled IR' },
+    };
+    const tabContainer = document.getElementById('workbenchTabs');
+    if (tabContainer && tabSlots.length) {
+      let tabsHtml = tabSlots.map((s, idx) => {
+        const info = tabMap[s.slot_key] || { id: 'tab-plugins', label: s.title };
+        return `<div class="tab ${idx===0 ? 'active' : ''}" onclick="switchTab('${info.id}')">${info.label}</div>`;
+      }).join('');
+      tabsHtml += `<div class="tab" onclick="switchTab('tab-plugins')">插件清单 (DSH Slots)</div>`;
+      tabContainer.innerHTML = tabsHtml;
+    }
+
+    // 2. 渲染插件清单面板
     const container = document.getElementById('pluginListContainer');
     if (!container || !this.plugins.length) return;
     container.innerHTML = this.plugins.map(p => `

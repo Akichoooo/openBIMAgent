@@ -475,6 +475,10 @@ class AcademicBenchmarkPlugin(BIMPlugin):
     name = "BIMBench 学术实验套件"
     version = "2026.1.0"
     description = "自动化执行 B1–B10 消融实验与论文标准量化对比指标生成"
+    requires_capabilities = (
+        "solver:self_healing",
+        "rules:gb50289",
+    )
     provides_capabilities = (
         "benchmark:academic_ablation",
     )
@@ -488,16 +492,16 @@ class AcademicBenchmarkPlugin(BIMPlugin):
 
 
 def create_default_plugin_registry() -> PluginRegistry:
-    """初始化装载所有核心系统插件与标准 Profiles。"""
+    """初始化装载所有核心系统插件与标准 Profiles（开启严格依赖校验）。"""
     registry = PluginRegistry()
 
-    # 1. 注册核心系统插件 (原子注册)
-    registry.register(MunicipalUtilityPlugin())
-    registry.register(RuleCompliancePlugin())
-    registry.register(CADHostBlenderPlugin())
-    registry.register(CADHostVectorworksPlugin())
-    registry.register(SpatialGraphPlugin())
-    registry.register(AcademicBenchmarkPlugin())
+    # 1. 注册核心系统插件 (严格按依赖拓扑顺序注册并开启 check_dependencies)
+    registry.register(MunicipalUtilityPlugin(), check_dependencies=True)
+    registry.register(RuleCompliancePlugin(), check_dependencies=True)
+    registry.register(CADHostBlenderPlugin(), check_dependencies=True)
+    registry.register(CADHostVectorworksPlugin(), check_dependencies=True)
+    registry.register(SpatialGraphPlugin(), check_dependencies=True)
+    registry.register(AcademicBenchmarkPlugin(), check_dependencies=True)
 
     # 2. 注册预设专家 Profile
     registry.register_profile(

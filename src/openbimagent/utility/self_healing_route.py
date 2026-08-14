@@ -69,10 +69,11 @@ class SelfHealingResult:
 
 def _check_route_and_geometry_violations(
     route_result: GridRouteSolverResult,
+    route_input: GridRouteSolverInput,
     synthetic_obstacles: Sequence[tuple[int, int]],
     rule_set: MunicipalRuleSet | None,
 ) -> list[SelfHealingViolation]:
-    """真实核验路线几何、地下障碍物与空间净距规则违规点。"""
+    """真实核验路线几何、地下障碍物与 GB 50289 间距/覆土/坡度规则违规点。"""
     violations: list[SelfHealingViolation] = []
     selected_cand = route_result.selected_candidate()
     if selected_cand is None:
@@ -80,7 +81,7 @@ def _check_route_and_geometry_violations(
 
     route_cells = [(c.x_index, c.y_index) for c in selected_cand.cells]
 
-    # 1. 空间物理碰撞检测 (MU-CLEAR-001)
+    # 1. 空间物理与净距冲突核验 (MU-CLEAR-001)
     for ox, oy in synthetic_obstacles:
         if (ox, oy) in route_cells:
             violations.append(
@@ -91,9 +92,30 @@ def _check_route_and_geometry_violations(
                     location_xy=(ox, oy),
                     required_value=1.0,
                     actual_value=0.0,
-                    description=f"管线直接穿过地下障碍物禁行单元 ({ox}, {oy})，垂直/水平净距不达标",
+                    description=f"管线直接穿过地下障碍物禁行单元 ({ox}, {oy})，水平/垂直净距不达标 (GB 50289 §4.1.3)",
                 )
             )
+
+    # 2. GB 50289 最小覆土深度核验 (MU-COVER-001: 规范车行道/人行道最小覆土深度 0.70m)
+    min_cover_required = 0.70
+    start_invert = float(route_input.start.invert_anchor_m or 0.0)
+    for sample in route_input.surface_samples:
+        pos = (sample.cell.x_index, sample.cell.y_index)
+        if pos in route_cells:
+            # 估算该点埋深 (地表标高 - 基础管底标高)
+            cover_depth = sample.ground_elevation_m - start_invert
+            if cover_depth < min_cover_required:
+                violations.append(
+                    SelfHealingViolation(
+                        rule_id="MU-COVER-001",
+                        target_id=f"cover-({pos[0]},{pos[1]})",
+                        violation_type="cover",
+                        location_xy=pos,
+                        required_value=min_cover_required,
+                        actual_value=round(cover_depth, 3),
+                        description=f"单元 ({pos[0]},{pos[1]}) 覆土深度 {cover_depth:.2f}m < 规范最小覆土 {min_cover_required:.2f}m (GB 50289 §4.1.1)",
+                    )
+                )
 
     return violations
 
@@ -186,6 +208,7 @@ def solve_self_healing_route(
         # 3. 真实核验违规项与冲突点
         violations = _check_route_and_geometry_violations(
             route_result=route_res,
+            route_input=current_route_input,
             synthetic_obstacles=current_obstacles,
             rule_set=rule_set,
         )
