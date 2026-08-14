@@ -595,6 +595,7 @@ pre {
       <div class="tab" onclick="switchTab('tab-graph')">空间图谱 & 自愈</div>
       <div class="tab" onclick="switchTab('tab-artifacts')">交付工件</div>
       <div class="tab" onclick="switchTab('tab-ir')">Compiled IR</div>
+      <div class="tab" onclick="switchTab('tab-plugins')">插件清单 (DSH Slots)</div>
     </div>
 
     <!-- Tab 1: 3D Viewport -->
@@ -742,6 +743,50 @@ pre {
   "canonical_hash": "e9296294eb35eb22ecca11a7d3322e94a90588c7"
 }</pre>
     </div>
+
+    <!-- Tab 6: Plugin Inventory (DSH UI-Slots) -->
+    <div id="tab-plugins" class="tab-content">
+      <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 10px;">
+        微内核插件中心与 UI-Slots 插槽分布（对标 DeepSeek-Harness Cordis）：
+      </div>
+      <div id="pluginListContainer">
+        <div class="rule-item">
+          <div class="rule-header">
+            <span class="rule-id">plugin.core.municipal_utility</span>
+            <span class="badge-pass">ACTIVE</span>
+          </div>
+          <div class="rule-desc">提供四大确定性求解器与自愈算法 · 声明插槽: workbench:tab.compiled_ir, chat:card.hydraulic_calc</div>
+        </div>
+        <div class="rule-item">
+          <div class="rule-header">
+            <span class="rule-id">plugin.core.rule_compliance</span>
+            <span class="badge-pass">ACTIVE</span>
+          </div>
+          <div class="rule-desc">GB 50289-2016 国家标准审查 · 声明插槽: workbench:tab.rules_tree, workbench:tab.artifacts</div>
+        </div>
+        <div class="rule-item">
+          <div class="rule-header">
+            <span class="rule-id">plugin.host.blender_mcp</span>
+            <span class="badge-pass">ACTIVE</span>
+          </div>
+          <div class="rule-desc">Blender 5.2 3D 渲染与几何构建 · 声明插槽: header:status.blender_mcp, workbench:tab.viewport_3d</div>
+        </div>
+        <div class="rule-item">
+          <div class="rule-header">
+            <span class="rule-id">plugin.host.vectorworks_mcp</span>
+            <span class="badge-pass">ACTIVE</span>
+          </div>
+          <div class="rule-desc">Vectorworks 2024 工程施工图与 VWX 生成 · 声明插槽: header:status.vwx_mcp</div>
+        </div>
+        <div class="rule-item">
+          <div class="rule-header">
+            <span class="rule-id">plugin.engine.spatial_graph</span>
+            <span class="badge-pass">ACTIVE</span>
+          </div>
+          <div class="rule-desc">3D Spatial Graph 空间图谱与 DAG 核验 · 声明插槽: workbench:tab.spatial_graph</div>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -805,13 +850,43 @@ function viewIR() {
   document.querySelectorAll('.tab')[3].click();
 }
 
-function handleChat(msg) {
-  if (!msg.trim()) return;
-  alert('收到指令: ' + msg);
+class BIMSlotRegistry {
+  constructor() {
+    this.slots = [];
+    this.plugins = [];
+  }
+  async init() {
+    const data = await fetchJSON(API + '/api/v1/plugins');
+    if (data && data.active_plugins) {
+      this.plugins = data.active_plugins;
+      this.slots = data.ui_slots || [];
+      this.render();
+    }
+  }
+  render() {
+    const container = document.getElementById('pluginListContainer');
+    if (!container || !this.plugins.length) return;
+    container.innerHTML = this.plugins.map(p => `
+      <div class="rule-item">
+        <div class="rule-header">
+          <span class="rule-id">${p.plugin_id}</span>
+          <span class="badge-pass">${p.state.toUpperCase()}</span>
+        </div>
+        <div class="rule-desc">
+          <strong>${p.name}</strong> (v${p.version}) · ${p.description}<br>
+          <span style="color:var(--text-muted);">提供能力: ${(p.provides_capabilities||[]).join(', ')}</span><br>
+          <span style="color:var(--primary);">挂载插槽: ${(p.declared_slots||[]).map(s=>s.slot_key).join(', ')}</span>
+        </div>
+      </div>
+    `).join('');
+  }
 }
+
+const slotRegistry = new BIMSlotRegistry();
 
 async function loadAll() {
   await loadSessions();
+  await slotRegistry.init();
 }
 
 // Three.js 3D WebGL Pipe Visualizer

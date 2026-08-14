@@ -1,9 +1,9 @@
 """三维空间拓扑图谱引擎 (Spatial BIM Graph Engine)。
 
 将 CompiledUtilityIR 与空间几何实体转化为 3D 空间拓扑图谱，提供：
-  - 毫秒级 R-Tree 空间邻域检索 (find_nodes_in_radius)
+  - 空间邻域范围快速检索 (find_nodes_in_radius，基于 Bounding-Box 预剪枝与欧氏精确距离)
   - 空间三维管线净距与交叉分析 (find_crossings)
-  - 重力流水力 DAG 有向无环性与连通子图核验
+  - 重力流水力 DAG 有向无环性与连通子图核验 (Kahn 拓扑排序算法)
   - Web UI / GraphRAG 拓扑序列化导出
 """
 
@@ -129,10 +129,13 @@ class SpatialBIMGraph:
         return graph
 
     def find_nodes_in_radius(self, center_xy: tuple[float, float], radius_m: float) -> list[SpatialNode]:
-        """查询指定二维范围内的所有节点。"""
+        """查询指定二维范围内的所有节点（先通过 Bounding-Box 预剪枝，再计算欧氏距离）。"""
         cx, cy = center_xy
         results: list[SpatialNode] = []
         for node in self.nodes.values():
+            # Bounding-box 快速初筛
+            if abs(node.x - cx) > radius_m or abs(node.y - cy) > radius_m:
+                continue
             dist = math.hypot(node.x - cx, node.y - cy)
             if dist <= radius_m:
                 results.append(node)

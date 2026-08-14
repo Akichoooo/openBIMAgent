@@ -65,6 +65,34 @@ def build_m2_readonly_app(
         add_sse_endpoint(app, sessions_dir=sessions_dir, budget=sse_budget)
     add_web_ui(app)
 
+    @app.get("/api/v1/plugins", summary="获取已加载插件清单与 Profile 列表", tags=["Plugins"])
+    async def get_plugins_inventory() -> dict:
+        from openbimagent.core.plugin import default_plugin_registry
+
+        return default_plugin_registry.export_inventory()
+
+    @app.get("/api/v1/ui/slots", summary="获取声明式 UI 插槽注册表", tags=["Plugins"])
+    async def get_ui_slots() -> dict:
+        from openbimagent.core.plugin import default_plugin_registry
+
+        inv = default_plugin_registry.export_inventory()
+        return {"slots": inv["ui_slots"], "total_slots": len(inv["ui_slots"])}
+
+    @app.post("/api/v1/plugins/invoke", summary="通过微内核调度执行插件能力", tags=["Plugins"])
+    async def invoke_plugin_capability(request: Request) -> dict:
+        from openbimagent.core.plugin import default_plugin_registry
+
+        body = await request.json()
+        capability = body.get("capability")
+        if not capability:
+            return {"status": "error", "error": "缺少 capability 参数"}
+        payload = body.get("payload", {})
+        try:
+            res = default_plugin_registry.invoke(capability, **payload)
+            return {"status": "success", "capability": capability, "result": str(res)}
+        except Exception as exc:
+            return {"status": "error", "capability": capability, "error": str(exc)}
+
     @app.api_route(
         "/api/v1/{path:path}",
         methods=["GET", "POST", "PUT", "PATCH", "DELETE"],

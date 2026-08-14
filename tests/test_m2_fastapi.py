@@ -95,3 +95,33 @@ def test_web_ui_accessible() -> None:
     assert resp.status_code == 200
     assert "openBIMAgent" in resp.text
     assert "three.min.js" in resp.text
+
+
+def test_plugins_inventory_endpoint() -> None:
+    client = _app()
+    resp = client.get("/api/v1/plugins")
+    assert resp.status_code == 200
+    d = resp.json()
+    assert d["plugin_count"] >= 6
+    assert any(p["plugin_id"] == "plugin.core.municipal_utility" for p in d["active_plugins"])
+
+
+def test_ui_slots_endpoint() -> None:
+    client = _app()
+    resp = client.get("/api/v1/ui/slots")
+    assert resp.status_code == 200
+    d = resp.json()
+    assert d["total_slots"] >= 5
+    assert any(s["slot_key"] == "workbench:tab.compiled_ir" for s in d["slots"])
+
+
+def test_plugin_capability_invoke_endpoint() -> None:
+    client = _app()
+    resp = client.post(
+        "/api/v1/plugins/invoke",
+        json={"capability": "rules:gb50289", "payload": {}},
+    )
+    assert resp.status_code == 200
+    d = resp.json()
+    assert d["status"] == "success"
+    assert d["capability"] == "rules:gb50289"

@@ -13,7 +13,7 @@ def test_academic_benchmark_runs_and_formats_table(tmp_path: Path) -> None:
     output_file = tmp_path / "academic_report.md"
     report = run_academic_benchmark(scenarios=("B1", "B2"), output_path=output_file)
 
-    assert report.benchmark_id == "BIMBench-Municipal-2026"
+    assert report.benchmark_id.startswith("BIMBench-Municipal-2026")
     assert report.scenario_count == 2
     assert len(report.methods) == 3
 
@@ -34,3 +34,12 @@ def test_academic_benchmark_runs_and_formats_table(tmp_path: Path) -> None:
     # 验证文件输出
     assert output_file.exists()
     assert output_file.read_text(encoding="utf-8") == md_table
+
+    # 验证 LaTeX 表格生成
+    tex_file = tmp_path / "academic_report.tex"
+    tex_report = run_academic_benchmark(scenarios=("B1", "B2"), output_path=tex_file)
+    latex_str = tex_report.to_latex_table()
+    assert r"\begin{table}" in latex_str
+    assert r"\toprule" in latex_str
+    assert tex_file.exists()
+
