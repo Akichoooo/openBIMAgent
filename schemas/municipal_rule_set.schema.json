@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://openbimagent.local/schemas/municipal_rule_set.schema.json",
   "title": "MunicipalRuleSet",
-  "description": "由受信任 constraints.yaml 确定性编译的市政 DN300 污水管水平净距规则集；生产规则必须同时具备高置信度与完整规范核验证据。",
+  "description": "由受信任 constraints.yaml 确定性编译的市政 DN300 污水管水平净距规则集；生产规则必须同时具备高置信度与完整规范核验证据。v1.2 起新增 self_tests：规则自带 match/not_match 选择自检样例（对标 Codex execpolicy 加载即单测）；production 规则两类样例缺一不可。",
   "type": "object",
   "required": [
     "protocol_version",
@@ -16,28 +16,70 @@
   ],
   "additionalProperties": false,
   "properties": {
-    "protocol_version": {"const": "1.1"},
-    "rule_set_id": {"const": "municipal-utility-dn300-wastewater-clearance"},
-    "source_path": {"type": "string", "minLength": 1, "maxLength": 1024},
-    "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "compiler_name": {"const": "municipal-constraints-compiler"},
-    "compiler_version": {"const": "0.2.0"},
+    "protocol_version": {
+      "const": "1.2"
+    },
+    "rule_set_id": {
+      "const": "municipal-utility-dn300-wastewater-clearance"
+    },
+    "source_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "source_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "compiler_name": {
+      "const": "municipal-constraints-compiler"
+    },
+    "compiler_version": {
+      "const": "0.3.0"
+    },
     "rules": {
       "type": "array",
       "minItems": 1,
-      "items": {"$ref": "#/$defs/clearance_rule"}
+      "items": {
+        "$ref": "#/$defs/clearance_rule"
+      }
     },
-    "canonical_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+    "canonical_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
   },
   "$defs": {
     "condition": {
       "type": "object",
-      "required": ["field", "operator", "value"],
+      "required": [
+        "field",
+        "operator",
+        "value"
+      ],
       "additionalProperties": false,
       "properties": {
-        "field": {"enum": ["outer_diameter_mm", "pressure_class", "burial_method", "voltage_kv"]},
-        "operator": {"enum": ["eq", "le", "gt"]},
-        "value": {"type": ["string", "number"]}
+        "field": {
+          "enum": [
+            "outer_diameter_mm",
+            "pressure_class",
+            "burial_method",
+            "voltage_kv"
+          ]
+        },
+        "operator": {
+          "enum": [
+            "eq",
+            "le",
+            "gt"
+          ]
+        },
+        "value": {
+          "type": [
+            "string",
+            "number"
+          ]
+        }
       }
     },
     "verification": {
@@ -61,21 +103,114 @@
       ],
       "additionalProperties": false,
       "properties": {
-        "status": {"enum": ["verified", "unverified"]},
-        "source_tier": {"enum": ["official_copy", "authoritative_secondary", "unverified"]},
-        "standard_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
-        "standard_title": {"type": ["string", "null"], "minLength": 1, "maxLength": 512},
-        "standard_status": {"enum": ["current", "superseded", "unknown"]},
-        "status_checked_at": {"type": ["string", "null"], "format": "date"},
-        "status_source_url": {"type": ["string", "null"], "pattern": "^https?://[^\\s]+$", "maxLength": 2048},
-        "clause": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
-        "table": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
-        "content_checked_at": {"type": ["string", "null"], "format": "date"},
-        "content_source_url": {"type": ["string", "null"], "pattern": "^https?://[^\\s]+$", "maxLength": 2048},
-        "content_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
-        "evidence_locator": {"type": ["string", "null"], "minLength": 1, "maxLength": 2048},
-        "crosscheck_source": {"type": ["string", "null"], "minLength": 1, "maxLength": 1024},
-        "applicability_complete": {"type": "boolean"}
+        "status": {
+          "enum": [
+            "verified",
+            "unverified"
+          ]
+        },
+        "source_tier": {
+          "enum": [
+            "official_copy",
+            "authoritative_secondary",
+            "unverified"
+          ]
+        },
+        "standard_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "standard_title": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "standard_status": {
+          "enum": [
+            "current",
+            "superseded",
+            "unknown"
+          ]
+        },
+        "status_checked_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "status_source_url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^https?://[^\\s]+$",
+          "maxLength": 2048
+        },
+        "clause": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "table": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "content_checked_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "content_source_url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^https?://[^\\s]+$",
+          "maxLength": 2048
+        },
+        "content_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "evidence_locator": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "crosscheck_source": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "applicability_complete": {
+          "type": "boolean"
+        }
       }
     },
     "clearance_rule": {
@@ -98,26 +233,135 @@
       ],
       "additionalProperties": false,
       "properties": {
-        "rule_key": {"type": "string", "minLength": 1, "maxLength": 256},
-        "source_rule_id": {"type": "string", "pattern": "^MU-CLEAR-[0-9]{3}$"},
-        "design_system": {"const": "wastewater"},
-        "design_diameter_mm": {"const": 300.0},
-        "obstacle_kind": {"enum": ["aabb", "existing_pipe"]},
-        "obstacle_category": {"enum": ["building", "water", "gas", "power", "telecom"]},
-        "required_clearance_m": {"type": "number", "exclusiveMinimum": 0},
-        "unit": {"const": "m"},
-        "source_clause": {"type": "string", "minLength": 1, "maxLength": 1024},
-        "verification": {"$ref": "#/$defs/verification"},
-        "confidence": {"enum": ["high", "medium", "low"]},
-        "enforcement": {"enum": ["production", "review_required"]},
+        "rule_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "source_rule_id": {
+          "type": "string",
+          "pattern": "^MU-CLEAR-[0-9]{3}$"
+        },
+        "design_system": {
+          "const": "wastewater"
+        },
+        "design_diameter_mm": {
+          "const": 300.0
+        },
+        "obstacle_kind": {
+          "enum": [
+            "aabb",
+            "existing_pipe"
+          ]
+        },
+        "obstacle_category": {
+          "enum": [
+            "building",
+            "water",
+            "gas",
+            "power",
+            "telecom"
+          ]
+        },
+        "required_clearance_m": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "unit": {
+          "const": "m"
+        },
+        "source_clause": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "verification": {
+          "$ref": "#/$defs/verification"
+        },
+        "confidence": {
+          "enum": [
+            "high",
+            "medium",
+            "low"
+          ]
+        },
+        "enforcement": {
+          "enum": [
+            "production",
+            "review_required"
+          ]
+        },
         "required_attributes": {
           "type": "array",
           "uniqueItems": true,
-          "items": {"enum": ["outer_diameter_mm", "pressure_class", "burial_method", "voltage_kv"]}
+          "items": {
+            "enum": [
+              "outer_diameter_mm",
+              "pressure_class",
+              "burial_method",
+              "voltage_kv"
+            ]
+          }
         },
         "conditions": {
           "type": "array",
-          "items": {"$ref": "#/$defs/condition"}
+          "items": {
+            "$ref": "#/$defs/condition"
+          }
+        },
+        "self_tests": {
+          "$ref": "#/$defs/self_test_suite"
+        }
+      }
+    },
+    "self_test_case": {
+      "type": "object",
+      "description": "一次 select_clearance_rule 输入场景",
+      "required": [
+        "obstacle_kind",
+        "obstacle_category"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "obstacle_kind": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "obstacle_category": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "attributes": {
+          "type": "object",
+          "description": "工程属性事实；缺属性触发失败关闭",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          }
+        }
+      }
+    },
+    "self_test_suite": {
+      "type": "object",
+      "description": "match 样例必须恰好选中本规则，not_match 样例不得选中本规则；编译时重放验证",
+      "additionalProperties": false,
+      "properties": {
+        "match": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/self_test_case"
+          }
+        },
+        "not_match": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/self_test_case"
+          }
         }
       }
     }

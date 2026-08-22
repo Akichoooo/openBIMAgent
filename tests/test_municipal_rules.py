@@ -58,8 +58,8 @@ def _rule(payload: dict, rule_id: str) -> dict:
 def test_rule_set_compiles_with_source_canonical_hashes_and_verification() -> None:
     first = compile_municipal_rule_set(CONSTRAINTS)
     second = compile_municipal_rule_set(CONSTRAINTS)
-    assert first.protocol_version == "1.1"
-    assert first.compiler_version == "0.2.0"
+    assert first.protocol_version == "1.2"
+    assert first.compiler_version == "0.3.0"
     assert first.source_sha256 == hashlib.sha256(CONSTRAINTS.read_bytes()).hexdigest()
     assert first.canonical_json() == second.canonical_json()
     assert first.canonical_sha256 == second.canonical_sha256

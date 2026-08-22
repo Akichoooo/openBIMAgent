@@ -11,6 +11,10 @@
 #   verified_by    - 旧知识条目的核实方式；可执行净距规则改用 verification 结构化证据
 #   verification   - 标准身份、状态、内容副本、SHA-256、页表定位、核验日期与适用性完整性
 #   confidence     - high / medium / low；high 本身不等于 production，仍须通过 verification 门禁
+#   self_tests     - 可执行净距规则自检样例(对标 Codex execpolicy "加载即单测")：
+#                    match 必须恰好选中本规则、not_match 不得选中本规则(含边界值/跨界/缺属性场景)；
+#                    单值规则直接写 match/not_match,多档规则按变体名分组；
+#                    enforcement=production 的规则两类样例缺一不可,编译时重放验证,失效即拒绝整个规则集。
 # 消费方:domain_gate(确定性规则校验)。数值错一条,生成的管网就错一片,故低置信条目需人工复核后再上线。
 
 constraints:
@@ -375,6 +379,14 @@ constraints:
       evidence_locator: PDF pages 13-15; row 污水、雨水管线; column 建(构)筑物
       crosscheck_source: independent_pdf_copy
       applicability_complete: true
+    self_tests:
+      match:
+        - {obstacle_kind: aabb, obstacle_category: building, attributes: {}}
+      not_match:
+        # 类别不符 → 无适用规则
+        - {obstacle_kind: aabb, obstacle_category: water, attributes: {outer_diameter_mm: 150}}
+        # 建筑物按 aabb 建模，existing_pipe + building 无适用规则
+        - {obstacle_kind: existing_pipe, obstacle_category: building, attributes: {}}
     note: 建(构)筑物 ↔ 污水、雨水管线 = 2.5m；按水平净距定义测量。
 
   - rule_id: MU-CLEAR-002
@@ -420,6 +432,26 @@ constraints:
     verification:
       <<: *gb50289_table419_verification
       evidence_locator: PDF page 13; row 污水、雨水管线; columns 给水管线 d≤200mm / d>200mm
+    self_tests:
+      d_le_200:
+        match:
+          - {obstacle_kind: existing_pipe, obstacle_category: water, attributes: {outer_diameter_mm: 150}}
+          # 边界：le 含端点，d=200 仍属 d_le_200
+          - {obstacle_kind: existing_pipe, obstacle_category: water, attributes: {outer_diameter_mm: 200}}
+        not_match:
+          # 跨界：d>200 落入兄弟变体 d_gt_200
+          - {obstacle_kind: existing_pipe, obstacle_category: water, attributes: {outer_diameter_mm: 300}}
+          # 缺属性 → 失败关闭(不选中任何规则)
+          - {obstacle_kind: existing_pipe, obstacle_category: water, attributes: {}}
+      d_gt_200:
+        match:
+          - {obstacle_kind: existing_pipe, obstacle_category: water, attributes: {outer_diameter_mm: 300}}
+          # 边界外首点：200.1 > 200
+          - {obstacle_kind: existing_pipe, obstacle_category: water, attributes: {outer_diameter_mm: 200.1}}
+        not_match:
+          - {obstacle_kind: existing_pipe, obstacle_category: water, attributes: {outer_diameter_mm: 150}}
+          # 边界：d=200 不属于 gt 档
+          - {obstacle_kind: existing_pipe, obstacle_category: water, attributes: {outer_diameter_mm: 200}}
     note: 给水管 ↔ 污水、雨水管线：d≤200mm 为 1.0m，d>200mm 为 1.5m。
 
   - rule_id: MU-CLEAR-006
@@ -438,6 +470,36 @@ constraints:
     verification:
       <<: *gb50289_table419_verification
       evidence_locator: PDF page 13; row 污水、雨水管线; columns 燃气低压 / 中压 B,A / 次高压 B,A
+    self_tests:
+      low:
+        match:
+          - {obstacle_kind: existing_pipe, obstacle_category: gas, attributes: {pressure_class: low}}
+        not_match:
+          - {obstacle_kind: existing_pipe, obstacle_category: gas, attributes: {pressure_class: medium_b}}
+          # 表外档位 → 不支持，失败关闭
+          - {obstacle_kind: existing_pipe, obstacle_category: gas, attributes: {pressure_class: ultra_high}}
+      medium_b:
+        match:
+          - {obstacle_kind: existing_pipe, obstacle_category: gas, attributes: {pressure_class: medium_b}}
+        not_match:
+          - {obstacle_kind: existing_pipe, obstacle_category: gas, attributes: {pressure_class: low}}
+          # 缺属性 → 失败关闭
+          - {obstacle_kind: existing_pipe, obstacle_category: gas, attributes: {}}
+      medium_a:
+        match:
+          - {obstacle_kind: existing_pipe, obstacle_category: gas, attributes: {pressure_class: medium_a}}
+        not_match:
+          - {obstacle_kind: existing_pipe, obstacle_category: gas, attributes: {pressure_class: medium_b}}
+      sub_high_b:
+        match:
+          - {obstacle_kind: existing_pipe, obstacle_category: gas, attributes: {pressure_class: sub_high_b}}
+        not_match:
+          - {obstacle_kind: existing_pipe, obstacle_category: gas, attributes: {pressure_class: medium_a}}
+      sub_high_a:
+        match:
+          - {obstacle_kind: existing_pipe, obstacle_category: gas, attributes: {pressure_class: sub_high_a}}
+        not_match:
+          - {obstacle_kind: existing_pipe, obstacle_category: gas, attributes: {pressure_class: sub_high_b}}
     note: 旧条目“中压 1.5m”错误；原表中压 B/A 合并单元格均为 1.2m，次高压 B/A 分别为 1.5m/2.0m。大于 1.6MPa 不适用本表。
 
   - rule_id: MU-CLEAR-007
@@ -453,6 +515,19 @@ constraints:
     verification:
       <<: *gb50289_table419_verification
       evidence_locator: PDF page 13; row 污水、雨水管线; columns 通信管线直埋 / 管道、通道
+    self_tests:
+      direct_buried:
+        match:
+          - {obstacle_kind: existing_pipe, obstacle_category: telecom, attributes: {burial_method: direct_buried}}
+        not_match:
+          - {obstacle_kind: existing_pipe, obstacle_category: telecom, attributes: {burial_method: duct}}
+          # 缺属性 → 失败关闭
+          - {obstacle_kind: existing_pipe, obstacle_category: telecom, attributes: {}}
+      duct:
+        match:
+          - {obstacle_kind: existing_pipe, obstacle_category: telecom, attributes: {burial_method: duct}}
+        not_match:
+          - {obstacle_kind: existing_pipe, obstacle_category: telecom, attributes: {burial_method: direct_buried}}
     note: 旧值 0.5m 错误，疑似串入表 4.1.14 垂直净距；表 4.1.9 水平净距两种通信敷设方式均为 1.0m。
 
   - rule_id: MU-CLEAR-008
@@ -468,4 +543,17 @@ constraints:
     verification:
       <<: *gb50289_table419_verification
       evidence_locator: PDF page 13; row 污水、雨水管线; columns 电力管线直埋 / 保护管
+    self_tests:
+      direct_buried:
+        match:
+          - {obstacle_kind: existing_pipe, obstacle_category: power, attributes: {burial_method: direct_buried}}
+        not_match:
+          - {obstacle_kind: existing_pipe, obstacle_category: power, attributes: {burial_method: protective_conduit}}
+          # 缺属性 → 失败关闭
+          - {obstacle_kind: existing_pipe, obstacle_category: power, attributes: {}}
+      protective_conduit:
+        match:
+          - {obstacle_kind: existing_pipe, obstacle_category: power, attributes: {burial_method: protective_conduit}}
+        not_match:
+          - {obstacle_kind: existing_pipe, obstacle_category: power, attributes: {burial_method: direct_buried}}
     note: 原表该交叉位置为合并单元格 0.5m，不按电压分档；旧编译器强制 voltage_kv 没有规范依据。

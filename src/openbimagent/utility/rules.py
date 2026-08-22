@@ -23,10 +23,10 @@ from pydantic import Field, ValidationError, field_validator, model_validator
 from openbimagent.schema_gate.gate import SchemaGate, SchemaGateError
 from openbimagent.utility.contracts import StrictFrozenModel
 
-MUNICIPAL_RULE_SET_VERSION = "1.1"
+MUNICIPAL_RULE_SET_VERSION = "1.2"
 MUNICIPAL_RULE_SET_ID = "municipal-utility-dn300-wastewater-clearance"
 MUNICIPAL_RULE_COMPILER_NAME = "municipal-constraints-compiler"
-MUNICIPAL_RULE_COMPILER_VERSION = "0.2.0"
+MUNICIPAL_RULE_COMPILER_VERSION = "0.3.0"
 DEFAULT_MUNICIPAL_CONSTRAINTS_PATH = (
     Path(__file__).resolve().parents[3]
     / "domain_packs"
@@ -81,6 +81,40 @@ class RuleCondition(StrictFrozenModel):
     field: Literal["outer_diameter_mm", "pressure_class", "burial_method", "voltage_kv"]
     operator: RuleConditionOperator
     value: str | float
+
+
+class RuleSelfTestCase(StrictFrozenModel):
+    """单条规则自检样例：一次 select_clearance_rule 调用的输入场景。
+
+    对标 Codex execpolicy 的 match/not_match 语义——规则自带可执行测试，
+    编译时对全规则集重放验证，样例失效即拒绝编译（加载即单测）。
+    """
+
+    obstacle_kind: str = Field(min_length=1, max_length=64)
+    obstacle_category: str = Field(min_length=1, max_length=64)
+    attributes: dict[str, float | str | bool] = Field(default_factory=dict)
+
+
+class RuleSelfTestSuite(StrictFrozenModel):
+    """一条编译规则的 match / not_match 自检样例集。
+
+    match 样例必须恰好选中本规则；not_match 样例不得选中本规则
+    （命中其他规则、缺属性失败关闭或不支持均视为未选中）。
+    """
+
+    match: tuple[RuleSelfTestCase, ...] = ()
+    not_match: tuple[RuleSelfTestCase, ...] = ()
+
+
+class RuleSelfTestOutcome(StrictFrozenModel):
+    """一次自检样例的重放执行结果。"""
+
+    rule_key: str = Field(min_length=1, max_length=256)
+    polarity: Literal["match", "not_match"]
+    case: RuleSelfTestCase
+    ok: bool
+    selected_rule_key: str | None = None
+    selection_status: str = Field(min_length=1, max_length=64)
 
 
 class RuleVerification(StrictFrozenModel):
@@ -148,6 +182,7 @@ class CompiledClearanceRule(StrictFrozenModel):
         Literal["outer_diameter_mm", "pressure_class", "burial_method", "voltage_kv"], ...
     ] = ()
     conditions: tuple[RuleCondition, ...] = ()
+    self_tests: RuleSelfTestSuite = Field(default_factory=RuleSelfTestSuite)
 
     @model_validator(mode="after")
     def _validate_enforcement(self) -> "CompiledClearanceRule":
@@ -168,12 +203,12 @@ class CompiledClearanceRule(StrictFrozenModel):
 
 
 class MunicipalRuleSet(StrictFrozenModel):
-    protocol_version: str = Field(default=MUNICIPAL_RULE_SET_VERSION, pattern=r"^1\.1$")
+    protocol_version: str = Field(default=MUNICIPAL_RULE_SET_VERSION, pattern=r"^1\.2$")
     rule_set_id: str = Field(default=MUNICIPAL_RULE_SET_ID, min_length=1, max_length=256)
     source_path: str = Field(min_length=1, max_length=1024)
     source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     compiler_name: str = Field(default=MUNICIPAL_RULE_COMPILER_NAME, pattern=r"^municipal-constraints-compiler$")
-    compiler_version: str = Field(default=MUNICIPAL_RULE_COMPILER_VERSION, pattern=r"^0\.2\.0$")
+    compiler_version: str = Field(default=MUNICIPAL_RULE_COMPILER_VERSION, pattern=r"^0\.3\.0$")
     rules: tuple[CompiledClearanceRule, ...]
     canonical_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
@@ -303,6 +338,7 @@ def compile_municipal_rule_set(
         (schema_gate or SchemaGate()).gate_or_fix("municipal_rule_set", rule_set.model_dump(mode="json"))
     except (ValidationError, SchemaGateError) as exc:
         raise MunicipalRuleError(f"编译后的 MunicipalRuleSet 未通过门禁: {exc}") from exc
+    validate_rule_self_tests(rule_set)
     return rule_set
 
 
@@ -376,6 +412,74 @@ def select_clearance_rule(
     )
 
 
+def run_rule_self_tests(rule_set: MunicipalRuleSet) -> tuple[RuleSelfTestOutcome, ...]:
+    """对全规则集重放每条规则的自检样例，返回逐样例结果（自身不抛错）。"""
+    outcomes: list[RuleSelfTestOutcome] = []
+    for rule in rule_set.rules:
+        for polarity, cases in (
+            ("match", rule.self_tests.match),
+            ("not_match", rule.self_tests.not_match),
+        ):
+            for case in cases:
+                selection = select_clearance_rule(
+                    rule_set,
+                    obstacle_kind=case.obstacle_kind,
+                    obstacle_category=case.obstacle_category,
+                    attributes=case.attributes,
+                )
+                selected_key = selection.rule.rule_key if selection.rule is not None else None
+                hit = selected_key == rule.rule_key
+                outcomes.append(
+                    RuleSelfTestOutcome(
+                        rule_key=rule.rule_key,
+                        polarity=polarity,
+                        case=case,
+                        ok=hit if polarity == "match" else not hit,
+                        selected_rule_key=selected_key,
+                        selection_status=selection.status.value,
+                    )
+                )
+    return tuple(outcomes)
+
+
+def validate_rule_self_tests(rule_set: MunicipalRuleSet) -> tuple[RuleSelfTestOutcome, ...]:
+    """失败关闭校验：样例重放不过或 production 规则缺样例即拒绝整个规则集。
+
+    治理语义对标 Codex execpolicy 的加载期验证（"think of them as unit tests"）：
+    match 样例必须恰好选中本规则；not_match 样例不得选中本规则；
+    enforcement=production 的规则必须同时携带两类样例，否则知识源不允许上线。
+    """
+    problems: list[str] = []
+    for rule in rule_set.rules:
+        if rule.enforcement is RuleEnforcement.PRODUCTION and (
+            not rule.self_tests.match or not rule.self_tests.not_match
+        ):
+            problems.append(
+                f"规则 {rule.rule_key} 为 production 强制执行级，必须同时声明 match 与 not_match 自检样例"
+            )
+    outcomes = run_rule_self_tests(rule_set)
+    for outcome in outcomes:
+        if outcome.ok:
+            continue
+        expected = "命中本规则" if outcome.polarity == "match" else "不得命中本规则"
+        problems.append(
+            f"规则 {outcome.rule_key} 的 {outcome.polarity} 自检样例未通过: 期望{expected}, "
+            f"实际 selection_status={outcome.selection_status}, "
+            f"selected={outcome.selected_rule_key or '未选中任何规则'}, "
+            f"case={_self_test_case_detail(outcome.case)}"
+        )
+    if problems:
+        raise MunicipalRuleError("规则自检样例验证失败（加载即单测）:\n" + "\n".join(problems))
+    return outcomes
+
+
+def _self_test_case_detail(case: RuleSelfTestCase) -> str:
+    return (
+        f"kind={case.obstacle_kind}, category={case.obstacle_category}, "
+        f"attributes={dict(case.attributes)}"
+    )
+
+
 def _require_source_rule(
     indexed: Mapping[str, Mapping[str, Any]],
     rule_id: str,
@@ -389,6 +493,18 @@ def _require_source_rule(
     if raw.get("unit") != "m":
         raise MunicipalRuleError(f"规则 {rule_id} unit 必须为 m")
     return raw
+
+
+def _suite_from_raw(raw_value: Any, *, rule_id: str, variant: str | None = None) -> RuleSelfTestSuite:
+    label = rule_id if variant is None else f"{rule_id}/{variant}"
+    if raw_value is None:
+        return RuleSelfTestSuite()
+    if not isinstance(raw_value, Mapping):
+        raise MunicipalRuleError(f"规则 {label} self_tests 必须是包含 match/not_match 的 mapping")
+    try:
+        return RuleSelfTestSuite.model_validate(dict(raw_value))
+    except ValidationError as exc:
+        raise MunicipalRuleError(f"规则 {label} self_tests 非法: {exc}") from exc
 
 
 def _compile_single_value_rule(
@@ -409,6 +525,7 @@ def _compile_single_value_rule(
         obstacle_category=obstacle_category,
         required_attributes=(),
         conditions=(),
+        self_tests=_suite_from_raw(raw.get("self_tests"), rule_id=str(raw.get("rule_id"))),
     )
 
 
@@ -423,6 +540,21 @@ def _compile_mapped_rules(
         raise MunicipalRuleError(
             f"规则 {raw.get('rule_id')} values 必须精确包含 {sorted(variants)}"
         )
+    suites_raw = raw.get("self_tests")
+    if suites_raw is not None and (
+        not isinstance(suites_raw, Mapping) or not set(suites_raw).issubset(set(variants))
+    ):
+        raise MunicipalRuleError(
+            f"规则 {raw.get('rule_id')} self_tests 必须是以变体名为键的 mapping，且键 ⊆ {sorted(variants)}"
+        )
+    suites = {
+        variant: _suite_from_raw(
+            None if suites_raw is None else suites_raw.get(variant),
+            rule_id=str(raw.get("rule_id")),
+            variant=variant,
+        )
+        for variant in variants
+    }
     compiled: list[CompiledClearanceRule] = []
     for variant, (rule_key, field, operator, condition_value) in variants.items():
         value = values[variant]
@@ -439,6 +571,7 @@ def _compile_mapped_rules(
                 conditions=(
                     RuleCondition(field=field, operator=operator, value=condition_value),  # type: ignore[arg-type]
                 ),
+                self_tests=suites[variant],
             )
         )
     return compiled
@@ -455,6 +588,7 @@ def _compiled_rule(
         Literal["outer_diameter_mm", "pressure_class", "burial_method", "voltage_kv"], ...
     ],
     conditions: tuple[RuleCondition, ...],
+    self_tests: RuleSelfTestSuite,
 ) -> CompiledClearanceRule:
     try:
         confidence = RuleConfidence(str(raw.get("confidence") or ""))
@@ -481,6 +615,7 @@ def _compiled_rule(
         enforcement=enforcement,
         required_attributes=required_attributes,
         conditions=conditions,
+        self_tests=self_tests,
     )
 
 
@@ -523,9 +658,14 @@ __all__ = [
     "RuleEnforcement",
     "RuleSelectionResult",
     "RuleSelectionStatus",
+    "RuleSelfTestCase",
+    "RuleSelfTestOutcome",
+    "RuleSelfTestSuite",
     "RuleVerification",
     "VerificationSourceTier",
     "VerificationStatus",
     "compile_municipal_rule_set",
+    "run_rule_self_tests",
     "select_clearance_rule",
+    "validate_rule_self_tests",
 ]

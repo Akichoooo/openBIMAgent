@@ -562,7 +562,8 @@ def _validate_solver_declaration(phase: dict[str, Any]) -> None:
             "Solver Rule Set Schema 不匹配: "
             f"playbook={declared_rule_set_schema!r}, expected={expected_rule_set_schema!r}"
         )
-    if UTILITY_SOLVER_INPUT_VERSION != "0.4" or MUNICIPAL_RULE_SET_VERSION != "1.1":
+    # 规则集 1.2 = 1.1 + self_tests 自检样例扩展；净距数值与选择语义不变
+    if UTILITY_SOLVER_INPUT_VERSION != "0.4" or MUNICIPAL_RULE_SET_VERSION != "1.2":
         raise ValueError(
             "Runtime Solver/Rule Set 协议版本未受支持: "
             f"input={UTILITY_SOLVER_INPUT_VERSION!r}, rules={MUNICIPAL_RULE_SET_VERSION!r}"
