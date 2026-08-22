@@ -10,13 +10,25 @@ from openbimagent.core.plugin import (
     BIMProfile,
     CADHostBlenderPlugin,
     CADHostVectorworksPlugin,
+    CapabilityOverride,
+    CapabilityPolicyDecision,
+    CapabilityPolicyRule,
+    MunicipalDirectPlugin,
     MunicipalUtilityPlugin,
     PluginLifecycleState,
+    PluginPolicyForbiddenError,
+    PluginPolicyPromptRequiredError,
     PluginRegistry,
     RuleCompliancePlugin,
     SpatialGraphPlugin,
     create_default_plugin_registry,
     default_plugin_registry,
+)
+from openbimagent.core.plugin_loader import (
+    MANIFEST_FILENAME,
+    PLUGINS_DIR_ENV,
+    PluginLoaderError,
+    load_external_plugins,
 )
 
 __all__ = [
@@ -26,12 +38,22 @@ __all__ = [
     "BIMProfile",
     "CADHostBlenderPlugin",
     "CADHostVectorworksPlugin",
+    "CapabilityOverride",
+    "CapabilityPolicyDecision",
+    "CapabilityPolicyRule",
+    "MANIFEST_FILENAME",
+    "MunicipalDirectPlugin",
     "MunicipalUtilityPlugin",
+    "PLUGINS_DIR_ENV",
     "PluginLifecycleState",
+    "PluginLoaderError",
+    "PluginPolicyForbiddenError",
+    "PluginPolicyPromptRequiredError",
     "PluginRegistry",
     "RuleCompliancePlugin",
     "SpatialGraphPlugin",
     "create_default_plugin_registry",
     "default_plugin_registry",
+    "load_external_plugins",
 ]
 

@@ -1,0 +1,6 @@
+[plugin]
+plugin_id = "plugin.external.example_echo"
+name = "示例 Echo 外部插件"
+version = "1.0.0"
+description = "演示 openbimagent-plugin.toml manifest 约定与外部发现加载器"
+capabilities = ["example:echo"]

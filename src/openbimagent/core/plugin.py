@@ -5,7 +5,10 @@
   - 原子性注册与回滚保护 (Atomic Registration & Rollback)
   - 运行时能力调度中枢 (Runtime Capability Dispatch: registry.invoke())
   - BIMProfile 声明式领域专家组合与依赖校验
+  - Profile 补丁层 (CapabilityOverride)：激活重定向能力绑定、停用自动还原 (patch layer)
   - 声明式 UI-Slots 前后端插槽映射
+  - 能力策略门 (CapabilityPolicy)：三态 allow/prompt/forbidden + 最长前缀匹配
+    (对标 Codex execpolicy：声明式规则、justification 进拒绝信息、prompt 需显式确认)
 """
 
 from __future__ import annotations
@@ -93,6 +96,10 @@ class BIMPlugin:
 
         return handler(*args, **kwargs)
 
+    def has_handler(self, capability: str) -> bool:
+        """检查插件是否已为指定能力注册执行 Handler（Profile 补丁层校验用）。"""
+        return capability in self._handlers
+
     def get_info(self) -> dict[str, Any]:
         """导出插件元数据信息。"""
         return {
@@ -118,13 +125,71 @@ class BIMPlugin:
 
 
 @dataclass(frozen=True)
+class CapabilityOverride:
+    """Profile 补丁层单元：把某项能力的提供者重定向到另一插件。
+
+    对标 DSH Cordis patch layer 语义——不 fork 插件树，激活 Profile 时重定向
+    能力绑定，停用时自动还原原绑定。典型用途：消融实验把
+    ``solver:self_healing`` 补丁到单轮直连基线。
+    """
+
+    capability: str
+    plugin_id: str
+    reason: str = ""
+
+
+class CapabilityPolicyDecision(StrEnum):
+    """能力策略三态决策（对标 Codex execpolicy decision）。"""
+
+    ALLOW = "allow"
+    PROMPT = "prompt"  # 需人工确认：invoke 必须显式 confirm=True
+    FORBIDDEN = "forbidden"
+
+
+@dataclass(frozen=True)
+class CapabilityPolicyRule:
+    """能力策略规则：精确能力名或 ``前缀:*`` 通配。
+
+    - ``rules:gb50289`` 仅匹配同名能力；``host:*`` 匹配一切 host: 前缀能力
+    - 多条规则命中时取特异性最强（前缀最长）的一条；平局视为配置错误
+    - justification 会原样进入拒绝信息（对标 execpolicy 的审批提示语义）
+    """
+
+    pattern: str
+    decision: CapabilityPolicyDecision
+    justification: str
+
+    def matches(self, capability: str) -> bool:
+        if self.pattern.endswith("*"):
+            return capability.startswith(self.pattern[:-1])
+        return capability == self.pattern
+
+    @property
+    def specificity(self) -> int:
+        return len(self.pattern[:-1]) if self.pattern.endswith("*") else len(self.pattern)
+
+
+class PluginPolicyForbiddenError(PermissionError):
+    """能力被策略禁止 (forbidden)。"""
+
+
+class PluginPolicyPromptRequiredError(PermissionError):
+    """能力需人工确认 (prompt)：invoke 必须显式 confirm=True。"""
+
+
+@dataclass(frozen=True)
 class BIMProfile:
-    """声明式工程专家 Profile（组合多个插件为一个专业领域方案）。"""
+    """声明式工程专家 Profile（组合多个插件为一个专业领域方案）。
+
+    overrides 为可选补丁层：激活 Profile 时重定向能力绑定，
+    停用 Profile 时还原为激活前的原绑定。
+    """
 
     profile_id: str
     name: str
     description: str
     plugin_ids: tuple[str, ...]
+    overrides: tuple[CapabilityOverride, ...] = ()
 
 
 class PluginRegistry:
@@ -134,6 +199,8 @@ class PluginRegistry:
         self._plugins: dict[str, BIMPlugin] = {}
         self._profiles: dict[str, BIMProfile] = {}
         self._capabilities: dict[str, str] = {}  # capability_name -> plugin_id
+        self._profile_patches: dict[str, dict[str, str | None]] = {}  # profile_id -> 激活前原绑定
+        self._capability_policies: tuple[CapabilityPolicyRule, ...] = ()  # 已按特异性降序
         self._context = BIMPluginContext(registry=self)
 
     def register(self, plugin: BIMPlugin, check_dependencies: bool = False) -> None:
@@ -183,8 +250,60 @@ class PluginRegistry:
         del self._plugins[plugin_id]
         logger.info("插件卸载完成: %s", plugin_id)
 
-    def invoke(self, capability: str, *args: Any, **kwargs: Any) -> Any:
-        """通过微内核调度并执行某项能力 (Capability Dispatch)。"""
+    def set_capability_policies(self, rules: tuple[CapabilityPolicyRule, ...] | list[CapabilityPolicyRule]) -> None:
+        """整体替换能力策略表（失败关闭：任一规则非法即拒绝整表）。
+
+        默认无策略 = 全部 allow（开放内核、治理显式开启）。策略属治理层，
+        与 Profile 补丁层（组合层）正交：Profile 改绑定不改权限，策略改权限不改绑定。
+        """
+        validated: list[CapabilityPolicyRule] = []
+        seen: set[str] = set()
+        for rule in rules:
+            pattern = rule.pattern
+            if not pattern or (pattern.endswith("*") and len(pattern) < 2):
+                raise ValueError(f"能力策略 pattern 非法（非空，'*' 只能作前缀通配尾符）: {pattern!r}")
+            if "*" in pattern[:-1]:
+                raise ValueError(f"能力策略 pattern 只允许尾部 '*': {pattern!r}")
+            if not isinstance(rule.decision, CapabilityPolicyDecision):
+                raise ValueError(f"能力策略 decision 非法: {rule.decision!r}")
+            if not rule.justification or not rule.justification.strip():
+                raise ValueError(f"能力策略 {pattern!r} 缺少 justification（拒绝信息必须可解释）")
+            if pattern in seen:
+                raise ValueError(f"能力策略 pattern 重复: {pattern!r}")
+            seen.add(pattern)
+            validated.append(rule)
+        self._capability_policies = tuple(
+            sorted(validated, key=lambda item: (-item.specificity, item.pattern))
+        )
+        logger.info("能力策略表已更新: %d 条", len(self._capability_policies))
+
+    def capability_policy_for(self, capability: str) -> CapabilityPolicyRule | None:
+        """返回命中的能力策略（特异性最强优先）；无策略表时返回 None。"""
+        for rule in self._capability_policies:
+            if rule.matches(capability):
+                return rule
+        return None
+
+    def invoke(self, capability: str, *args: Any, confirm: bool = False, **kwargs: Any) -> Any:
+        """通过微内核调度并执行某项能力 (Capability Dispatch)。
+
+        策略门（对标 Codex execpolicy 三态）：
+        - forbidden：直接拒绝，justification 进异常信息
+        - prompt：必须显式 ``confirm=True`` 方可执行（人工确认语义）
+        - allow / 无策略：直接放行
+        """
+        policy = self.capability_policy_for(capability)
+        if policy is not None:
+            if policy.decision is CapabilityPolicyDecision.FORBIDDEN:
+                raise PluginPolicyForbiddenError(
+                    f"能力 '{capability}' 被策略禁止 (pattern={policy.pattern}): {policy.justification}"
+                )
+            if policy.decision is CapabilityPolicyDecision.PROMPT and not confirm:
+                raise PluginPolicyPromptRequiredError(
+                    f"能力 '{capability}' 需人工确认 (pattern={policy.pattern}): "
+                    f"{policy.justification}；调用方须显式传 confirm=True"
+                )
+
         plugin_id = self._capabilities.get(capability)
         if plugin_id is None:
             raise ValueError(f"未找到提供能力 '{capability}' 的可用活跃插件。当前已提供能力: {list(self._capabilities.keys())}")
@@ -225,7 +344,7 @@ class PluginRegistry:
         return list(self._profiles.values())
 
     def activate_profile(self, profile_id: str) -> list[str]:
-        """激活一个 Profile，严格校验所有插件是否存在与活跃。"""
+        """激活一个 Profile：校验插件可用性，并应用补丁层能力重定向。"""
         profile = self._profiles.get(profile_id)
         if profile is None:
             raise ValueError(f"Profile 未找到: {profile_id}")
@@ -239,7 +358,49 @@ class PluginRegistry:
         if missing_plugins:
             raise ValueError(f"Profile '{profile_id}' 包含不可用插件: {missing_plugins}")
 
+        # 补丁层失败关闭校验：目标插件必须在 Profile 内、活跃且具备能力 Handler
+        for ov in profile.overrides:
+            if ov.plugin_id not in profile.plugin_ids:
+                raise ValueError(
+                    f"Profile '{profile_id}' 补丁目标插件 {ov.plugin_id} 未列入 plugin_ids"
+                )
+            target = self._plugins.get(ov.plugin_id)
+            if target is None or target.state != PluginLifecycleState.ACTIVE:
+                raise ValueError(f"Profile '{profile_id}' 补丁目标插件不可用: {ov.plugin_id}")
+            if not target.has_handler(ov.capability):
+                raise ValueError(
+                    f"Profile '{profile_id}' 补丁目标 {ov.plugin_id} 未注册能力 {ov.capability} 的 Handler"
+                )
+
+        # 应用补丁：记录激活前原绑定（重复激活时以当前状态为准重建）
+        saved: dict[str, str | None] = {}
+        for ov in profile.overrides:
+            if ov.capability not in saved:
+                saved[ov.capability] = self._capabilities.get(ov.capability)
+        for ov in profile.overrides:
+            self._capabilities[ov.capability] = ov.plugin_id
+            logger.info(
+                "Profile '%s' 补丁生效: %s -> %s (%s)",
+                profile_id,
+                ov.capability,
+                ov.plugin_id,
+                ov.reason or "无说明",
+            )
+        self._profile_patches[profile_id] = saved
+
         return list(profile.plugin_ids)
+
+    def deactivate_profile(self, profile_id: str) -> None:
+        """停用一个 Profile，并将其补丁层能力绑定还原到激活前状态。"""
+        saved = self._profile_patches.pop(profile_id, None)
+        if saved is None:
+            return
+        for capability, previous_plugin_id in saved.items():
+            if previous_plugin_id is None:
+                self._capabilities.pop(capability, None)
+            else:
+                self._capabilities[capability] = previous_plugin_id
+            logger.info("Profile '%s' 补丁还原: %s -> %s", profile_id, capability, previous_plugin_id)
 
     def export_inventory(self) -> dict[str, Any]:
         """导出 DSH 兼容的完整插件清单与 UI 插槽配置。"""
@@ -263,6 +424,14 @@ class PluginRegistry:
             "active_plugins": [p.get_info() for p in active_plugins],
             "total_capabilities": len(self._capabilities),
             "capabilities_map": dict(self._capabilities),
+            "capability_policies": [
+                {
+                    "pattern": rule.pattern,
+                    "decision": rule.decision.value,
+                    "justification": rule.justification,
+                }
+                for rule in self._capability_policies
+            ],
             "ui_slots": all_slots,
             "profiles": [
                 {
@@ -270,6 +439,14 @@ class PluginRegistry:
                     "name": pf.name,
                     "description": pf.description,
                     "plugin_ids": list(pf.plugin_ids),
+                    "overrides": [
+                        {
+                            "capability": ov.capability,
+                            "plugin_id": ov.plugin_id,
+                            "reason": ov.reason,
+                        }
+                        for ov in pf.overrides
+                    ],
                 }
                 for pf in self._profiles.values()
             ],
@@ -491,6 +668,47 @@ class AcademicBenchmarkPlugin(BIMPlugin):
         self.register_handler("benchmark:academic_ablation", run_academic_benchmark)
 
 
+class MunicipalDirectPlugin(BIMPlugin):
+    """消融实验直连基线插件：关闭冲突驱动自愈的单轮求解。
+
+    不改变默认能力绑定（默认 ``solver:self_healing`` 仍由 MunicipalUtilityPlugin
+    提供）；仅当消融 Profile 通过补丁层重定向时才接管该能力。
+    """
+
+    plugin_id = "plugin.ablation.direct_solver"
+    name = "无自愈直连求解基线"
+    version = "1.0.0"
+    description = "消融对照组：max_iterations=1 单轮直连求解，关闭缓冲区膨胀与重规划自愈循环"
+    provides_capabilities = (
+        "solver:direct_no_healing",
+    )
+
+    def setup(self, ctx: BIMPluginContext) -> None:
+        super().setup(ctx)
+        from openbimagent.utility.self_healing_route import solve_self_healing_route
+
+        def _direct_no_healing(
+            *,
+            network_input,
+            route_input,
+            rule_set=None,
+            synthetic_obstacles=(),
+            max_iterations=1,
+        ):
+            # 消融语义：单轮求解即返回，不触发冲突学习与走廊剪枝
+            return solve_self_healing_route(
+                network_input=network_input,
+                route_input=route_input,
+                rule_set=rule_set,
+                synthetic_obstacles=synthetic_obstacles,
+                max_iterations=1,
+            )
+
+        self.register_handler("solver:direct_no_healing", _direct_no_healing)
+        # 为消融 Profile 的补丁重定向注册同名能力 Handler
+        self.register_handler("solver:self_healing", _direct_no_healing)
+
+
 def create_default_plugin_registry() -> PluginRegistry:
     """初始化装载所有核心系统插件与标准 Profiles（开启严格依赖校验）。"""
     registry = PluginRegistry()
@@ -502,6 +720,7 @@ def create_default_plugin_registry() -> PluginRegistry:
     registry.register(CADHostVectorworksPlugin(), check_dependencies=True)
     registry.register(SpatialGraphPlugin(), check_dependencies=True)
     registry.register(AcademicBenchmarkPlugin(), check_dependencies=True)
+    registry.register(MunicipalDirectPlugin(), check_dependencies=True)
 
     # 2. 注册预设专家 Profile
     registry.register_profile(
@@ -533,6 +752,32 @@ def create_default_plugin_registry() -> PluginRegistry:
             ),
         )
     )
+
+    # 3. 消融补丁 Profile：重定向 solver:self_healing 到单轮直连基线（对标 DSH patch layer）
+    registry.register_profile(
+        BIMProfile(
+            profile_id="profile.ablation.no_self_healing",
+            name="消融实验:关闭规则自愈",
+            description="将 solver:self_healing 能力补丁重定向至单轮直连求解器，用于 BIMBench 消融对照；停用后自动还原自愈能力",
+            plugin_ids=(
+                "plugin.core.municipal_utility",
+                "plugin.core.rule_compliance",
+                "plugin.ablation.direct_solver",
+            ),
+            overrides=(
+                CapabilityOverride(
+                    capability="solver:self_healing",
+                    plugin_id="plugin.ablation.direct_solver",
+                    reason="消融: max_iterations=1 单轮直连，关闭冲突驱动自愈循环",
+                ),
+            ),
+        )
+    )
+
+    # 4. 发现并加载外部插件 (OPENBIMAGENT_PLUGINS_DIR，未配置时零行为变化)
+    from openbimagent.core.plugin_loader import load_external_plugins
+
+    load_external_plugins(registry)
 
     return registry
 
