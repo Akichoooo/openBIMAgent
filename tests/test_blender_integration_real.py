@@ -147,10 +147,14 @@ def test_real_blender_connect_describe_cube_screenshot(headless_blender, tmp_pat
                 "bpy.ops.mesh.primitive_cube_add(size=2, location=(0, 0, 1))\n"
                 "obj = bpy.context.active_object\n"
                 "obj.name = 'M0Cube'\n"
-                # 加个相机 + 灯,确保 render_fallback 能出非黑图
+                # 临时相机/灯必须走 __OBMCP_ 前缀豁免:作用域已锁 M0Cube,
+                # 未加前缀的新对象会被 scope lock 正确拒绝并回滚(addon fork 改造 g 的设计语义)
                 "bpy.ops.object.camera_add(location=(5, -5, 5), rotation=(1.1, 0, 0.785))\n"
-                "bpy.context.scene.camera = bpy.context.active_object\n"
+                "cam = bpy.context.active_object\n"
+                "cam.name = '__OBMCP_TestCamera'\n"
+                "bpy.context.scene.camera = cam\n"
                 "bpy.ops.object.light_add(type='SUN', location=(5, 5, 10))\n"
+                "bpy.context.active_object.name = '__OBMCP_TestSun'\n"
                 "bpy.context.scene.render.engine = 'BLENDER_EEVEE'\n"
                 "bpy.context.scene.render.resolution_x = 256\n"
                 "bpy.context.scene.render.resolution_y = 256\n"
