@@ -125,3 +125,113 @@ def test_plugin_capability_invoke_endpoint() -> None:
     d = resp.json()
     assert d["status"] == "success"
     assert d["capability"] == "rules:gb50289"
+
+
+def test_demo_municipal_pipeline_endpoint() -> None:
+    """演示端点经微内核调度自愈求解器，返回真实 IR 与时间线。"""
+    client = _app()
+    resp = client.get("/api/v1/demo/municipal-pipeline")
+    assert resp.status_code == 200
+    d = resp.json()
+    assert d["status"] == "success"
+    assert d["converged"] is True
+    assert d["iterations_spent"] >= 2  # SH-2 带障碍物，自愈需 ≥2 轮
+    assert len(d["nodes"]) >= 3
+    assert len(d["segments"]) >= 1
+    # 管段携带真实 centerline 折线坐标
+    seg = d["segments"][0]
+    assert len(seg["points"]) >= 2
+    assert all({"x", "y", "z"} <= set(p) for p in seg["points"])
+    # 自愈时间线与消解冲突为真实求解器输出
+    assert any(t["converged"] for t in d["timeline"])
+    assert len(d["resolved_violations"]) >= 1
+
+# =========================================================================
+# Codex 吸收项：健康探针 / invoke 背压 (-32001) / 策略门 confirm 透传
+# =========================================================================
+
+
+def test_healthz_and_readyz_probes() -> None:
+    client = _app()
+    resp = client.get("/healthz")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok"}
+    resp = client.get("/readyz")
+    assert resp.status_code == 200
+    d = resp.json()
+    assert d["status"] == "ready"
+    assert d["plugin_count"] >= 7
+    assert d["total_capabilities"] >= 14
+
+
+def test_invoke_concurrency_guard_saturated_rejects() -> None:
+    from openbimagent.server.fastapi_app import InvokeConcurrencyGuard
+
+    guard = InvokeConcurrencyGuard(2)
+    assert guard.try_acquire() is True
+    assert guard.try_acquire() is True
+    assert guard.try_acquire() is False  # 满载立即拒绝，不排队
+    guard.release()
+    assert guard.try_acquire() is True
+
+
+def test_invoke_concurrency_guard_validates_limit() -> None:
+    import pytest
+    from openbimagent.server.fastapi_app import InvokeConcurrencyGuard
+
+    with pytest.raises(ValueError):
+        InvokeConcurrencyGuard(0)
+
+
+def test_invoke_endpoint_passes_confirm_through_policy_gate() -> None:
+    """prompt 策略全链路：无 confirm 报错，带 confirm=true 放行。"""
+    from openbimagent.core.plugin import (
+        CapabilityPolicyDecision,
+        CapabilityPolicyRule,
+        default_plugin_registry,
+    )
+
+    default_plugin_registry.set_capability_policies([
+        CapabilityPolicyRule(
+            pattern="rules:gb50289",
+            decision=CapabilityPolicyDecision.PROMPT,
+            justification="规则集编译属重负载能力，需人工确认",
+        ),
+    ])
+    try:
+        client = _app()
+        resp = client.post(
+            "/api/v1/plugins/invoke",
+            json={"capability": "rules:gb50289", "payload": {}},
+        )
+        assert resp.status_code == 200
+        d = resp.json()
+        assert d["status"] == "error"
+        assert "confirm=True" in d["error"]
+        assert "需人工确认" in d["error"]
+
+        resp = client.post(
+            "/api/v1/plugins/invoke",
+            json={"capability": "rules:gb50289", "payload": {}, "confirm": True},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "success"
+    finally:
+        default_plugin_registry.set_capability_policies([])
+
+
+def test_invoke_endpoint_missing_capability_is_400() -> None:
+    client = _app()
+    resp = client.post("/api/v1/plugins/invoke", json={"payload": {}})
+    assert resp.status_code == 400
+    assert resp.json()["error"] == "缺少 capability 参数"
+
+
+def test_module_level_demo_app_entry() -> None:
+    """模块级 app 入口：uvicorn openbimagent.server.fastapi_app:app 可直接启动。"""
+    from openbimagent.server.fastapi_app import app
+
+    client = TestClient(app)
+    assert client.get("/healthz").status_code == 200
+    assert client.get("/readyz").json()["status"] == "ready"
+    assert client.get("/api/v1/plugins").json()["plugin_count"] >= 7

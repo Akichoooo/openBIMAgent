@@ -11,9 +11,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
 
 from openbimagent.server.readonly_http import (
     M2HttpHeader,
@@ -26,6 +29,28 @@ from openbimagent.server.web_ui import add_web_ui
 
 M2_FASTAPI_APP_TITLE = "openBIMAgent M2 Read-Only API"
 M2_FASTAPI_APP_VERSION = "0.1"
+
+INVOKE_OVERLOADED_STATUS_CODE = 503
+INVOKE_OVERLOADED_ERROR_CODE = -32001
+INVOKE_OVERLOADED_MESSAGE = "Server overloaded; retry later."
+
+
+class InvokeConcurrencyGuard:
+    """invoke 端点有界并发背压（对标 Codex app-server 有界队列 + -32001 过载语义）。
+
+    非阻塞获取：满载立即拒绝而不是排队堆积，由调用方返回 503 让客户端重试。
+    """
+
+    def __init__(self, max_concurrency: int) -> None:
+        if max_concurrency < 1:
+            raise ValueError(f"max_concurrency 必须 ≥ 1: {max_concurrency}")
+        self._semaphore = threading.Semaphore(max_concurrency)
+
+    def try_acquire(self) -> bool:
+        return self._semaphore.acquire(blocking=False)
+
+    def release(self) -> None:
+        self._semaphore.release()
 
 
 def _request_headers_to_m2(request: Request) -> tuple[M2HttpHeader, ...]:
@@ -50,10 +75,13 @@ def build_m2_readonly_app(
     *,
     sessions_dir: Path | None = None,
     sse_budget: M2SseStreamBudget | None = None,
+    invoke_max_concurrency: int = 4,
 ) -> FastAPI:
     """构建只读 FastAPI 应用；adapter 由调用方注入（持有注入的 service）。
 
     ``sessions_dir`` 是可选的 SSE 端点目录；未提供时跳过 SSE 端点注册。
+    ``invoke_max_concurrency`` 是 /api/v1/plugins/invoke 的有界并发上限，
+    满载返回 503 + error code -32001（对标 Codex app-server 背压语义）。
     """
     app = FastAPI(
         title=M2_FASTAPI_APP_TITLE,
@@ -64,6 +92,34 @@ def build_m2_readonly_app(
     if sessions_dir is not None:
         add_sse_endpoint(app, sessions_dir=sessions_dir, budget=sse_budget)
     add_web_ui(app)
+
+    invoke_guard = InvokeConcurrencyGuard(invoke_max_concurrency)
+
+    @app.get("/healthz", include_in_schema=False, tags=["Health"])
+    async def healthz() -> dict:
+        """存活探针（对标 Codex app-server /healthz）：进程在即 200。"""
+        return {"status": "ok"}
+
+    @app.get("/readyz", include_in_schema=False, tags=["Health"])
+    async def readyz() -> Response:
+        """就绪探针：微内核必须已装载插件且具备核心求解能力。"""
+        from openbimagent.core.plugin import default_plugin_registry
+
+        inventory = default_plugin_registry.export_inventory()
+        ready = inventory["active_plugins"] and inventory["capabilities_map"].get("solver:self_healing")
+        if not ready:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "not_ready", "active_plugins": inventory["plugin_count"]},
+            )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "ready",
+                "plugin_count": inventory["plugin_count"],
+                "total_capabilities": inventory["total_capabilities"],
+            },
+        )
 
     @app.get("/api/v1/plugins", summary="获取已加载插件清单与 Profile 列表", tags=["Plugins"])
     async def get_plugins_inventory() -> dict:
@@ -79,29 +135,126 @@ def build_m2_readonly_app(
         return {"slots": inv["ui_slots"], "total_slots": len(inv["ui_slots"])}
 
     @app.post("/api/v1/plugins/invoke", summary="通过微内核调度执行插件能力", tags=["Plugins"])
-    async def invoke_plugin_capability(request: Request) -> dict:
+    async def invoke_plugin_capability(request: Request) -> Response:
         from openbimagent.core.plugin import default_plugin_registry
 
         body = await request.json()
         capability = body.get("capability")
         if not capability:
-            return {"status": "error", "error": "缺少 capability 参数"}
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "error": "缺少 capability 参数"},
+            )
         payload = body.get("payload", {})
+        confirm = bool(body.get("confirm", False))
+        if not invoke_guard.try_acquire():
+            return JSONResponse(
+                status_code=INVOKE_OVERLOADED_STATUS_CODE,
+                content={
+                    "status": "error",
+                    "capability": capability,
+                    "error": {
+                        "code": INVOKE_OVERLOADED_ERROR_CODE,
+                        "message": INVOKE_OVERLOADED_MESSAGE,
+                    },
+                },
+            )
         try:
-            res = default_plugin_registry.invoke(capability, **payload)
-            if hasattr(res, "model_dump"):
-                result_data = res.model_dump()
-            elif hasattr(res, "to_dict"):
-                result_data = res.to_dict()
-            elif hasattr(res, "_asdict"):
-                result_data = res._asdict()
-            elif isinstance(res, (dict, list, int, float, bool, str)) or res is None:
-                result_data = res
-            else:
-                result_data = str(res)
-            return {"status": "success", "capability": capability, "result": result_data}
-        except Exception as exc:
-            return {"status": "error", "capability": capability, "error": str(exc)}
+            # 求解器为同步 CPU 密集实现：放线程池执行，避免占死事件循环
+            res = await asyncio.to_thread(
+                default_plugin_registry.invoke, capability, confirm=confirm, **payload
+            )
+        except Exception as exc:  # noqa: BLE001 — 端点返回结构化错误而非 500
+            return JSONResponse(
+                status_code=200,
+                content={"status": "error", "capability": capability, "error": str(exc)},
+            )
+        finally:
+            invoke_guard.release()
+        if hasattr(res, "model_dump"):
+            result_data = res.model_dump()
+        elif hasattr(res, "to_dict"):
+            result_data = res.to_dict()
+        elif hasattr(res, "_asdict"):
+            result_data = res._asdict()
+        elif isinstance(res, (dict, list, int, float, bool, str)) or res is None:
+            result_data = res
+        else:
+            result_data = str(res)
+        return {"status": "success", "capability": capability, "result": result_data}
+
+    @app.get(
+        "/api/v1/demo/municipal-pipeline",
+        summary="运行内置自愈演示场景，返回真实 Compiled IR 与自愈时间线",
+        tags=["Plugins"],
+    )
+    async def demo_municipal_pipeline() -> dict:
+        from openbimagent.benchmark.self_healing_ablation import build_demo_invocation
+        from openbimagent.core.plugin import default_plugin_registry
+
+        try:
+            res = default_plugin_registry.invoke("solver:self_healing", **build_demo_invocation())
+        except Exception as exc:  # noqa: BLE001 — 演示端点失败返回可读错误而非 500
+            return {"status": "error", "error": f"自愈演示调度失败: {exc}"}
+
+        if res.final_ir is None:
+            return {"status": "error", "error": "自愈演示未收敛，无 final IR"}
+
+        ir = res.final_ir
+        nodes = [
+            {
+                "node_id": n.node_id,
+                "type": getattr(n.node_type, "value", str(n.node_type)),
+                "x": n.position.x_m,
+                "y": n.position.y_m,
+                "invert_z": n.position.z_m,
+                "ground": n.ground_elevation_m,
+            }
+            for n in ir.nodes
+        ]
+        segments = [
+            {
+                "segment_id": s.segment_id,
+                "points": [{"x": p.x_m, "y": p.y_m, "z": p.z_m} for p in s.centerline],
+                "diameter_mm": s.diameter_mm,
+                "slope": s.slope,
+                "length_m": s.horizontal_length_m,
+                "start_invert_m": s.start_invert_m,
+                "end_invert_m": s.end_invert_m,
+            }
+            for s in ir.segments
+        ]
+        violations = [
+            {
+                "rule_id": v.rule_id,
+                "target_id": v.target_id,
+                "violation_type": v.violation_type,
+                "location_xy": list(v.location_xy),
+                "required": v.required_value,
+                "actual": v.actual_value,
+                "description": v.description,
+            }
+            for v in res.resolved_violations
+        ]
+        timeline = [
+            {
+                "iteration": it.iteration,
+                "route_status": it.route_status,
+                "rule_fail_count": it.rule_fail_count,
+                "converged": it.converged,
+            }
+            for it in res.iteration_history
+        ]
+        return {
+            "status": "success",
+            "converged": res.converged,
+            "iterations_spent": res.iterations_spent,
+            "resolved_violations": violations,
+            "timeline": timeline,
+            "log": list(res.log),
+            "nodes": nodes,
+            "segments": segments,
+        }
 
     @app.api_route(
         "/api/v1/{path:path}",
@@ -123,3 +276,41 @@ def build_m2_readonly_app(
         )
 
     return app
+
+
+def build_demo_app() -> FastAPI:
+    """本地演示装配：空只读 service（无 Runtime lease）+ 默认微内核。
+
+    供 `uvicorn openbimagent.server.fastapi_app:app` 直接启动；
+    生产装配请自行构造 M2ReadOnlyService 并调用 build_m2_readonly_app。
+    """
+
+    class _EmptyControlPlaneReader:
+        """最小 stub：演示模式不持有任何真实 Runtime 工件。"""
+
+        def list_attempts(self, **_: object) -> tuple:
+            return ()
+
+        def get_attempt(self, _: object) -> object:
+            raise ValueError("no runtime")
+
+        def get_lineage(self, _: object) -> tuple:
+            return ()
+
+        def list_approvals(self, **_: object) -> tuple:
+            return ()
+
+    from openbimagent.server.readonly_http import M2ReadonlyHttpAdapter
+    from openbimagent.server.service import M2ReadOnlyService
+
+    service = M2ReadOnlyService(
+        control_plane=_EmptyControlPlaneReader(),
+        session_index_reader=lambda: [],
+        artifact_lookup=lambda _: None,
+    )
+    return build_m2_readonly_app(M2ReadonlyHttpAdapter(service))
+
+
+# 模块级默认入口（本地演示装配）：
+#   uv run uvicorn openbimagent.server.fastapi_app:app --host 127.0.0.1 --port 8000
+app = build_demo_app()

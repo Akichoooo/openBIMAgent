@@ -601,7 +601,7 @@ pre {
     <!-- Tab 1: 3D Viewport -->
     <div id="tab-3d" class="tab-content active">
       <div id="viewport3d">
-        <div class="viewport-overlay">WebGL 3D Pipe Preview · 3 Manholes · 2 Segments</div>
+        <div id="viewportOverlay" class="viewport-overlay">WebGL 3D Pipe Preview · 加载真实 Compiled IR 中...</div>
       </div>
       <div style="font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase;">
         视觉双闭环评测矩阵 (VLM 6-Score)
@@ -667,13 +667,10 @@ pre {
       <div class="card" style="margin-bottom: 10px;">
         <div class="card-header">
           <span>规则自愈闭环</span>
-          <span class="badge-pass">CONVERGED (轮次 2)</span>
+          <span id="healingBadge" class="badge-pass">加载实测数据中...</span>
         </div>
-        <div style="font-size: 11px; color: var(--text-secondary); line-height: 1.5;">
-          • 检测到地下既有障碍物冲突点位: (5.0, 0.0)<br>
-          • 触发动态安全缓冲区膨胀 (Buffer Zone Inflation Radius = 1m)<br>
-          • 走廊阻挡网格动态剔除，GridRoute 自动绕行完成<br>
-          • 自愈结果：100% 规则合规 PASS，零人工干预介入
+        <div id="healingTimeline" style="font-size: 11px; color: var(--text-secondary); line-height: 1.5;">
+          经 /api/v1/demo/municipal-pipeline 调度 solver:self_healing 获取真实自愈时间线...
         </div>
       </div>
 
@@ -683,8 +680,8 @@ pre {
       <div class="grid-kv" style="margin-bottom: 10px;">
         <div class="kv-item"><div class="kv-label">图谱节点 / 边数</div><div class="kv-val">3 Nodes / 2 Edges</div></div>
         <div class="kv-item"><div class="kv-label">水力 DAG 连续性</div><div class="kv-val" style="color:#34d399;">PASS (无环)</div></div>
-        <div class="kv-item"><div class="kv-label">openBIMAgent 合规率</div><div class="kv-val" style="color:#34d399;">100.0%</div></div>
-        <div class="kv-item"><div class="kv-label">LLM Direct 对照合规率</div><div class="kv-val" style="color:#f87171;">36.0% (漂移)</div></div>
+        <div class="kv-item"><div class="kv-label">openBIMAgent 合规率</div><div class="kv-val" style="color:#34d399;">M1.5 T7 实测</div></div>
+        <div class="kv-item"><div class="kv-label">LLM Direct 对照</div><div class="kv-val" style="color:#fbbf24;">待实测 (UNMEASURED)</div></div>
       </div>
     </div>
 
@@ -783,11 +780,29 @@ pre {
             <span class="rule-id">plugin.engine.spatial_graph</span>
             <span class="badge-pass">ACTIVE</span>
           </div>
-          <div class="rule-desc">3D Spatial Graph 空间图谱与 DAG 核验 · 声明插槽: workbench:tab.spatial_graph</div>
+        <div class="rule-desc">3D Spatial Graph 空间图谱与 DAG 核验 · 声明插槽: workbench:tab.spatial_graph</div>
+      </div>
+
+      <!-- Live Capability Dispatch Console -->
+      <div style="margin-top: 16px; border-top: 1px solid var(--border-color); padding-top: 12px;">
+        <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;">
+          实时能力调度控制台 (Live Capability Dispatch · 经 /api/v1/plugins/invoke)：
         </div>
+        <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+          <select id="capSelect" class="chat-input" style="flex: 2; font-family: var(--font-mono); font-size: 11px;">
+            <option value="">加载能力列表中...</option>
+          </select>
+          <button class="btn btn-primary" onclick="invokeCapability()" style="flex: 0 0 auto;">运行 (Run)</button>
+          <label style="flex: 0 0 auto; display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-secondary);" title="prompt 策略能力需人工确认后才会执行">
+            <input type="checkbox" id="capConfirm" style="margin: 0;"> 确认执行
+          </label>
+        </div>
+        <textarea id="capPayload" class="chat-input" placeholder='payload JSON (可选，如 {"msg":"hi"}；无参能力留空)' style="width: 100%; height: 40px; font-family: var(--font-mono); font-size: 11px; resize: vertical;"></textarea>
+        <pre id="capResult" style="margin-top: 8px; max-height: 320px; overflow: auto; font-size: 11px; color: var(--text-secondary); line-height: 1.4;">点击"运行"经微内核调度执行所选能力，结构化结果在此实时渲染...</pre>
       </div>
     </div>
   </div>
+</div>
 </div>
 
 <script>
@@ -854,12 +869,14 @@ class BIMSlotRegistry {
   constructor() {
     this.slots = [];
     this.plugins = [];
+    this.caps = {};
   }
   async init() {
     const data = await fetchJSON(API + '/api/v1/plugins');
     if (data && data.active_plugins) {
       this.plugins = data.active_plugins;
       this.slots = data.ui_slots || [];
+      this.caps = data.capabilities_map || {};
       this.render();
     }
   }
@@ -885,20 +902,58 @@ class BIMSlotRegistry {
 
     // 2. 渲染插件清单面板
     const container = document.getElementById('pluginListContainer');
-    if (!container || !this.plugins.length) return;
-    container.innerHTML = this.plugins.map(p => `
-      <div class="rule-item">
-        <div class="rule-header">
-          <span class="rule-id">${p.plugin_id}</span>
-          <span class="badge-pass">${p.state.toUpperCase()}</span>
+    if (container && this.plugins.length) {
+      container.innerHTML = this.plugins.map(p => `
+        <div class="rule-item">
+          <div class="rule-header">
+            <span class="rule-id">${p.plugin_id}</span>
+            <span class="badge-pass">${p.state.toUpperCase()}</span>
+          </div>
+          <div class="rule-desc">
+            <strong>${p.name}</strong> (v${p.version}) · ${p.description}<br>
+            <span style="color:var(--text-muted);">提供能力: ${(p.provides_capabilities||[]).join(', ')}</span><br>
+            <span style="color:var(--primary);">挂载插槽: ${(p.declared_slots||[]).map(s=>s.slot_key).join(', ')}</span>
+          </div>
         </div>
-        <div class="rule-desc">
-          <strong>${p.name}</strong> (v${p.version}) · ${p.description}<br>
-          <span style="color:var(--text-muted);">提供能力: ${(p.provides_capabilities||[]).join(', ')}</span><br>
-          <span style="color:var(--primary);">挂载插槽: ${(p.declared_slots||[]).map(s=>s.slot_key).join(', ')}</span>
-        </div>
-      </div>
-    `).join('');
+      `).join('');
+    }
+
+    // 3. 渲染能力调度下拉 (capabilities_map -> 插件)
+    const sel = document.getElementById('capSelect');
+    if (sel && this.caps && Object.keys(this.caps).length) {
+      sel.innerHTML = Object.entries(this.caps).map(([cap, pid]) =>
+        `<option value="${cap}">${cap}  ←  ${pid}</option>`
+      ).join('');
+    }
+  }
+}
+
+async function invokeCapability() {
+  const sel = document.getElementById('capSelect');
+  const out = document.getElementById('capResult');
+  const payloadBox = document.getElementById('capPayload');
+  if (!sel || !sel.value) { if (out) out.textContent = '请先选择一个能力'; return; }
+  let payload = {};
+  const txt = (payloadBox.value || '').trim();
+  if (txt) {
+    try { payload = JSON.parse(txt); }
+    catch(e) { if (out) out.textContent = 'payload JSON 解析失败: ' + e.message; return; }
+  }
+  if (out) out.textContent = `调度中: ${sel.value} ...`;
+  const confirmBox = document.getElementById('capConfirm');
+  try {
+    const resp = await fetch(API + '/api/v1/plugins/invoke', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Request-ID': 'studio-invoke-' + Math.random().toString(36).slice(2) },
+      body: JSON.stringify({ capability: sel.value, payload, confirm: !!(confirmBox && confirmBox.checked) })
+    });
+    const data = await resp.json();
+    if (out) out.textContent = JSON.stringify(data, null, 2);
+    if (data && data.status === 'error' && typeof data.error === 'string' && data.error.includes('confirm=True')) {
+      if (out) out.textContent += '\n\n→ 该能力被 prompt 策略保护：勾选"确认执行"后重试。';
+    }
+  } catch(e) {
+    if (out) out.textContent = '调度失败: ' + e.message;
   }
 }
 
@@ -907,10 +962,105 @@ const slotRegistry = new BIMSlotRegistry();
 async function loadAll() {
   await loadSessions();
   await slotRegistry.init();
+  await loadSelfHealingDemo();
 }
 
-// Three.js 3D WebGL Pipe Visualizer
-function init3D() {
+async function loadSelfHealingDemo() {
+  const data = await fetchJSON(API + '/api/v1/demo/municipal-pipeline');
+  if (!data || data.status !== 'success') {
+    const badge = document.getElementById('healingBadge');
+    if (badge) { badge.textContent = 'DEMO UNAVAILABLE'; badge.classList.remove('badge-pass'); }
+    return;
+  }
+  const badge = document.getElementById('healingBadge');
+  const body = document.getElementById('healingTimeline');
+  if (badge) {
+    badge.textContent = (data.converged ? 'CONVERGED' : 'NOT CONVERGED') + ' (实测 轮次 ' + data.iterations_spent + ')';
+  }
+  if (body && data.timeline) {
+    const lines = data.timeline.map(t =>
+      `• 第 ${t.iteration} 轮: route=${t.route_status}, 违规 ${t.rule_fail_count} 项${t.converged ? ' → ✅ 收敛' : ''}`
+    );
+    (data.resolved_violations || []).forEach(v => {
+      lines.push(`• 已消解冲突: ${v.rule_id} @ (${v.location_xy[0]},${v.location_xy[1]}) — ${v.description}`);
+    });
+    lines.push('• 以上为真实求解器运行结果，经微内核 registry.invoke 调度，零人工干预');
+    body.innerHTML = lines.join('<br>');
+  }
+}
+
+// Three.js 3D WebGL Pipe Visualizer (真实 Compiled IR 驱动, 失败回落演示几何)
+function buildRealScene3D(scene, demo) {
+  const S = 60 / Math.max(
+    Math.max(...demo.nodes.map(n => n.x)) - Math.min(...demo.nodes.map(n => n.x)),
+    Math.max(...demo.nodes.map(n => n.y)) - Math.min(...demo.nodes.map(n => n.y)),
+    1
+  );
+  const cx = demo.nodes.reduce((a, n) => a + n.x, 0) / demo.nodes.length;
+  const cy = demo.nodes.reduce((a, n) => a + n.y, 0) / demo.nodes.length;
+  const zBase = Math.min(...demo.nodes.map(n => n.invert_z)) - 0.5;
+  const VS = 5.0; // 垂直夸张系数
+  const mapXZ = (x, y) => new THREE.Vector3((x - cx) * S, 0, (y - cy) * S);
+  const zScene = z => (z - zBase) * VS;
+
+  // 检查井: invert → ground 圆柱
+  const mhMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.3, metalness: 0.2 });
+  demo.nodes.forEach(n => {
+    const ground = (n.ground != null) ? n.ground : n.invert_z + 1.0;
+    const h = Math.max((ground - n.invert_z) * VS, 1.0);
+    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, h, 16), mhMat);
+    const p = mapXZ(n.x, n.y);
+    mesh.position.set(p.x, zScene(n.invert_z) + h / 2, p.z);
+    scene.add(mesh);
+  });
+
+  // 管段: centerline 逐段圆柱 (真实折线路径)
+  const pipeMat = new THREE.MeshStandardMaterial({ color: 0x10b981, roughness: 0.4, metalness: 0.5 });
+  demo.segments.forEach(s => {
+    const r = Math.max((s.diameter_mm / 1000 / 2) * S, 0.3);
+    for (let i = 0; i < s.points.length - 1; i++) {
+      const a = s.points[i], b = s.points[i + 1];
+      const pa = mapXZ(a.x, a.y); pa.y = zScene(a.z);
+      const pb = mapXZ(b.x, b.y); pb.y = zScene(b.z);
+      const dir = new THREE.Vector3().subVectors(pb, pa);
+      const len = dir.length();
+      if (len <= 0.01) continue;
+      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 12), pipeMat);
+      mesh.position.copy(pa).add(dir.clone().multiplyScalar(0.5));
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+      scene.add(mesh);
+    }
+  });
+}
+
+function buildFallbackScene3D(scene) {
+  const mhMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.3, metalness: 0.2 });
+  const mhGeo = new THREE.CylinderGeometry(1.8, 1.8, 8, 16);
+  const mhPositions = [
+    new THREE.Vector3(-25, 4, -10),
+    new THREE.Vector3(0, 3.8, -5),
+    new THREE.Vector3(25, 3.5, 10)
+  ];
+  mhPositions.forEach((pos) => {
+    const mesh = new THREE.Mesh(mhGeo, mhMat);
+    mesh.position.copy(pos);
+    scene.add(mesh);
+  });
+  const pipeMat = new THREE.MeshStandardMaterial({ color: 0x10b981, roughness: 0.4, metalness: 0.5 });
+  for (let i = 0; i < mhPositions.length - 1; i++) {
+    const p1 = mhPositions[i].clone(); p1.y -= 2;
+    const p2 = mhPositions[i + 1].clone(); p2.y -= 2;
+    const dir = new THREE.Vector3().subVectors(p2, p1);
+    const len = dir.length();
+    const pipeGeo = new THREE.CylinderGeometry(0.9, 0.9, len, 16);
+    const pipeMesh = new THREE.Mesh(pipeGeo, pipeMat);
+    pipeMesh.position.copy(p1).add(dir.multiplyScalar(0.5));
+    pipeMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+    scene.add(pipeMesh);
+  }
+}
+
+async function init3D() {
   const container = document.getElementById('viewport3d');
   if (!container || typeof THREE === 'undefined') return;
 
@@ -924,50 +1074,25 @@ function init3D() {
   renderer.setSize(container.clientWidth, container.clientHeight);
   container.appendChild(renderer.domElement);
 
-  // Lights
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
   scene.add(ambientLight);
   const dirLight = new THREE.DirectionalLight(0x38bdf8, 0.9);
   dirLight.position.set(20, 50, 20);
   scene.add(dirLight);
 
-  // Grid
   const gridHelper = new THREE.GridHelper(80, 20, 0x1e293b, 0x0f172a);
   gridHelper.position.y = 0;
   scene.add(gridHelper);
 
-  // Manholes (Cylinders)
-  const mhMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.3, metalness: 0.2 });
-  const mhGeo = new THREE.CylinderGeometry(1.8, 1.8, 8, 16);
-
-  const mhPositions = [
-    new THREE.Vector3(-25, 4, -10),
-    new THREE.Vector3(0, 3.8, -5),
-    new THREE.Vector3(25, 3.5, 10)
-  ];
-
-  mhPositions.forEach((pos) => {
-    const mesh = new THREE.Mesh(mhGeo, mhMat);
-    mesh.position.copy(pos);
-    scene.add(mesh);
-  });
-
-  // Pipes (Cylinders between manholes)
-  const pipeMat = new THREE.MeshStandardMaterial({ color: 0x10b981, roughness: 0.4, metalness: 0.5 });
-  for (let i = 0; i < mhPositions.length - 1; i++) {
-    const p1 = mhPositions[i].clone();
-    const p2 = mhPositions[i+1].clone();
-    p1.y -= 2;
-    p2.y -= 2;
-
-    const dir = new THREE.Vector3().subVectors(p2, p1);
-    const len = dir.length();
-    const pipeGeo = new THREE.CylinderGeometry(0.9, 0.9, len, 16);
-    const pipeMesh = new THREE.Mesh(pipeGeo, pipeMat);
-
-    pipeMesh.position.copy(p1).add(dir.multiplyScalar(0.5));
-    pipeMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
-    scene.add(pipeMesh);
+  const demo = await fetchJSON(API + '/api/v1/demo/municipal-pipeline');
+  if (demo && demo.status === 'success') {
+    buildRealScene3D(scene, demo);
+    const overlay = document.getElementById('viewportOverlay');
+    if (overlay) {
+      overlay.textContent = `Live Compiled IR · ${demo.nodes.length} 检查井 · ${demo.segments.length} 管段 · 自愈 ${demo.iterations_spent} 轮收敛 (registry.invoke 实测)`;
+    }
+  } else {
+    buildFallbackScene3D(scene);
   }
 
   camera.lookAt(0, 0, 0);
