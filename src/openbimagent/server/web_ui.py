@@ -669,6 +669,14 @@ pre {
           <span>规则自愈闭环</span>
           <span id="healingBadge" class="badge-pass">加载实测数据中...</span>
         </div>
+        <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
+          <button id="btnExportBlend" class="btn btn-primary" style="font-size: 11px; padding: 4px 10px;" onclick="exportBlend()">
+            ⬇ 导出真实 Blender .blend
+          </button>
+          <span id="blendExportStatus" style="font-size: 11px; color: var(--text-muted);">
+            经 cad_host:blender.execute 受控写盘（prompt 策略，约 10–30s）
+          </span>
+        </div>
         <div id="healingTimeline" style="font-size: 11px; color: var(--text-secondary); line-height: 1.5;">
           经 /api/v1/demo/municipal-pipeline 调度 solver:self_healing 获取真实自愈时间线...
         </div>
@@ -954,6 +962,32 @@ async function invokeCapability() {
     }
   } catch(e) {
     if (out) out.textContent = '调度失败: ' + e.message;
+  }
+}
+
+async function exportBlend() {
+  const btn = document.getElementById('btnExportBlend');
+  const status = document.getElementById('blendExportStatus');
+  if (!confirm('将启动真实 headless Blender 5.2 执行受控写盘（cad_host:blender.execute，prompt 策略已确认，约 10–30 秒）。继续？')) return;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Blender 执行中…'; }
+  if (status) status.textContent = 'solver:self_healing → cad_host:blender.execute 调度中…';
+  try {
+    const resp = await fetch(API + '/api/v1/demo/export-blender', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Request-ID': 'studio-export-' + Math.random().toString(36).slice(2) },
+      body: JSON.stringify({ confirm: true })
+    });
+    const data = await resp.json();
+    if (data.status === 'success' && data.receipt) {
+      const r = data.receipt;
+      if (status) status.textContent = `✓ ${r.status} | ${r.objects} 对象 | ${(r.output_bytes/1024).toFixed(0)} KB | ${r.elapsed_ms} ms → ${r.output_path}`;
+    } else {
+      if (status) status.textContent = '✗ ' + (typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
+    }
+  } catch(e) {
+    if (status) status.textContent = '✗ 调度失败: ' + e.message;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '⬇ 导出真实 Blender .blend'; }
   }
 }
 

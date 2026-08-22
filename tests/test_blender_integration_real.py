@@ -228,3 +228,36 @@ def test_real_blender_typed_municipal_plan(headless_blender) -> None:
             await client.close()
 
     asyncio.run(run())
+
+
+@requires_real_blender
+def test_registry_invoke_blender_execute_policy_gated(headless_blender) -> None:
+    """M3 验收：registry.invoke 全链路——自愈求解 → prompt 策略 → 真机 execute_plan。
+
+    fixture 实例占 9887；executor 默认用独立端口 9889 起第二个 headless 实例，
+    验证编排器的进程生命周期自治（启动/等待/执行/清理）。
+    """
+    del headless_blender
+    from openbimagent.benchmark.self_healing_ablation import build_demo_invocation
+    from openbimagent.core.plugin import (
+        PluginPolicyPromptRequiredError,
+        create_default_plugin_registry,
+    )
+
+    registry = create_default_plugin_registry()
+    solved = registry.invoke("solver:self_healing", **build_demo_invocation("SH-2"))
+    assert solved.converged and solved.final_ir is not None
+
+    # 默认治理：真机宿主写入无确认被拒
+    with pytest.raises(PluginPolicyPromptRequiredError):
+        registry.invoke("cad_host:blender.execute", ir=solved.final_ir)
+
+    output = REAL_AUTHORIZED_ROOT / "m3_registry_e2e.blend"
+    receipt = registry.invoke(
+        "cad_host:blender.execute", ir=solved.final_ir, output_path=output, confirm=True
+    )
+    assert receipt["status"] == "completed"
+    assert receipt["objects"] >= 6
+    assert receipt["source_ir_sha256"]
+    assert output.is_file() and output.stat().st_size > 0
+    assert receipt["output_bytes"] == output.stat().st_size

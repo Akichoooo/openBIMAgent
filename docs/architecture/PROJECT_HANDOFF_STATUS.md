@@ -24,7 +24,7 @@ Profile 补丁层   = PASS（CapabilityOverride + 激活/停用还原 + profile.
 LLM-Direct 真实基线 = PASS（gpt-5.6-terra 实测 60% 合规；B10 超时 ×3 = 真实扩展性上限发现）
 3D 视口真实化 = PASS（/api/v1/demo/municipal-pipeline 端点 + 自愈时间线接真实求解输出）
 Codex 机制吸收 = PASS（规则自检样例 self_tests + invoke 三态策略门 + 健康探针/背压）
-M3 真机 E2E 预演 = PASS（registry.invoke→自愈求解→策略门 confirm→Blender 5.2 受控执行落盘）
+M3 Blender 通路 = PASS（cad_host:blender.execute 正式能力 + 默认 prompt 治理 + Web 导出按钮 + HTTP/真机 3 测全绿）
 当前状态     = 全栈工程落地 + 双真机基线复绿，D:/G6_Test/m3_invoke_e2e.blend 为微内核全链路产物
 ```
 
@@ -95,4 +95,4 @@ Ruff 静态检查：All checks passed!
 - **待提交**：累积 20+ 文件改动（补丁层/自愈核验/benchmark 真实化/外部加载器/LLM 基线/3D 视口/Codex 吸收及全部测试）尚未 commit，建议按机制拆 2–3 个提交。
 - **中栏执行流卡与规则树数值**：仍为静态演示数据（M3 范围；3D 视口与自愈时间线已接真实数据）。
 - **论文侧**：B10 LLM 超时 ×3 与 LLM 行多次运行方差待写入 limitations；execpolicy 吸收可作 rule-driven 可验证性论据。
-- **唯一下一动作**：① 提交本轮修复与 M3 预演脚本（本会话已提交至 22bd453 后的增量）；② 把「build plan + 真机 execute_plan」收敛为正式 capability（如 `cad_host:blender.execute`，prompt 策略默认开启）+ Web UI 宿主写入按钮；③ Vectorworks 侧同构 E2E。
+- **唯一下一动作**：① Vectorworks 侧同构 E2E（`cad_host:vectorworks.execute` + 真机 VW 2024 受控写盘 + 策略门默认开启）；② 中栏执行流卡/规则树数值接真实数据；③ 论文侧 limitations（B10 LLM 超时 ×3、LLM 行方差）与 execpolicy 吸收论据写作。

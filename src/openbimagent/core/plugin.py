@@ -177,6 +177,17 @@ class PluginPolicyPromptRequiredError(PermissionError):
     """能力需人工确认 (prompt)：invoke 必须显式 confirm=True。"""
 
 
+# 默认治理策略：真机 CAD 宿主写入需人工确认（求解/规则/图谱等离线确定性能力放行）。
+# 测试改写单例策略表后用本常量恢复，避免测试间策略状态泄漏。
+DEFAULT_CAPABILITY_POLICIES: tuple[CapabilityPolicyRule, ...] = (
+    CapabilityPolicyRule(
+        pattern="cad_host:blender.execute",
+        decision=CapabilityPolicyDecision.PROMPT,
+        justification="真实 CAD 宿主受控写盘（启动 headless Blender 执行 typed plan），需人工确认",
+    ),
+)
+
+
 @dataclass(frozen=True)
 class BIMProfile:
     """声明式工程专家 Profile（组合多个插件为一个专业领域方案）。
@@ -555,10 +566,11 @@ class CADHostBlenderPlugin(BIMPlugin):
 
     plugin_id = "plugin.host.blender_mcp"
     name = "Blender 3D CAD 宿主驱动"
-    version = "5.2.0"
+    version = "5.2.1"
     description = "基于 Blender MCP 的高保真 3D 几何建模、材质赋予与离线渲染快照"
     provides_capabilities = (
         "cad_host:blender",
+        "cad_host:blender.execute",
         "vision:blender_render",
     )
     declared_slots = (
@@ -585,6 +597,14 @@ class CADHostBlenderPlugin(BIMPlugin):
         from openbimagent.assembly.blender_plan import BlenderBuilder
 
         self.register_handler("cad_host:blender", lambda ir, **kw: BlenderBuilder().build(ir, **kw))
+
+        def _execute_real(ir, output_path=None, **_ignored):
+            # 真机受控执行：启动 headless Blender 5.2 → execute_plan → 回执（约 10–30s）
+            from openbimagent.assembly.blender_host_executor import execute_blender_export
+
+            return execute_blender_export(ir, output_path=output_path)
+
+        self.register_handler("cad_host:blender.execute", _execute_real)
 
 
 class CADHostVectorworksPlugin(BIMPlugin):
@@ -721,6 +741,9 @@ def create_default_plugin_registry() -> PluginRegistry:
     registry.register(SpatialGraphPlugin(), check_dependencies=True)
     registry.register(AcademicBenchmarkPlugin(), check_dependencies=True)
     registry.register(MunicipalDirectPlugin(), check_dependencies=True)
+
+    # 2. 默认治理策略（Codex execpolicy prompt 语义；治理显式、最小化）
+    registry.set_capability_policies(DEFAULT_CAPABILITY_POLICIES)
 
     # 2. 注册预设专家 Profile
     registry.register_profile(

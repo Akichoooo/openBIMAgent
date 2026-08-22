@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 from openbimagent.server.fastapi_app import build_m2_readonly_app
 from openbimagent.server.readonly_http import M2ReadonlyHttpAdapter
@@ -217,7 +218,10 @@ def test_invoke_endpoint_passes_confirm_through_policy_gate() -> None:
         assert resp.status_code == 200
         assert resp.json()["status"] == "success"
     finally:
-        default_plugin_registry.set_capability_policies([])
+        # 恢复默认治理策略（而非清空——单例默认对真机宿主写入启 prompt）
+        from openbimagent.core.plugin import DEFAULT_CAPABILITY_POLICIES
+
+        default_plugin_registry.set_capability_policies(DEFAULT_CAPABILITY_POLICIES)
 
 
 def test_invoke_endpoint_missing_capability_is_400() -> None:
@@ -235,3 +239,73 @@ def test_module_level_demo_app_entry() -> None:
     assert client.get("/healthz").status_code == 200
     assert client.get("/readyz").json()["status"] == "ready"
     assert client.get("/api/v1/plugins").json()["plugin_count"] >= 7
+
+
+# =========================================================================
+# M3: cad_host:blender.execute 正式能力 + prompt 策略 + 受控导出端点
+# =========================================================================
+
+
+def test_default_policy_prompts_real_blender_execute() -> None:
+    """默认注册表对真机宿主写入启用 prompt 治理（Codex execpolicy 语义）。"""
+    from openbimagent.core.plugin import (
+        CapabilityPolicyDecision,
+        PluginPolicyPromptRequiredError,
+        create_default_plugin_registry,
+    )
+
+    registry = create_default_plugin_registry()
+    policy = registry.capability_policy_for("cad_host:blender.execute")
+    assert policy is not None
+    assert policy.decision is CapabilityPolicyDecision.PROMPT
+    # 离线确定性能力不受治理影响
+    assert registry.capability_policy_for("solver:self_healing") is None
+    with pytest.raises(PluginPolicyPromptRequiredError):
+        registry.invoke("cad_host:blender.execute", ir=object())
+
+
+def test_export_blender_endpoint_policy_gate(monkeypatch) -> None:
+    """未 confirm 时端点被策略门拒绝，不触碰真机。"""
+    import openbimagent.assembly.blender_host_executor as executor
+
+    def _must_not_run(*a, **kw):
+        raise AssertionError("未确认不应执行真机导出")
+
+    monkeypatch.setattr(executor, "execute_blender_export", _must_not_run)
+    client = _app()
+    resp = client.post("/api/v1/demo/export-blender", json={})
+    assert resp.status_code == 200
+    d = resp.json()
+    assert d["status"] == "error"
+    assert "confirm=True" in d["error"] or "人工确认" in d["error"]
+
+
+def test_export_blender_endpoint_success(monkeypatch) -> None:
+    """confirm=true 时全链路调度：求解 → 策略放行 → executor 返回结构化回执。"""
+    import openbimagent.assembly.blender_host_executor as executor
+
+    calls = {}
+
+    def _fake_execute(ir, output_path=None, **kw):
+        calls["ir_type"] = type(ir).__name__
+        return {
+            "status": "completed",
+            "output_path": str(output_path or "D:/devloop/G6_Test/x.blend"),
+            "sidecar_path": "D:/devloop/G6_Test/x.blend.openbimagent.json",
+            "output_bytes": 120030,
+            "objects": 22,
+            "source_ir_sha256": "a" * 64,
+            "plan_sha256": "b" * 64,
+            "blender_port": 9889,
+            "elapsed_ms": 1234,
+        }
+
+    monkeypatch.setattr(executor, "execute_blender_export", _fake_execute)
+    client = _app()
+    resp = client.post("/api/v1/demo/export-blender", json={"confirm": True})
+    assert resp.status_code == 200
+    d = resp.json()
+    assert d["status"] == "success"
+    assert d["receipt"]["status"] == "completed"
+    assert d["receipt"]["objects"] == 22
+    assert calls["ir_type"] == "CompiledUtilityIR"

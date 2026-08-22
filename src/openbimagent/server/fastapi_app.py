@@ -94,6 +94,7 @@ def build_m2_readonly_app(
     add_web_ui(app)
 
     invoke_guard = InvokeConcurrencyGuard(invoke_max_concurrency)
+    export_guard = InvokeConcurrencyGuard(1)  # 真机导出串行：防止并发起多个 Blender
 
     @app.get("/healthz", include_in_schema=False, tags=["Health"])
     async def healthz() -> dict:
@@ -255,6 +256,55 @@ def build_m2_readonly_app(
             "nodes": nodes,
             "segments": segments,
         }
+
+    @app.post(
+        "/api/v1/demo/export-blender",
+        summary="真实 Blender 5.2 受控导出（prompt 策略，body 须 confirm=true）",
+        tags=["Plugins"],
+    )
+    async def export_blender(request: Request) -> Response:
+        """微内核全链路真机导出：自愈求解 → 策略门 → headless Blender execute_plan。
+
+        能力 ``cad_host:blender.execute`` 默认 prompt 策略；本端点把 body 的
+        ``confirm`` 透传给 invoke，未确认时由策略门拒绝（人确认语义在调用方）。
+        """
+        from openbimagent.core.plugin import default_plugin_registry
+
+        body = await request.json()
+        confirm = bool(body.get("confirm", False))
+        if not export_guard.try_acquire():
+            return JSONResponse(
+                status_code=INVOKE_OVERLOADED_STATUS_CODE,
+                content={
+                    "status": "error",
+                    "error": {
+                        "code": INVOKE_OVERLOADED_ERROR_CODE,
+                        "message": INVOKE_OVERLOADED_MESSAGE,
+                    },
+                },
+            )
+        try:
+            from openbimagent.benchmark.self_healing_ablation import build_demo_invocation
+
+            solved = await asyncio.to_thread(
+                default_plugin_registry.invoke, "solver:self_healing", **build_demo_invocation()
+            )
+            if not solved.converged or solved.final_ir is None:
+                return {"status": "error", "error": "演示场景未收敛，无 IR 可导出"}
+            receipt = await asyncio.to_thread(
+                default_plugin_registry.invoke,
+                "cad_host:blender.execute",
+                ir=solved.final_ir,
+                confirm=confirm,
+            )
+            return {"status": "success", "receipt": receipt}
+        except Exception as exc:  # noqa: BLE001 — 结构化错误而非 500
+            return JSONResponse(
+                status_code=200,
+                content={"status": "error", "error": str(exc)},
+            )
+        finally:
+            export_guard.release()
 
     @app.api_route(
         "/api/v1/{path:path}",
