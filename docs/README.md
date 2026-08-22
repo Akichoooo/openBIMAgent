@@ -4,13 +4,14 @@
 
 ## 当前状态快照
 
-- 阶段：**M1/M1.5/M2 全栈落地 & 前沿能力跃升（Self-Healing/SpatialGraph/BIMBench）**。
+- 阶段：**M1/M1.5/M2 全栈落地 & 微内核插件化跃升（DSH 对标：能力调度 / Profile 补丁层 / 外部插件发现）**。
 - 已完成：
   - M1 G1–G7：Blender 5.2.0 LTS + Vectorworks 2024 双宿主真实 typed 执行与语义一致性验收。
   - M1.5 T1–T7：四大确定性市政管网求解器矩阵、GB 50289 规则证据链、B1–B10 冻结 Benchmark。
   - M2 P0–P5：FastAPI 只读/写控制服务、SSE 事实流、现代三栏 WebGL 3D 数字化工程工作台。
   - 进阶突破：规则自愈式求解器 (`SelfHealingSolver`)、三维空间拓扑图谱引擎 (`SpatialBIMGraph`)、BIMBench 消融实验套件。
-- 质量基线：**999 passed, 4 skipped, 2 warnings in 112.57s**，Ruff 静态检查 100% 通过。
+  - 微内核 (2026-08)：`registry.invoke` 承重调度、UI-Slots 动态标签、Profile 补丁层（消融实验 = 补丁声明）、Benchmark 数据诚信契约 (measured/provenance)、外部插件 manifest 发现加载。
+- 质量基线：**1017 passed, 4 skipped, 2 warnings**，Ruff 静态检查 100% 通过。
 - 最新进度与详细交接：[持续交接与进度状态](architecture/PROJECT_HANDOFF_STATUS.md)。
 - 手动测试与快速上手：[手动测试指南](../MANUAL_TESTING_GUIDE.md)。
 

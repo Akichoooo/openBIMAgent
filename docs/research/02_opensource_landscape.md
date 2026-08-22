@@ -1,6 +1,6 @@
-# 开源对标调研(opencode / pi / blender-mcp / Vectorworks 生态 / 视觉自检)
+# 开源对标调研(opencode / pi / blender-mcp / Vectorworks 生态 / 视觉自检 / Codex)
 
-调研日期:2026-07-21 · 每条标注「事实」(官方文档/源码)或「推断」。
+调研日期:2026-07-21(§6 Codex 为 2026-08-22) · 每条标注「事实」(官方文档/源码)或「推断」。
 
 ## 1. opencode(TypeScript,~188k stars)
 
@@ -47,7 +47,22 @@
 - 反例(事实):BlenderGPT(`gd3kr/BlenderGPT`,4.9k stars)一次性 codegen 无视觉环,2024-06 停更;3D-GPT(arXiv:2310.12945)多 agent 纯文本规划无视觉环——无自检环的方案早就触顶。
 - 推断:成熟、活跃、专门做「Blender 视觉自检」的开源项目**不存在**;可组合 = blender-mcp 截图 + computer-use loop 模板 + SceneCraft 图先行/库学习。
 
-## 6. 汇总:openBIMAgent 设计决策溯源
+## 6. Codex(openai/codex,~112k stars,Apache-2.0,Rust)
+
+调研日期:2026-08-22。核验方式:GitHub API(仓库元数据、`codex-rs/` crate 清单)+ raw README 原文。**developers.openai.com 在调研网络下不可达**(WebFetch/curl 均 TLS 失败),文档站正文未能核验的均已标注。
+
+- 事实:仓库定位「Lightweight coding agent that runs in your terminal」;**111,946 stars、Apache-2.0、主语言 Rust、活跃推送(当日)**。核心为 Rust workspace `codex-rs`(70+ crate)。来源:api.github.com/repos/openai/codex
+- 事实(crate 清单经 GitHub API 核验):关键子系统独立成 crate——**`app-server`(+client/daemon/protocol/transport)**、**`code-mode`(+host/protocol/runtime)**、**`core`(+api/`core-plugins`)**、`plugin`、`skills`、`hooks`、`memories`、**`execpolicy`**、`mcp-server`/`codex-mcp`/`rmcp-client`、`rollout`(+trace)、`state`、`thread-store`、`secrets`/`keyring-store`(OS 钥匙串)、沙箱栈(`linux-sandbox`/`windows-sandbox-rs`/`network-proxy`/`process-hardening`)、本地模型(`ollama`/`lmstudio`)、`v8-poc`、`agent-graph-store`、`context-fragments`。
+- 事实(`app-server/README.md` 原文核验):富客户端(VS Code 扩展为旗舰)后端,**双向 JSON-RPC 2.0(官方自述 modeled on MCP,线上省略 jsonrpc 头)**;传输 stdio JSONL(默认)/websocket(实验性,带 `/readyz` `/healthz` 探针)/unix socket;**有界队列背压,过载返回 -32001 "Server overloaded; retry later."**;数据模型三原语 **Thread/Turn/Item**;API 面覆盖 thread start/resume/**fork**/archive、turn streaming+steering、compaction、**plugins/marketplaces**、skills、realtime voice、config。
+- 事实(`execpolicy/README.md` 原文核验):命令审批策略引擎,**Starlark 语法** `prefix_rule(pattern=[...], decision?, justification?, match?, not_match?)` + `host_executable(name=..., paths=[...])`;decision 三态 **`allow|prompt|forbidden`**(默认 allow);`justification` 人类可读理由并会呈现在审批提示/拒绝信息中;**`match`/`not_match` 为规则自带示例,加载时强制验证——README 原话 "think of them as unit tests"**;多规则命中取最严(forbidden > prompt > allow);`codex execpolicy check` CLI 输出 JSON 评估结果;官方标注 preview、API 可能破坏性变更。
+- 事实:仓库 `docs/` 下 agents_md/config/execpolicy/sandbox/skills/slash_commands 等均为重定向壳,正文迁至 developers.openai.com;**skills/plugin 的清单与目录格式本次未能核验**。
+- 推断:`code-mode` 三 crate 与 pi-dynamic-workflows 的 code-mode subagent 为同一思想(agent 写代码编排工具调用)的**独立收敛**,OpenAI 侧佐证该范式;`v8-poc` 表明其探索内嵌 JS 运行时做同方向扩展。
+
+**借鉴**:① **execpolicy 模式 = 「规则即声明式代码 + 每条规则自带可执行测试 + 最严获胜」**,与本系统 rule-driven 哲学完全同构——可迁移为:GB50289 规则(constraints.yaml)每条附 match/not_match 自检样例、加载时验证;`registry.invoke` 与宿主插件 `execute_*_code` 前置 per-capability 三态策略门(现为「信任目录」二态);② app-server 的 -32001 背压语义 + `/readyz` `/healthz` 探针是现有 FastAPI/SSE 服务的低成本加固项;③ code-mode 收敛现象写入论文相关工作(Rust 化、OS 沙箱栈、marketplace 分发不吸收)。
+
+**处置(2026-08-22 已落地 ①②)**:MunicipalRuleSet v1.2 self_tests——12 条净距规则 33 个 match/not_match 样例编译期重放,production 规则缺任一极性样例即拒绝整个规则集(tests/test_rule_self_tests.py);`CapabilityPolicyRule` 三态策略门(最长前缀获胜 + justification 进拒绝信息 + prompt 需显式 confirm,tests/test_plugin_registry.py 策略门 6 例);`/healthz` `/readyz` 探针 + invoke 有界并发背压(503 / -32001);③ 待论文写作引用。详见 PROJECT_HANDOFF_STATUS v3.4 §3。
+
+## 7. 汇总:openBIMAgent 设计决策溯源
 
 | 决策 | 出处 |
 |---|---|
@@ -60,3 +75,6 @@
 | 宿主内 socket addon + 外部 MCP 桥 | blender-mcp(与 vwx-mcp 收敛) |
 | `execute_*_code` 逃生门 + AST 白名单 + 快照 | blender-mcp + openBIMForge blender_mcp_lab |
 | 双环视觉自检(SCAD 结构 + Blender 美学)+ 收敛治理 | openBIMForge v1 + SceneCraft + computer-use |
+| 声明式策略引擎(三态决策 + 规则自带单元测试 + 最严获胜) | Codex execpolicy |
+| 背压语义(-32001)+ 健康探针(/readyz /healthz) | Codex app-server |
+| code-mode 编排范式的行业收敛佐证(论文引用) | Codex code-mode + pi-dynamic-workflows |
