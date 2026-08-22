@@ -185,6 +185,11 @@ DEFAULT_CAPABILITY_POLICIES: tuple[CapabilityPolicyRule, ...] = (
         decision=CapabilityPolicyDecision.PROMPT,
         justification="真实 CAD 宿主受控写盘（启动 headless Blender 执行 typed plan），需人工确认",
     ),
+    CapabilityPolicyRule(
+        pattern="cad_host:vectorworks.execute",
+        decision=CapabilityPolicyDecision.PROMPT,
+        justification="真实 CAD 宿主受控写盘（VW 宿主 runner 执行 typed plan），需人工确认",
+    ),
 )
 
 
@@ -612,10 +617,11 @@ class CADHostVectorworksPlugin(BIMPlugin):
 
     plugin_id = "plugin.host.vectorworks_mcp"
     name = "Vectorworks 2024 CAD 宿主驱动"
-    version = "2024.0.0"
+    version = "2024.0.1"
     description = "基于 Vectorworks MCP 的工程施工图、2D/3D 混合图元与 VWX 原生工件生成"
     provides_capabilities = (
         "cad_host:vectorworks",
+        "cad_host:vectorworks.execute",
     )
     declared_slots = (
         UISlotSpec(
@@ -633,6 +639,15 @@ class CADHostVectorworksPlugin(BIMPlugin):
         from openbimagent.assembly.vectorworks_plan import VectorworksBuilder
 
         self.register_handler("cad_host:vectorworks", lambda ir, **kw: VectorworksBuilder().build(ir, **kw))
+
+        def _execute_real(ir, output_path=None, **_ignored):
+            # 真机受控执行：MCP server(自动拉起) → 文件 IPC → VW 宿主 runner；
+            # 需 OPENBIMAGENT_VW_JOBS_DIR/RESULTS_DIR/AUTHORIZED_ROOT 显式配置
+            from openbimagent.assembly.vectorworks_host_executor import execute_vectorworks_export
+
+            return execute_vectorworks_export(ir, output_path=output_path)
+
+        self.register_handler("cad_host:vectorworks.execute", _execute_real)
 
 
 class SpatialGraphPlugin(BIMPlugin):

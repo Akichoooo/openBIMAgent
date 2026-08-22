@@ -25,6 +25,7 @@ LLM-Direct 真实基线 = PASS（gpt-5.6-terra 实测 60% 合规；B10 超时 ×
 3D 视口真实化 = PASS（/api/v1/demo/municipal-pipeline 端点 + 自愈时间线接真实求解输出）
 Codex 机制吸收 = PASS（规则自检样例 self_tests + invoke 三态策略门 + 健康探针/背压）
 M3 Blender 通路 = PASS（cad_host:blender.execute 正式能力 + 默认 prompt 治理 + Web 导出按钮 + HTTP/真机 3 测全绿）
+M3 VW 通路(代码) = PASS（cad_host:vectorworks.execute + 显式 env 契约 + 端点/按钮/门控验收测试；真机落盘待 VW 宿主人工前置后跑门控测试）
 当前状态     = 全栈工程落地 + 双真机基线复绿，D:/G6_Test/m3_invoke_e2e.blend 为微内核全链路产物
 ```
 
@@ -95,4 +96,5 @@ Ruff 静态检查：All checks passed!
 - **待提交**：累积 20+ 文件改动（补丁层/自愈核验/benchmark 真实化/外部加载器/LLM 基线/3D 视口/Codex 吸收及全部测试）尚未 commit，建议按机制拆 2–3 个提交。
 - **中栏执行流卡与规则树数值**：仍为静态演示数据（M3 范围；3D 视口与自愈时间线已接真实数据）。
 - **论文侧**：B10 LLM 超时 ×3 与 LLM 行多次运行方差待写入 limitations；execpolicy 吸收可作 rule-driven 可验证性论据。
-- **唯一下一动作**：① Vectorworks 侧同构 E2E（`cad_host:vectorworks.execute` + 真机 VW 2024 受控写盘 + 策略门默认开启）；② 中栏执行流卡/规则树数值接真实数据；③ 论文侧 limitations（B10 LLM 超时 ×3、LLM 行方差）与 execpolicy 吸收论据写作。
+- **VW 真机落盘验收（人工前置）**：启动 VW 2024 → 加载 mcp_servers/vectorworks_mcp/runner.py（轮询目录=OPENBIMAGENT_VW_JOBS_DIR）→ 导出三 env → `OPENBIMAGENT_RUN_REAL_VW=1 uv run pytest tests/test_vectorworks_integration_real.py -v`；无宿主时已验证 ~60s 清晰失败（ping 即文件 IPC 宿主探活）。
+- **唯一下一动作**：① 上述 VW 人工验收；② 中栏执行流卡/规则树数值接真实数据；③ 论文侧 limitations（B10 LLM 超时 ×3、LLM 行方差）与 execpolicy 吸收论据写作。

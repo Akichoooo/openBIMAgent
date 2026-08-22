@@ -94,7 +94,7 @@ def build_m2_readonly_app(
     add_web_ui(app)
 
     invoke_guard = InvokeConcurrencyGuard(invoke_max_concurrency)
-    export_guard = InvokeConcurrencyGuard(1)  # 真机导出串行：防止并发起多个 Blender
+    export_guard = InvokeConcurrencyGuard(1)  # 真机导出串行：Blender/VW 共用，防并发多宿主写盘
 
     @app.get("/healthz", include_in_schema=False, tags=["Health"])
     async def healthz() -> dict:
@@ -294,6 +294,55 @@ def build_m2_readonly_app(
             receipt = await asyncio.to_thread(
                 default_plugin_registry.invoke,
                 "cad_host:blender.execute",
+                ir=solved.final_ir,
+                confirm=confirm,
+            )
+            return {"status": "success", "receipt": receipt}
+        except Exception as exc:  # noqa: BLE001 — 结构化错误而非 500
+            return JSONResponse(
+                status_code=200,
+                content={"status": "error", "error": str(exc)},
+            )
+        finally:
+            export_guard.release()
+
+    @app.post(
+        "/api/v1/demo/export-vectorworks",
+        summary="真实 Vectorworks 受控导出（prompt 策略，body 须 confirm=true）",
+        tags=["Plugins"],
+    )
+    async def export_vectorworks(request: Request) -> Response:
+        """微内核全链路真机导出：自愈求解 → 策略门 → VW 宿主 runner execute_plan。
+
+        前置：VW 应用已运行且已加载 runner（jobs 目录经
+        OPENBIMAGENT_VW_JOBS_DIR/RESULTS_DIR/AUTHORIZED_ROOT 配置一致）。
+        """
+        from openbimagent.core.plugin import default_plugin_registry
+
+        body = await request.json()
+        confirm = bool(body.get("confirm", False))
+        if not export_guard.try_acquire():
+            return JSONResponse(
+                status_code=INVOKE_OVERLOADED_STATUS_CODE,
+                content={
+                    "status": "error",
+                    "error": {
+                        "code": INVOKE_OVERLOADED_ERROR_CODE,
+                        "message": INVOKE_OVERLOADED_MESSAGE,
+                    },
+                },
+            )
+        try:
+            from openbimagent.benchmark.self_healing_ablation import build_demo_invocation
+
+            solved = await asyncio.to_thread(
+                default_plugin_registry.invoke, "solver:self_healing", **build_demo_invocation()
+            )
+            if not solved.converged or solved.final_ir is None:
+                return {"status": "error", "error": "演示场景未收敛，无 IR 可导出"}
+            receipt = await asyncio.to_thread(
+                default_plugin_registry.invoke,
+                "cad_host:vectorworks.execute",
                 ir=solved.final_ir,
                 confirm=confirm,
             )

@@ -246,8 +246,8 @@ def test_module_level_demo_app_entry() -> None:
 # =========================================================================
 
 
-def test_default_policy_prompts_real_blender_execute() -> None:
-    """默认注册表对真机宿主写入启用 prompt 治理（Codex execpolicy 语义）。"""
+def test_default_policy_prompts_real_host_execute() -> None:
+    """默认注册表对双宿主真机写入启用 prompt 治理（Codex execpolicy 语义）。"""
     from openbimagent.core.plugin import (
         CapabilityPolicyDecision,
         PluginPolicyPromptRequiredError,
@@ -255,13 +255,16 @@ def test_default_policy_prompts_real_blender_execute() -> None:
     )
 
     registry = create_default_plugin_registry()
-    policy = registry.capability_policy_for("cad_host:blender.execute")
-    assert policy is not None
-    assert policy.decision is CapabilityPolicyDecision.PROMPT
-    # 离线确定性能力不受治理影响
+    for capability in ("cad_host:blender.execute", "cad_host:vectorworks.execute"):
+        policy = registry.capability_policy_for(capability)
+        assert policy is not None
+        assert policy.decision is CapabilityPolicyDecision.PROMPT
+        with pytest.raises(PluginPolicyPromptRequiredError):
+            registry.invoke(capability, ir=object())
+    # 离线确定性能力（含 plan 构建）不受治理影响
     assert registry.capability_policy_for("solver:self_healing") is None
-    with pytest.raises(PluginPolicyPromptRequiredError):
-        registry.invoke("cad_host:blender.execute", ir=object())
+    assert registry.capability_policy_for("cad_host:blender") is None
+    assert registry.capability_policy_for("cad_host:vectorworks") is None
 
 
 def test_export_blender_endpoint_policy_gate(monkeypatch) -> None:
@@ -309,3 +312,61 @@ def test_export_blender_endpoint_success(monkeypatch) -> None:
     assert d["receipt"]["status"] == "completed"
     assert d["receipt"]["objects"] == 22
     assert calls["ir_type"] == "CompiledUtilityIR"
+
+
+def test_vectorworks_executor_fails_fast_without_env(monkeypatch) -> None:
+    """VW 真机执行的显式配置契约：缺 env 快速失败并给出指引（不 60s 干等）。"""
+    from openbimagent.assembly.vectorworks_host_executor import (
+        VectorworksHostExecutionError,
+        execute_vectorworks_export,
+    )
+
+    for name in (
+        "OPENBIMAGENT_VW_JOBS_DIR",
+        "OPENBIMAGENT_VW_RESULTS_DIR",
+        "OPENBIMAGENT_VW_AUTHORIZED_ROOT",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    with pytest.raises(VectorworksHostExecutionError, match="OPENBIMAGENT_VW_JOBS_DIR"):
+        execute_vectorworks_export(object())
+
+
+def test_export_vectorworks_endpoint_policy_gate(monkeypatch) -> None:
+    import openbimagent.assembly.vectorworks_host_executor as executor
+
+    def _must_not_run(*a, **kw):
+        raise AssertionError("未确认不应执行真机导出")
+
+    monkeypatch.setattr(executor, "execute_vectorworks_export", _must_not_run)
+    client = _app()
+    resp = client.post("/api/v1/demo/export-vectorworks", json={})
+    assert resp.status_code == 200
+    d = resp.json()
+    assert d["status"] == "error"
+    assert "confirm=True" in d["error"] or "人工确认" in d["error"]
+
+
+def test_export_vectorworks_endpoint_success(monkeypatch) -> None:
+    import openbimagent.assembly.vectorworks_host_executor as executor
+
+    def _fake_execute(ir, output_path=None, **kw):
+        return {
+            "status": "completed",
+            "output_path": "D:/devloop/G6_Test/x.vwx",
+            "state_path": "D:/devloop/G6_Test/x.vwx.openbimagent.json",
+            "applied_operations": 7,
+            "confirmed_objects": 6,
+            "plan_id": "vwx-plan-1",
+            "plan_sha256": "c" * 64,
+            "errors": [],
+            "elapsed_ms": 2345,
+        }
+
+    monkeypatch.setattr(executor, "execute_vectorworks_export", _fake_execute)
+    client = _app()
+    resp = client.post("/api/v1/demo/export-vectorworks", json={"confirm": True})
+    assert resp.status_code == 200
+    d = resp.json()
+    assert d["status"] == "success"
+    assert d["receipt"]["status"] == "completed"
+    assert d["receipt"]["applied_operations"] == 7

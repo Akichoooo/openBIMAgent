@@ -673,8 +673,11 @@ pre {
           <button id="btnExportBlend" class="btn btn-primary" style="font-size: 11px; padding: 4px 10px;" onclick="exportBlend()">
             ⬇ 导出真实 Blender .blend
           </button>
+          <button id="btnExportVWX" class="btn btn-primary" style="font-size: 11px; padding: 4px 10px;" onclick="exportVWX()">
+            ⬇ 导出真实 Vectorworks .vwx
+          </button>
           <span id="blendExportStatus" style="font-size: 11px; color: var(--text-muted);">
-            经 cad_host:blender.execute 受控写盘（prompt 策略，约 10–30s）
+            经 cad_host:*.execute 受控写盘（prompt 策略；VWX 需宿主运行中）
           </span>
         </div>
         <div id="healingTimeline" style="font-size: 11px; color: var(--text-secondary); line-height: 1.5;">
@@ -965,14 +968,15 @@ async function invokeCapability() {
   }
 }
 
-async function exportBlend() {
-  const btn = document.getElementById('btnExportBlend');
+async function exportHost(endpoint, btnId, label) {
+  const btn = document.getElementById(btnId);
   const status = document.getElementById('blendExportStatus');
-  if (!confirm('将启动真实 headless Blender 5.2 执行受控写盘（cad_host:blender.execute，prompt 策略已确认，约 10–30 秒）。继续？')) return;
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Blender 执行中…'; }
-  if (status) status.textContent = 'solver:self_healing → cad_host:blender.execute 调度中…';
+  const host = endpoint.includes('vectorworks') ? 'Vectorworks（须已运行并加载 runner）' : 'Blender 5.2 headless';
+  if (!confirm(`将启动真实 ${host} 执行受控写盘（prompt 策略已确认，Blender 约 10–30 秒 / VWX 取决于宿主）。继续？`)) return;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 执行中…'; }
+  if (status) status.textContent = `solver:self_healing → ${endpoint} 调度中…`;
   try {
-    const resp = await fetch(API + '/api/v1/demo/export-blender', {
+    const resp = await fetch(API + endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Request-ID': 'studio-export-' + Math.random().toString(36).slice(2) },
       body: JSON.stringify({ confirm: true })
@@ -980,16 +984,21 @@ async function exportBlend() {
     const data = await resp.json();
     if (data.status === 'success' && data.receipt) {
       const r = data.receipt;
-      if (status) status.textContent = `✓ ${r.status} | ${r.objects} 对象 | ${(r.output_bytes/1024).toFixed(0)} KB | ${r.elapsed_ms} ms → ${r.output_path}`;
+      const size = r.output_bytes ? `${(r.output_bytes/1024).toFixed(0)} KB` : `${r.applied_operations} ops`;
+      const cnt = r.objects !== undefined ? `${r.objects} 对象` : `${r.confirmed_objects} 确认对象`;
+      if (status) status.textContent = `✓ ${r.status} | ${cnt} | ${size} | ${r.elapsed_ms} ms → ${r.output_path}`;
     } else {
       if (status) status.textContent = '✗ ' + (typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
     }
   } catch(e) {
     if (status) status.textContent = '✗ 调度失败: ' + e.message;
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '⬇ 导出真实 Blender .blend'; }
+    if (btn) { btn.disabled = false; btn.textContent = label; }
   }
 }
+
+async function exportBlend() { return exportHost('/api/v1/demo/export-blender', 'btnExportBlend', '⬇ 导出真实 Blender .blend'); }
+async function exportVWX() { return exportHost('/api/v1/demo/export-vectorworks', 'btnExportVWX', '⬇ 导出真实 Vectorworks .vwx'); }
 
 const slotRegistry = new BIMSlotRegistry();
 
