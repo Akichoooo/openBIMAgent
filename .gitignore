@@ -45,3 +45,5 @@ Thumbs.db
 # Temporary / Scratch data
 scratch/
 papers/
+# Local LLM-Direct baseline config (contains API key, never commit)
+config/*.local.toml

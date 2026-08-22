@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -26,7 +27,14 @@ from openbimagent.utility.rule_evidence import (
     MunicipalRuleEvidenceBundle,
     compile_municipal_rule_evidence_bundle,
 )
-from openbimagent.utility.rules import MunicipalRuleSet, compile_municipal_rule_set
+from openbimagent.utility.rules import (
+    MunicipalRuleSet,
+    compile_municipal_rule_set,
+    select_clearance_rule,
+)
+
+_CLEARANCE_TOLERANCE_M = 1e-6
+_DEFAULT_BUILDING_CLEARANCE_M = 2.5  # GB 50289-2016 §4.1.9 建筑物净距保守回退值（规则集缺失时失败关闭）
 
 
 @dataclass(frozen=True)
@@ -67,55 +75,104 @@ class SelfHealingResult:
     log: tuple[str, ...]
 
 
+def _required_building_clearance_m(rule_set: MunicipalRuleSet | None) -> tuple[float, str]:
+    """从规则集解析建筑物净距下限 (MU-CLEAR-001)；规则集缺失时回退保守默认值。"""
+    if rule_set is not None:
+        selection = select_clearance_rule(rule_set, obstacle_kind="aabb", obstacle_category="building")
+        if selection.rule is not None:
+            return selection.rule.required_clearance_m, selection.rule.source_rule_id
+    return _DEFAULT_BUILDING_CLEARANCE_M, "MU-CLEAR-001"
+
+
 def _check_route_and_geometry_violations(
     route_result: GridRouteSolverResult,
     route_input: GridRouteSolverInput,
     synthetic_obstacles: Sequence[tuple[int, int]],
     rule_set: MunicipalRuleSet | None,
 ) -> list[SelfHealingViolation]:
-    """真实核验路线几何、地下障碍物与 GB 50289 间距/覆土/坡度规则违规点。"""
+    """真实核验：规则集驱动的净距缓冲区、物理碰撞与求解器覆土合规报告。"""
     violations: list[SelfHealingViolation] = []
     selected_cand = route_result.selected_candidate()
     if selected_cand is None:
         return violations
 
-    route_cells = [(c.x_index, c.y_index) for c in selected_cand.cells]
+    required_clearance_m, clearance_rule_id = _required_building_clearance_m(rule_set)
+    resolution = route_input.grid.resolution_m
+    origin_x = route_input.grid.origin_x_m
+    origin_y = route_input.grid.origin_y_m
 
-    # 1. 空间物理与净距冲突核验 (MU-CLEAR-001)
+    # 1. 地下障碍物核验：物理碰撞 + 规则集净距缓冲区 (GB 50289 §4.1.9 表 4.1.9)
     for ox, oy in synthetic_obstacles:
-        if (ox, oy) in route_cells:
+        obstacle_x = origin_x + ox * resolution
+        obstacle_y = origin_y + oy * resolution
+        nearest_dist = min(
+            math.hypot(
+                origin_x + cell.x_index * resolution - obstacle_x,
+                origin_y + cell.y_index * resolution - obstacle_y,
+            )
+            for cell in selected_cand.cells
+        )
+        if nearest_dist <= _CLEARANCE_TOLERANCE_M:
             violations.append(
                 SelfHealingViolation(
-                    rule_id="MU-CLEAR-001",
-                    target_id=f"cell-({ox},{oy})",
+                    rule_id=clearance_rule_id,
+                    target_id=f"obstacle-({ox},{oy})",
                     violation_type="collision",
                     location_xy=(ox, oy),
-                    required_value=1.0,
+                    required_value=required_clearance_m,
                     actual_value=0.0,
-                    description=f"管线直接穿过地下障碍物禁行单元 ({ox}, {oy})，水平/垂直净距不达标 (GB 50289 §4.1.3)",
+                    description=(
+                        f"管线直接穿过地下障碍物禁行单元 ({ox},{oy})，水平净距 0 "
+                        f"< 规则要求 {required_clearance_m:.2f}m"
+                    ),
+                )
+            )
+        elif nearest_dist < required_clearance_m - _CLEARANCE_TOLERANCE_M:
+            violations.append(
+                SelfHealingViolation(
+                    rule_id=clearance_rule_id,
+                    target_id=f"obstacle-({ox},{oy})",
+                    violation_type="clearance",
+                    location_xy=(ox, oy),
+                    required_value=required_clearance_m,
+                    actual_value=round(nearest_dist, 3),
+                    description=(
+                        f"管线距地下障碍物 ({ox},{oy}) 水平净距 {nearest_dist:.2f}m "
+                        f"< 规则要求 {required_clearance_m:.2f}m"
+                    ),
                 )
             )
 
-    # 2. GB 50289 最小覆土深度核验 (MU-COVER-001: 规范车行道/人行道最小覆土深度 0.70m)
-    min_cover_required = 0.70
-    start_invert = float(route_input.start.invert_anchor_m or 0.0)
-    for sample in route_input.surface_samples:
-        pos = (sample.cell.x_index, sample.cell.y_index)
-        if pos in route_cells:
-            # 估算该点埋深 (地表标高 - 基础管底标高)
-            cover_depth = sample.ground_elevation_m - start_invert
-            if cover_depth < min_cover_required:
-                violations.append(
-                    SelfHealingViolation(
-                        rule_id="MU-COVER-001",
-                        target_id=f"cover-({pos[0]},{pos[1]})",
-                        violation_type="cover",
-                        location_xy=pos,
-                        required_value=min_cover_required,
-                        actual_value=round(cover_depth, 3),
-                        description=f"单元 ({pos[0]},{pos[1]}) 覆土深度 {cover_depth:.2f}m < 规范最小覆土 {min_cover_required:.2f}m (GB 50289 §4.1.1)",
-                    )
-                )
+    # 2. 覆土深度核验：直接消费求解器按规则集计算的 RouteConstraintReport 与逐点埋深
+    constraint_report = selected_cand.constraint_report
+    if not constraint_report.cover_depth_in_spec:
+        worst = min(selected_cand.points, key=lambda p: p.cover_depth_m)
+        violations.append(
+            SelfHealingViolation(
+                rule_id="MU-DRAIN-004",
+                target_id=f"cover-{worst.cell.identity()}",
+                violation_type="cover",
+                location_xy=worst.cell.identity(),
+                required_value=constraint_report.required_cover_depth_m,
+                actual_value=round(worst.cover_depth_m, 3),
+                description=(
+                    f"单元 {worst.cell.identity()} 覆土深度 {worst.cover_depth_m:.2f}m "
+                    f"< 规范最小覆土 {constraint_report.required_cover_depth_m:.2f}m"
+                ),
+            )
+        )
+    if not constraint_report.clearance_in_spec:
+        violations.append(
+            SelfHealingViolation(
+                rule_id=";".join(constraint_report.applied_rule_keys) or clearance_rule_id,
+                target_id=f"candidate-{selected_cand.candidate_id}",
+                violation_type="clearance",
+                location_xy=selected_cand.cells[0].identity(),
+                required_value=0.0,
+                actual_value=round(constraint_report.minimum_clearance_margin_m or 0.0, 3),
+                description="走廊内规则净距未达标 (RouteConstraintReport clearance_in_spec=False)",
+            )
+        )
 
     return violations
 
@@ -242,12 +299,36 @@ def solve_self_healing_route(
 
         # 4. 冲突驱动空间剪枝：对检测到的违规点位执行安全缓冲区膨胀 (Buffer Inflation)
         logs.append(f"[SelfHealing] 第 {iter_idx} 轮发现 {len(violations)} 个违规冲突，执行安全缓冲区动态膨胀...")
-        violation_coords = [v.location_xy for v in violations]
-        new_allowed_cells = _inflate_barrier_cells(
-            base_corridor=current_route_input.allowed_cells,
-            blocked_coordinates=violation_coords,
-            inflation_radius=1,
-        )
+        required_clearance_m, _ = _required_building_clearance_m(rule_set)
+        obstacle_radius = max(1, math.ceil(required_clearance_m / current_route_input.grid.resolution_m))
+        obstacle_coords = [
+            v.location_xy
+            for v in violations
+            if v.violation_type in ("collision", "clearance") and v.target_id.startswith("obstacle-")
+        ]
+        geometry_coords = [v.location_xy for v in violations if v.location_xy not in obstacle_coords]
+
+        new_allowed_cells = list(current_route_input.allowed_cells)
+        if obstacle_coords:
+            # 膨胀半径按规则净距要求自适应（欧氏距离下保守覆盖规则缓冲区）
+            new_allowed_cells = _inflate_barrier_cells(
+                base_corridor=new_allowed_cells,
+                blocked_coordinates=obstacle_coords,
+                inflation_radius=obstacle_radius,
+            )
+        if geometry_coords:
+            new_allowed_cells = _inflate_barrier_cells(
+                base_corridor=new_allowed_cells,
+                blocked_coordinates=geometry_coords,
+                inflation_radius=1,
+            )
+
+        # 起终点检查井网格受保护，避免膨胀后违反走廊输入契约
+        retained_ids = {c.identity() for c in new_allowed_cells}
+        for endpoint in (current_route_input.start.cell, current_route_input.end.cell):
+            if endpoint.identity() not in retained_ids:
+                new_allowed_cells.append(endpoint)
+                retained_ids.add(endpoint.identity())
 
         logs.append(f"[SelfHealing] 可用走廊网格由 {len(current_route_input.allowed_cells)} 裁剪至 {len(new_allowed_cells)}")
 

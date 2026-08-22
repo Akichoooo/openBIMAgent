@@ -1,0 +1,13 @@
+# LLM-Direct 基线评测配置 (OpenAI 兼容端点)
+# 用法: 复制本文件为 llm_baseline.local.toml 并填入真实 key
+# llm_baseline.local.toml 已被 .gitignore 忽略, 绝不入库
+
+base_url = "https://freetokenfaucet.com/v1"
+model = "gpt-5.6-terra"
+api_key = "sk-replace-me"
+
+# 评测参数
+max_scenarios = 10      # 评测 B1..B{max}
+repetitions = 3         # 每场景重复次数 (取多数判定, temp=0 通常一致)
+temperature = 0.0       # 确定性优先
+request_timeout_s = 60
