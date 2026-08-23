@@ -1098,7 +1098,8 @@ def poll_jobs_once(jobs_dir: Path, results_dir: Path) -> list[str]:
     return processed
 
 
-DEFAULT_IPC_ROOT = Path(r"D:\devloopw_ipc")
+DEFAULT_IPC_ROOT = Path("D:/devloop/vw_ipc")  # forward slashes: no escaping, Windows-pathlib equivalent
+
 
 
 def resolve_ipc_dirs(ipc_root: Path | str | None = None) -> tuple[Path, Path, Path, Path]:
