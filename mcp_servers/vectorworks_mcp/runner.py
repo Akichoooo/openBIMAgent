@@ -1112,14 +1112,21 @@ def resolve_ipc_dirs(ipc_root: Path | str | None = None) -> tuple[Path, Path, Pa
     return root, root / "jobs", root / "results", root / "runner_heartbeat.json"
 
 
-def write_heartbeat(heartbeat_path: Path, started_at: datetime) -> None:
-    """落盘心跳(每秒节流由调用方负责);外部用时间戳判断 runner 是否存活。"""
+def write_heartbeat(
+    heartbeat_path: Path,
+    started_at: datetime,
+    vw_version: str | None = None,
+) -> None:
+    """落盘心跳(每秒节流由调用方负责);外部用时间戳判断 runner 是否存活。
+
+    vw_version 由 main 启动时探测一次并缓存,避免每秒 import vs。
+    """
     heartbeat_path.write_text(
         json.dumps(
             {
                 "ts": time.time(),
                 "started_at": started_at.isoformat(),
-                "vw_version": get_vw_version(),
+                "vw_version": vw_version if vw_version is not None else get_vw_version(),
             },
             ensure_ascii=False,
         ),
@@ -1127,30 +1134,69 @@ def write_heartbeat(heartbeat_path: Path, started_at: datetime) -> None:
     )
 
 
+_LOG_PATH: Path | None = None
+
+
+def log_to_file(message: str) -> None:
+    """追加一行带时间戳的运行日志到 IPC 根下 runner_log.txt(可 tail -f 实时观测)。
+
+    VW UI 被轮询循环占用时 print 不可见——文件日志是唯一可靠观测面;
+    写失败静默跳过,绝不影响主循环。
+    """
+    if _LOG_PATH is None:
+        return
+    try:
+        with _LOG_PATH.open("a", encoding="utf-8") as fh:
+            fh.write(f"{datetime.now().isoformat(timespec='seconds')} [runner] {message}\n")
+    except Exception:
+        pass
+
+
 def main() -> None:
-    """runner 主循环:死循环轮询 jobs/,100ms 间隔;每 ~1s 更新心跳文件。
+    """runner 主循环:死循环轮询 jobs/,100ms 间隔;每 ~1s 心跳 + ~5s 存活日志。
 
     在 VW 内嵌 Python 中运行——UI 会显示"未响应"(脚本线程被本循环占用),
     这是预期形态:循环仍在消费 jobs 并写 results;停止方式是关闭 VW。
+    观测:tail -f <ipc_root>/runner_log.txt(启动/存活/逐 job 消费记录)。
     """
+    global _LOG_PATH
     root, jobs_dir, results_dir, heartbeat_path = resolve_ipc_dirs()
     jobs_dir.mkdir(parents=True, exist_ok=True)
     results_dir.mkdir(parents=True, exist_ok=True)
+    _LOG_PATH = root / "runner_log.txt"
     started_at = datetime.now()
-    last_heartbeat = 0.0
+    vw_version = get_vw_version()
     print("VW MCP runner started", flush=True)
     print(f"  ipc_root:   {root.resolve()}", flush=True)
     print(f"  jobs_dir:   {jobs_dir.resolve()}", flush=True)
     print(f"  results_dir:{results_dir.resolve()}", flush=True)
+    log_to_file(f"started vw_version={vw_version} ipc_root={root.resolve()}")
+    last_heartbeat = 0.0
+    last_alive_log = 0.0
+    iterations = 0
+    total_consumed = 0
+    write_heartbeat(heartbeat_path, started_at, vw_version)
     try:
         while True:
-            poll_jobs_once(jobs_dir, results_dir)
+            try:
+                processed = poll_jobs_once(jobs_dir, results_dir)
+                if processed:
+                    total_consumed += len(processed)
+                    log_to_file(f"consumed jobs {processed} (total={total_consumed})")
+            except Exception:
+                # 单轮异常只记录不退出:坏 job 不能杀死整个 runner
+                log_to_file(f"poll error (continuing): {traceback.format_exc(limit=3)}")
+            iterations += 1
             now = time.time()
             if now - last_heartbeat >= 1.0:
-                write_heartbeat(heartbeat_path, started_at)
+                write_heartbeat(heartbeat_path, started_at, vw_version)
                 last_heartbeat = now
+            if now - last_alive_log >= 5.0:
+                log_to_file(f"alive iter={iterations} consumed_total={total_consumed}")
+                last_alive_log = now
             time.sleep(0.1)
     except KeyboardInterrupt:
+        log_to_file("stopped (KeyboardInterrupt)")
         print("Runner stopped", flush=True)
 
 
