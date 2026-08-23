@@ -26,6 +26,7 @@ LLM-Direct 真实基线 = PASS（gpt-5.6-terra 实测 60% 合规；B10 超时 ×
 Codex 机制吸收 = PASS（规则自检样例 self_tests + invoke 三态策略门 + 健康探针/背压）
 M3 Blender 通路 = PASS（cad_host:blender.execute 正式能力 + 默认 prompt 治理 + Web 导出按钮 + HTTP/真机 3 测全绿）
 M3 VW 通路 = PASS（真机验收 2026-08-23:1 passed in 8.22s;m3_registry_e2e.vwx 44.6KB + completed 回执落盘;runner 日志 consumed_total=4 全链路证据）
+前端全真实化 = PASS（中栏执行流/规则树/3D 视口/自愈时间线全部接真实数据;HITL 卡驱动真实策略门导出;唯 VLM 六维评分区仍为演示数值）
 当前状态     = 全栈工程落地 + 双真机基线复绿，D:/G6_Test/m3_invoke_e2e.blend 为微内核全链路产物
 ```
 
@@ -78,7 +79,7 @@ HEAD：以 `git rev-parse HEAD` 实测为准（本会话改动未提交，见 §
 ## 4. 最新有效质量证据
 
 ```text
-全仓 pytest：1055 passed, 4 skipped, 2 warnings
+全仓 pytest：1065 passed, 6 skipped, 2 warnings（含双宿主真机 4 测）
 规则自检：真实知识源 33/33 样例重放通过（test_rule_self_tests）
 Ruff 静态检查：All checks passed!
 消融电池确定性：test_self_healing_ablation 跨运行逐字节一致
@@ -97,4 +98,5 @@ Ruff 静态检查：All checks passed!
 - **中栏执行流卡与规则树数值**：仍为静态演示数据（M3 范围；3D 视口与自愈时间线已接真实数据）。
 - **论文侧**：B10 LLM 超时 ×3 与 LLM 行多次运行方差待写入 limitations；execpolicy 吸收可作 rule-driven 可验证性论据。
 - **M3 双宿主真机闭环已收官**（Blender 3 测 + VW 1 测全绿；runner 已具备固定 IPC 根 + 心跳 + 文件日志，VW 侧"未响应"为脚本线程被轮询循环占用的预期形态，实测待命 5.5h 零错误）。
-- **唯一下一动作**：① 中栏执行流卡/规则树数值接真实数据；② 论文侧 limitations（B10 LLM 超时 ×3、LLM 行方差）与 execpolicy 吸收论据写作；③ 全部改动推送远程。
+- **LLM 多 run 方差**：tools/llm_multirun.py 就绪（含配额故障守卫），当前受阻于 freetokenfaucet **402 额度耗尽**——充值/换 key 后 `OPENBIMAGENT_RUN_LLM_BASELINE=1 .venv/Scripts/python.exe tools/llm_multirun.py 3` 即出均值±标准差。
+- **唯一下一动作**：① LLM 多 run（待配额）；② 全部改动推送远程（本地领先远程 15+ 提交）；③ 论文正文写作（素材已备：docs/学术材料/实验数据与limitations草稿_2026-08-23.md）。
