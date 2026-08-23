@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>方案 A · 对话优先型 — openBIMAgent 原型</title>
+<style>
+:root{--bg:#0e0f11;--sf:#16181b;--sf2:#1c1f23;--ln:rgba(255,255,255,.08);--ln2:rgba(255,255,255,.15);
+--tx:#ececec;--t2:#b3b8bd;--t3:#878d93;--ok:#10a37f;--ok2:#35b99a;--wa:#d4b45a;--er:#e5534b;
+--mono:'SF Mono','Cascadia Code',Consolas,monospace;--sans:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif}
+*{margin:0;padding:0;box-sizing:border-box}html,body{height:100%}
+body{font:13px/1.5 var(--sans);background:var(--bg);color:var(--tx);display:flex;flex-direction:column;overflow:hidden}
+header{height:52px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 18px;border-bottom:1px solid var(--ln)}
+.brand{display:flex;align-items:center;gap:10px}.lg{width:26px;height:26px;border-radius:7px;background:#fff;color:#0e0f11;font-weight:700;font-size:12px;display:flex;align-items:center;justify-content:center}
+.bt{font-weight:600;font-size:14px}.bs{font:11px var(--mono);color:var(--t3);border:1px solid var(--ln2);border-radius:999px;padding:2px 9px}
+.app{flex:1;display:grid;grid-template-columns:264px minmax(0,1fr) auto;min-height:0}
+/* 左栏 */
+.side{display:flex;flex-direction:column;border-right:1px solid var(--ln);min-height:0}
+.sh{padding:14px 16px 10px;font-size:11px;font-weight:600;letter-spacing:.07em;color:var(--t3);text-transform:uppercase}
+.nt{margin:2px 6px 8px;display:flex;align-items:center;gap:8px;padding:8px 11px;border:1px dashed var(--ln2);border-radius:10px;color:var(--t2);cursor:pointer;font-size:12.5px}.nt:hover{background:var(--sf)}
+.ssc{flex:1;overflow-y:auto;padding:0 10px 10px}
+.se{border:1px solid transparent;border-radius:10px;padding:9px 11px;cursor:pointer}.se:hover{background:var(--sf)}.se.on{background:var(--sf2);border-color:var(--ln2)}
+.sei{display:flex;justify-content:space-between;font:11px var(--mono)}.sei .t{color:var(--t3)}
+.set{font-size:12px;color:var(--t2);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sf{border-top:1px solid var(--ln);padding:10px 12px;position:relative}
+.mc{width:100%;display:flex;align-items:center;gap:9px;padding:8px 11px;background:var(--sf);border:1px solid var(--ln);border-radius:10px;font-size:12.5px;cursor:pointer;color:var(--tx)}.mc:hover{border-color:var(--ln2);background:var(--sf2)}
+.mc .d{width:6px;height:6px;border-radius:50%;background:var(--ok2)}.mc .c{margin-left:auto;color:var(--t3)}
+.pop{display:none;position:absolute;left:12px;right:12px;bottom:calc(100% + 8px);background:var(--sf2);border:1px solid var(--ln2);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.5);z-index:60}
+.pop.open{display:block}.ps{padding:11px 14px}.ps+.ps{border-top:1px solid var(--ln)}
+.pt{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--t3);margin-bottom:7px}
+.pr{display:flex;justify-content:space-between;gap:10px;padding:3px 0;font-size:12px}.pr .k{color:var(--t3)}.pr .v{font:11.5px var(--mono)}
+/* 中栏线程 */
+.th{display:flex;flex-direction:column;min-width:0;min-height:0}
+.tsc{flex:1;overflow-y:auto}.tin{max-width:760px;margin:0 auto;padding:24px 24px 16px;display:flex;flex-direction:column;gap:16px}
+.mu{display:flex;justify-content:flex-end}.mu .b{background:var(--sf2);border:1px solid var(--ln2);border-radius:14px 14px 4px 14px;padding:10px 14px;max-width:80%;font-size:13.5px;line-height:1.65}
+.turn{display:flex;flex-direction:column;gap:10px}.tt{font:11px var(--mono);color:var(--t3)}.tt .d{color:var(--ok2)}
+.tc{border:1px solid var(--ln);border-radius:10px;background:var(--sf);overflow:hidden}
+.tch{display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer;user-select:none}.tch:hover{background:var(--sf2)}
+.tch .ca{font-size:9px;color:var(--t3);transition:transform .12s}.tc:not(.open) .ca{transform:rotate(-90deg)}
+.tn{font:600 11.5px var(--mono)}.ts{margin-left:auto;font:11px var(--mono);color:var(--ok2)}
+.ts.run{color:var(--wa)}.ts.err{color:var(--er)}
+.tcb{display:none;padding:2px 12px 12px;border-top:1px solid var(--ln)}.tc.open .tcb{display:block}
+.kvs{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:9px;margin-top:8px}
+.kv .l{font-size:10.5px;color:var(--t3);text-transform:uppercase;letter-spacing:.04em}.kv .v{font:500 12.5px var(--mono);font-variant-numeric:tabular-nums;margin-top:1px}
+.atxt{font-size:12.5px;color:var(--t2);line-height:1.7;margin-top:6px}
+.atxt b{color:var(--tx)}
+.itl{margin-top:10px;display:flex;flex-direction:column;gap:5px}
+.ir{display:flex;align-items:center;gap:9px;font:11.5px var(--mono);color:var(--t2)}
+.ir .n{width:20px;height:20px;border-radius:50%;border:1px solid var(--ln2);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--t3)}
+.ir.done .n{background:rgba(16,163,127,.15);border-color:rgba(16,163,127,.5);color:var(--ok2)}
+.vio{margin-top:9px;font-size:11.5px;color:var(--t2);line-height:1.7}.vio .fx{color:var(--ok2);font-family:var(--mono)}
+.art{border:1px solid var(--ln);border-radius:12px;background:var(--sf);padding:14px;animation:fadein .35s ease}
+@keyframes fadein{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.ah{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;font-size:12.5px;font-weight:600}
+.ag{font-size:9.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--t3);border:1px solid var(--ln2);border-radius:999px;padding:2px 8px}
+.art svg{display:block;width:100%;height:auto}.an{font-size:11px;color:var(--t3);margin-top:8px;line-height:1.6}
+.hitl{border-color:rgba(212,180,90,.4)}
+.btns{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid transparent;font-family:var(--sans)}
+.btn:disabled{opacity:.55;cursor:wait}
+.bw{background:#fff;color:#0e0f11}.bw:hover{background:#e6e6e6}
+.bo{background:var(--ok);color:#fff}.bo:hover{background:#0d8a6c}
+.bg2{background:transparent;border-color:var(--ln2);color:var(--tx)}.bg2:hover{background:var(--sf2)}
+.lk{color:var(--ok2);cursor:pointer}.lk:hover{text-decoration:underline}
+.dlv{font:11.5px/1.7 var(--mono);color:var(--t3)}
+.dlv .ok{color:var(--ok2)}
+/* 流式指示 */
+.cursor{display:inline-block;width:7px;height:14px;background:var(--ok2);vertical-align:-2px;animation:blink .8s step-end infinite;margin-left:2px}
+@keyframes blink{50%{opacity:0}}
+.dots::after{content:'…';animation:dots 1.2s steps(4) infinite}
+@keyframes dots{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}}
+/* Composer */
+.cmp{flex:none;padding:12px 24px 16px}.cmpin{max-width:760px;margin:0 auto;display:flex;align-items:center;gap:10px;background:var(--sf);border:1px solid var(--ln2);border-radius:14px;padding:6px 6px 6px 16px}
+.cmpin:focus-within{border-color:rgba(255,255,255,.35)}
+.cmpin input{flex:1;background:none;border:none;outline:none;color:var(--tx);font:13.5px var(--sans);padding:8px 0}.cmpin input::placeholder{color:var(--t3)}
+.sd{width:34px;height:34px;border-radius:9px;background:#fff;color:#0e0f11;border:none;font-size:14px;cursor:pointer}
+.chint{max-width:760px;margin:8px auto 0;display:flex;gap:6px;flex-wrap:wrap}
+.chp{font:10.5px var(--mono);color:var(--t3);border:1px solid var(--ln);border-radius:999px;padding:2px 9px;cursor:pointer}.chp:hover{color:var(--t2)}
+.streamdemo{max-width:760px;margin:0 auto 10px;display:flex;justify-content:center}
+.streamdemo button{font:12px var(--sans);color:var(--ok2);background:rgba(16,163,127,.08);border:1px solid rgba(16,163,127,.35);border-radius:999px;padding:6px 16px;cursor:pointer}
+.streamdemo button:hover{background:rgba(16,163,127,.15)}
+/* 右抽屉 */
+.dw{display:none;width:460px;border-left:1px solid var(--ln);flex-direction:column;min-height:0}
+.app.wb .dw{display:flex}
+.dt2{display:flex;border-bottom:1px solid var(--ln);overflow-x:auto;flex:none}
+.dtp{padding:10px 12px;font-size:11.5px;color:var(--t3);cursor:pointer;border-bottom:1.5px solid transparent;white-space:nowrap}.dtp:hover{color:var(--t2)}.dtp.on{color:#fff;border-color:#fff}
+.dwb{flex:1;overflow-y:auto;padding:14px;display:none}.dwb.on{display:block}
+.rule{border:1px solid var(--ln);border-radius:10px;background:var(--sf);padding:10px 12px;margin-bottom:8px}
+.rh{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.ri{font:600 11.5px var(--mono)}.po{font-size:9.5px;font-weight:700;color:var(--ok2);border:1px solid rgba(16,163,127,.4);border-radius:999px;padding:1px 8px;letter-spacing:.04em}
+.rd{font-size:12px;color:var(--t2);line-height:1.55}
+/* 数据看板 */
+.btbl{width:100%;border-collapse:collapse;font:11.5px var(--mono)}
+.btbl th{font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.04em;text-align:left;padding:6px 8px;border-bottom:1px solid var(--ln2)}
+.btbl td{padding:7px 8px;border-bottom:1px solid var(--ln);color:var(--t2);font-variant-numeric:tabular-nums}
+.btbl td.hl{color:var(--ok2);font-weight:600}
+.btbl tr.me td{color:var(--tx);background:rgba(16,163,127,.05)}
+.sect{font-size:11px;font-weight:600;letter-spacing:.06em;color:var(--t3);text-transform:uppercase;margin:16px 0 8px}
+.sect:first-child{margin-top:0}
+.mono-box{background:var(--bg);border:1px solid var(--ln);border-radius:10px;padding:11px;font:11px/1.6 var(--mono);color:var(--t2);overflow-x:auto;white-space:pre}
+::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:3px}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><div class="lg">B</div><div class="bt">openBIMAgent</div><div class="bs">方案 A · 对话优先</div></div>
+  <button class="btn bg2" onclick="document.getElementById('app').classList.toggle('wb')">⇱ 工作台</button>
+</header>
+<div class="app" id="app">
+  <aside class="side">
+    <div class="sh">会话 · Session JSONL</div>
+    <div class="nt">＋ 新工程任务</div>
+    <div class="ssc" id="sess"></div>
+    <div class="sf">
+      <div class="pop" id="pop">
+        <div class="ps"><div class="pt">模型 · LLM 基线</div>
+          <div class="pr"><span class="k">model</span><span class="v">gpt-5.6-terra</span></div>
+          <div class="pr"><span class="k">基线 (n=3)</span><span class="v">60.0±0.0%</span></div>
+          <div class="pr"><span class="k">配置</span><span class="v">llm_baseline.local.toml</span></div></div>
+        <div class="ps"><div class="pt">运行时</div>
+          <div class="pr"><span class="k">插件/能力</span><span class="v">7 / 16</span></div>
+          <div class="pr"><span class="k">策略门</span><span class="v">cad_host:*.execute→prompt</span></div>
+          <div class="pr"><span class="k">宿主</span><span class="v">Blender ✓ · VW ✓</span></div></div>
+      </div>
+      <button class="mc" onclick="event.stopPropagation();document.getElementById('pop').classList.toggle('open')">
+        <span class="d"></span><span>gpt-5.6-terra</span><span class="c">⌃</span></button>
+    </div>
+  </aside>
+
+  <main class="th">
+    <div class="tsc" id="tsc"><div class="tin" id="thread">
+      <div class="mu"><div class="b">为市政干道规划一条污水重力主管网：DN300，坡度 3‰，走廊含合成障碍物，满足 GB 50289-2016 净距与覆土要求，并交付 CAD 工件。</div></div>
+      <div class="turn">
+        <div class="tt"><span class="d">◆</span> openBIMAgent · profile.municipal.complete</div>
+        <div class="tc open"><div class="tch" onclick="this.parentElement.classList.toggle('open')"><span class="ca">▾</span><span class="tn">solver:self_healing</span><span class="ts">✓ converged · 2 iterations · 1.8s</span></div>
+          <div class="tcb">
+            <div class="kvs">
+              <div class="kv"><div class="l">检查井/管段</div><div class="v">6 / 5</div></div>
+              <div class="kv"><div class="l">管径·坡度</div><div class="v">DN300 · 3.0‰</div></div>
+              <div class="kv"><div class="l">已消除违规</div><div class="v">1 项</div></div>
+              <div class="kv"><div class="l">总长</div><div class="v">23.4 m</div></div>
+            </div>
+            <div class="itl">
+              <div class="ir done"><span class="n">1</span>第 1 轮：直线路径与障碍物 (5,0) 碰撞 · MU-CLEAR-001 违规 ×1</div>
+              <div class="ir done"><span class="n">2</span>膨胀半径 2.5m（规则驱动）→ 绕行走廊第 1 排 → 全规则通过，收敛</div>
+            </div>
+            <div class="vio"><span class="fx">✓ MU-CLEAR-001</span> 建(构)筑物水平净距：要求 2.5m，初始 0.0m → 自愈后 3.2m <span class="fx">PASS</span></div>
+          </div></div>
+        <div class="tc open"><div class="tch" onclick="this.parentElement.classList.toggle('open')"><span class="ca">▾</span><span class="tn">rules:gb50289</span><span class="ts">✓ 12 rules · self-tests 33/33</span></div>
+          <div class="tcb"><div class="atxt">MunicipalRuleSet v1.2 编译通过（canonical <b>d0ce27a5…</b>）。建筑 2.5m · 给水 1.0/1.5m · 燃气五档 1.0–2.0m · 通信 1.0m · 电力 0.5m；全部 production 级。<span class="lk" onclick="openWb('dwrules')">查看规则树 →</span></div></div></div>
+        <div class="art"><div class="ah"><span>平面布置图 · 走廊与绕障</span><span class="ag">Plan View</span></div>
+          <svg id="svgPlan" viewBox="0 0 560 200"></svg>
+          <div class="an">批准走廊 11×5 · 合成障碍物 (5,0) · 红虚线=初始碰撞路径，白线=自愈绕行路线（真实数据绘制）。</div></div>
+        <div class="art"><div class="ah"><span>纵断面 · 覆土与坡度</span><span class="ag">Profile</span></div>
+          <svg id="svgProf" viewBox="0 0 560 170"></svg>
+          <div class="an">覆土 ≥ 0.70m（MU-ELEV-001）· 坡度 3.0‰ 重力自流 · 井底标高由求解器锚定。</div></div>
+        <div class="art hitl"><div class="ah"><span style="color:var(--wa)">交付审批 · HITL</span><span class="ag">Prompt Policy</span></div>
+          <div class="atxt">向真实 CAD 宿主受控写盘（能力默认 <b>prompt 策略</b>，人工确认后经微内核执行）。</div>
+          <div class="btns">
+            <button class="btn bo" id="bB" onclick="mockExport('bB','Blender')">✓ 批准 · 导出 Blender</button>
+            <button class="btn bo" id="bV" onclick="mockExport('bV','Vectorworks')">✓ 批准 · 导出 VWX</button>
+            <button class="btn bg2" onclick="openWb('dwdata')">查看数据看板</button>
+          </div></div>
+        <div class="art"><div class="ah"><span>交付回执 · Controlled Save</span><span class="ag">Deliver</span></div>
+          <div class="dlv" id="dlv">待批准导出后填充真实回执（status / objects / SHA / 落盘路径）。</div></div>
+      </div>
+    </div></div>
+    <div class="cmp">
+      <div class="streamdemo"><button id="demoBtn" onclick="streamTurn()">▶ 演示流式回合（真实集成=SSE 逐事件渲染）</button></div>
+      <div class="cmpin"><input id="cin" placeholder="输入工程指令，或 / 唤起命令…" onkeydown="if(event.key==='Enter')send()"><button class="sd" onclick="send()">➤</button></div>
+      <div class="chint">
+        <span class="chp" onclick="cin.value='/rules';send()">/rules 规则树</span>
+        <span class="chp" onclick="cin.value='/data';send()">/data 数据看板</span>
+        <span class="chp" onclick="cin.value='/export';send()">/export 导出</span>
+        <span class="chp" onclick="streamTurn()">▶ 流式演示</span>
+      </div>
+    </div>
+  </main>
+
+  <aside class="dw">
+    <div class="dt2">
+      <div class="dtp on" data-t="dwdata" onclick="dwt(this)">数据看板</div>
+      <div class="dtp" data-t="dwrules" onclick="dwt(this)">规则树</div>
+      <div class="dtp" data-t="dwgraph" onclick="dwt(this)">图谱&自愈</div>
+      <div class="dtp" data-t="dwir" onclick="dwt(this)">IR</div>
+      <div class="dtp" data-t="dwplug" onclick="dwt(this)">插件</div>
+    </div>
+    <div class="dwb on" id="dwdata">
+      <div class="sect">方法对比 · BIMBench (真实实测)</div>
+      <table class="btbl" id="bench"></table>
+      <div class="sect">自愈消融 · SH-1..6</div>
+      <svg id="svgSH" viewBox="0 0 420 120" style="width:100%"></svg>
+      <div class="sect">规则库构成</div>
+      <svg id="svgDonut" viewBox="0 0 420 130" style="width:100%"></svg>
+    </div>
+    <div class="dwb" id="dwrules"></div>
+    <div class="dwb" id="dwgraph"><div class="mono-box">SpatialBIMGraph
+├─ 水力 DAG: ✓ 无环 (6n/5e)
+├─ 垂直交叉: 0 处
+└─ SH 电池: ON 5/6 vs OFF 2/6
+   (profile.ablation 消融)</div></div>
+    <div class="dwb" id="dwir"><div class="mono-box">CompiledUtilityIR v1.0
+nodes: 6 · segments: 5 × DN300 i=3‰
+canonical_sha256: 71006e1a…</div></div>
+    <div class="dwb" id="dwplug"><div class="mono-box">7 plugins / 16 capabilities
+policies: cad_host:*.execute → prompt
+slots: workbench/graph/rules…</div></div>
+  </aside>
+</div>
+
+<script>
+/* ===== mock 数据(真实值) ===== */
+const SESS=[['sess-9f2c','SH-2 市政演示 · 自愈绕障','16:15',1],['sess-7a10','M1.5 T7 全量基准','昨天',0],['sess-3d88','VW 真机验收 8.22s','昨天',0],['sess-2b41','LLM 基线 n=3 方差','昨天',0]];
+const RULES=[['MU-CLEAR-001:building','建(构)筑物 · aabb','2.5 m'],['MU-CLEAR-005:water:d_le_200','给水管 d≤200','1.0 m'],['MU-CLEAR-005:water:d_gt_200','给水管 d>200','1.5 m'],['MU-CLEAR-006:gas:low','燃气 低压','1.0 m'],['MU-CLEAR-006:gas:mid','燃气 中压 B/A','1.2 m'],['MU-CLEAR-006:gas:sub','燃气 次高压 B/A','1.5/2.0 m'],['MU-CLEAR-007:telecom','通信(直埋/管道)','1.0 m'],['MU-CLEAR-008:power','电力(直埋/保护管)','0.5 m']];
+const BENCH=[['openBIMAgent (T7)','100%','100%','100%','0 tok',1],['自愈 ON (SH 1-6)','83.3%','5/6 收敛','1.67 轮','0 tok',0],['自愈 OFF (消融)','33.3%','2/6 收敛','1.0 轮','0 tok',0],['Heuristic 直插','—','0% 合规','—','0 tok',0],['LLM-Direct (n=3)','60.0±0.0%','60.0±0.0%','7.1±0.3s','10.4k±0.3k',0]];
+const NODES=[{x:0,y:0,i:10.00},{x:4,y:0,i:9.988},{x:4,y:1,i:9.985},{x:6,y:1,i:9.979},{x:6,y:0,i:9.976},{x:10,y:0,i:9.964}];
+
+document.getElementById('sess').innerHTML=SESS.map(s=>`<div class="se ${s[3]?'on':''}"><div class="sei"><span>${s[0]}</span><span class="t">${s[2]}</span></div><div class="set">${s[1]}</div></div>`).join('');
+document.getElementById('dwrules').innerHTML='<div style="font-size:11px;color:var(--t3);margin-bottom:10px">v1.2 · 12 条 · 自检 33/33 · canonical d0ce27a5…</div>'+RULES.map(r=>`<div class="rule"><div class="rh"><span class="ri">${r[0]}</span><span class="po">PRODUCTION</span></div><div class="rd">${r[1]} 净距 <b>${r[2]}</b></div></div>`).join('');
+document.getElementById('bench').innerHTML='<tr><th>方法</th><th>拓扑</th><th>合规/收敛</th><th>耗时/轮</th><th>Token</th></tr>'+BENCH.map(r=>`<tr class="${r[5]?'me':''}"><td>${r[0]}</td><td class="${r[1].startsWith('100')||r[1].startsWith('83')?'hl':''}">${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td><td>${r[4]}</td></tr>`).join('');
+
+/* ===== 平面图 ===== */
+(function(){const S=44,OX=60,OY=150,px=(x,y)=>[OX+x*S,OY-y*S];let d='';
+for(let g=0;g<=10;g++)d+=`<line x1="${OX+g*S}" y1="${OY-4*S}" x2="${OX+g*S}" y2="${OY}" stroke="rgba(255,255,255,.06)"/>`;
+for(let g=0;g<=4;g++)d+=`<line x1="${OX}" y1="${OY-g*S}" x2="${OX+10*S}" y2="${OY-g*S}" stroke="rgba(255,255,255,.06)"/>`;
+const[ox,oy]=px(5,0);
+d+=`<circle cx="${ox}" cy="${oy}" r="${2.5*S}" fill="rgba(229,83,75,.05)" stroke="rgba(229,83,75,.25)" stroke-dasharray="4 3"/>`;
+d+=`<rect x="${ox-9}" y="${oy-9}" width="18" height="18" rx="3" fill="#e5534b"/>`;
+d+=`<polyline points="${[[0,0],[10,0]].map(p=>px(p[0],p[1]).join(',')).join(' ')}" fill="none" stroke="rgba(229,83,75,.7)" stroke-width="2" stroke-dasharray="5 4"/>`;
+d+=`<polyline points="${NODES.map(n=>px(n.x,n.y).join(',')).join(' ')}" fill="none" stroke="#ececec" stroke-width="2.5" stroke-linejoin="round"/>`;
+NODES.forEach((n,i)=>{const[x,y]=px(n.x,n.y);d+=`<circle cx="${x}" cy="${y}" r="5.5" fill="#0e0f11" stroke="#35b99a" stroke-width="2"/>`;d+=`<text x="${x}" y="${y-10}" fill="#878d93" font-size="9" font-family="monospace" text-anchor="middle">MH-0${i+1}</text>`});
+document.getElementById('svgPlan').innerHTML=d})();
+
+/* ===== 纵断面 ===== */
+(function(){const W=560,H=170,L=52,R=20,T=18,B=30,minY=9.95,maxY=10.02;
+const X=x=>L+x/10*(W-L-R),Y=z=>T+(maxY-z)/(maxY-minY)*(H-T-B);let d='';
+const gr=NODES.map(n=>[X(n.x),Y(n.i+0.035)]),iv=NODES.map(n=>[X(n.x),Y(n.i)]);
+d+=`<polygon points="${gr.map(p=>p.join(',')).join(' ')} ${iv.slice().reverse().map(p=>p.join(',')).join(' ')}" fill="rgba(16,163,127,.07)"/>`;
+d+=`<polyline points="${gr.map(p=>p.join(',')).join(' ')}" fill="none" stroke="rgba(255,255,255,.25)" stroke-width="1.5" stroke-dasharray="3 3"/>`;
+d+=`<polyline points="${iv.map(p=>p.join(',')).join(' ')}" fill="none" stroke="#35b99a" stroke-width="2.5"/>`;
+NODES.forEach((n,i)=>{d+=`<circle cx="${X(n.x)}" cy="${Y(n.i)}" r="4" fill="#0e0f11" stroke="#ececec" stroke-width="1.5"/>`;if(i%2==0)d+=`<text x="${X(n.x)}" y="${H-10}" fill="#878d93" font-size="9" font-family="monospace" text-anchor="middle">MH-0${i+1}</text>`});
+document.getElementById('svgProf').innerHTML=d})();
+
+/* ===== SH 消融柱状 ===== */
+(function(){const d=`<g font-family="monospace" font-size="10">
+<rect x="60" y="20" width="180" height="70" fill="rgba(16,163,127,.25)" stroke="#35b99a"/>
+<rect x="260" y="61" width="72" height="29" fill="rgba(229,83,75,.2)" stroke="#e5534b"/>
+<text x="150" y="14" fill="#35b99a" text-anchor="middle">自愈 ON · 5/6 (83.3%)</text>
+<text x="296" y="55" fill="#e5534b" text-anchor="middle">OFF 2/6</text>
+<text x="296" y="110" fill="#878d93" text-anchor="middle">33.3%</text>
+<text x="210" y="116" fill="#878d93" text-anchor="middle">profile.ablation 消融 · 同一 battery 真跑</text></g>`;
+document.getElementById('svgSH').innerHTML=d})();
+
+/* ===== 规则构成 donut ===== */
+(function(){const cx=100,cy=62,r=44;const parts=[['建筑',2.5,'#35b99a'],['给水',5,'#9fc3d8'],['燃气',5,'#d4b45a'],['通信',5,'#a08dde'],['电力',5,'#878d93']];
+let a0=-Math.PI/2,d='';const tot=parts.reduce((s,p)=>s+p[1],0);
+parts.forEach(p=>{const a1=a0+p[1]/tot*2*Math.PI;const large=a1-a0>Math.PI?1:0;
+d+=`<path d="M ${cx+r*Math.cos(a0)} ${cy+r*Math.sin(a0)} A ${r} ${r} 0 ${large} 1 ${cx+r*Math.cos(a1)} ${cy+r*Math.sin(a1)}" fill="none" stroke="${p[2]}" stroke-width="14"/>`;a0=a1});
+parts.forEach((p,i)=>{d+=`<rect x="215" y="${18+i*20}" width="9" height="9" rx="2" fill="${p[2]}"/><text x="232" y="${26+i*20}" fill="#b3b8bd" font-size="11" font-family="sans-serif">${p[0]} · ${p[1]} 档</text>`});
+document.getElementById('svgDonut').innerHTML=d})();
+
+/* ===== 交互 ===== */
+function openWb(id){document.getElementById('app').classList.add('wb');
+document.querySelectorAll('.dtp').forEach(t=>t.classList.toggle('on',t.dataset.t===id));
+document.querySelectorAll('.dwb').forEach(b=>b.classList.toggle('on',b.id===id))}
+function dwt(el){openWb(el.dataset.t)}
+async function mockExport(id,h){const b=document.getElementById(id);b.disabled=true;const o=b.textContent;b.textContent='⏳ 执行中… (headless '+h+')';
+await new Promise(r=>setTimeout(r,1500));b.disabled=false;b.textContent=o;
+document.getElementById('dlv').innerHTML=`<span class="ok">✓ completed</span> · ${h==='Blender'?'22 objects · 120 KB · 2187ms':'7 ops · 44 KB · 8220ms'}<br>plan_sha256: ${h==='Blender'?'d9467cd7…':'a3f10b2c…'}<br>output: D:/devloop/G6_Test/m3_registry_e2e.${h==='Blender'?'blend':'vwx'}`}
+
+/* ===== 流式回合演示 ===== */
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+function countUp(el,to,unit,ms){const t0=performance.now();
+(function f(t){const p=Math.min(1,(t-t0)/ms);el.textContent=(to*p).toFixed(1)+unit;if(p<1)requestAnimationFrame(f)})(t0)}
+async function typeText(el,text,ms=14){for(const ch of text){el.textContent+=ch;document.getElementById('tsc').scrollTop=1e9;await sleep(ms)}}
+async function streamTurn(){
+  const btn=document.getElementById('demoBtn');btn.disabled=true;btn.textContent='流式演示中…';
+  const th=document.getElementById('thread');
+  th.insertAdjacentHTML('beforeend','<div class="mu"><div class="b">对比一下：打开自愈和关闭自愈各跑一遍 SH 电池，给我量化差距。</div></div>');
+  await sleep(400);
+  th.insertAdjacentHTML('beforeend',`<div class="turn" id="sturn"><div class="tt"><span class="d">◆</span> openBIMAgent · registry.invoke</div></div>`);
+  const turn=document.getElementById('sturn');
+  // 工具块 1: running
+  turn.insertAdjacentHTML('beforeend',`<div class="tc open" id="tc1"><div class="tch"><span class="ca">▾</span><span class="tn">solver:self_healing ×6 (SH-1..6)</span><span class="ts run" id="ts1">running<span class="dots"></span></span></div><div class="tcb"><div class="kvs"><div class="kv"><div class="l">收敛率</div><div class="v" id="k1">0%</div></div><div class="kv"><div class="l">平均轮次</div><div class="v" id="k2">0.0</div></div></div></div></div>`);
+  document.getElementById('tsc').scrollTop=1e9;
+  await sleep(1600);
+  countUp(document.getElementById('k1'),83.3,'%',900);
+  countUp(document.getElementById('k2'),1.67,' 轮',900);
+  await sleep(1000);
+  document.getElementById('ts1').className='ts';document.getElementById('ts1').textContent='✓ 5/6 converged · 1.8s';
+  await sleep(300);
+  // 工具块 2
+  turn.insertAdjacentHTML('beforeend',`<div class="tc open" id="tc2"><div class="tch"><span class="ca">▾</span><span class="tn">profile.ablation.no_self_healing ×6</span><span class="ts run" id="ts2">running<span class="dots"></span></span></div><div class="tcb"><div class="kvs"><div class="kv"><div class="l">收敛率</div><div class="v" id="k3">0%</div></div></div></div></div>`);
+  document.getElementById('tsc').scrollTop=1e9;
+  await sleep(1400);
+  countUp(document.getElementById('k3'),33.3,'%',800);
+  await sleep(900);
+  document.getElementById('ts2').className='ts';document.getElementById('ts2').textContent='✓ 2/6 converged';
+  await sleep(300);
+  // 结论文本流式
+  turn.insertAdjacentHTML('beforeend',`<div class="art"><div class="ah"><span>结论</span><span class="ag">Measured</span></div><div class="atxt" id="stxt"></div></div>`);
+  const tx=document.getElementById('stxt');
+  await typeText(tx,'自愈机制使 SH 电池收敛率从 33.3% 提升至 83.3%（+50pp，n=6）；平均求解轮次 1.67，离线确定性、零 token。对照 LLM-Direct 基线 60.0±0.0%（n=3）。');
+  turn.insertAdjacentHTML('beforeend',`<div class="art"><div class="ah"><span>自愈消融对比</span><span class="ag">SH Battery</span></div><svg viewBox="0 0 420 120" style="width:100%">
+<rect x="60" y="20" width="180" height="70" fill="rgba(16,163,127,.25)" stroke="#35b99a"/>
+<rect x="260" y="61" width="72" height="29" fill="rgba(229,83,75,.2)" stroke="#e5534b"/>
+<text x="150" y="14" fill="#35b99a" text-anchor="middle" font-size="10" font-family="monospace">ON 83.3%</text>
+<text x="296" y="55" fill="#e5534b" text-anchor="middle" font-size="10" font-family="monospace">OFF 33.3%</text></svg></div>`);
+  document.getElementById('tsc').scrollTop=1e9;
+  btn.disabled=false;btn.textContent='▶ 再演示一次流式回合';
+}
+function send(){const el=document.getElementById('cin');const t=el.value.trim();if(!t)return;el.value='';
+const th=document.getElementById('thread');th.insertAdjacentHTML('beforeend',`<div class="mu"><div class="b">${t.replace(/</g,'&lt;')}</div></div>`);
+const c=t.split(/\s+/)[0].toLowerCase();let n='（集成态）普通指令将经微内核真实调度并在流式工具块中渲染——LLM 任务规划属 M4。';
+if(c==='/rules'){openWb('dwrules');n='已打开规则树：12 条真实编译规则（v1.2）。'}
+if(c==='/data'){openWb('dwdata');n='已打开数据看板：方法对比 / 消融 / 规则构成。'}
+if(c==='/export')n='请在 HITL 卡批准导出（prompt 策略需人工确认）。';
+th.insertAdjacentHTML('beforeend',`<div class="turn"><div class="tt"><span class="d">◆</span> openBIMAgent</div><div class="art" style="font-size:12px;color:var(--t2)">${n}</div></div>`);
+document.getElementById('tsc').scrollTop=1e9}
+document.addEventListener('click',e=>{const p=document.getElementById('pop');if(p&&p.classList.contains('open')&&!p.parentElement.contains(e.target))p.classList.remove('open')});
+</script>
+</body>
+</html>
