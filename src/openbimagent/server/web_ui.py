@@ -140,10 +140,16 @@ header {
 /* Layout */
 .app-container {
   display: grid;
-  grid-template-columns: 280px 1fr 440px;
+  grid-template-columns: 250px minmax(0, 1fr);
   height: calc(100vh - 52px);
   overflow: hidden;
 }
+.workbench-drawer {
+  display: none;
+  width: 460px;
+  border-left: 1px solid var(--border-color);
+}
+.workbench-drawer.open { display: flex; }
 
 /* Columns */
 .column {
@@ -563,6 +569,79 @@ pre {
 }
 .settings-pills { display: flex; flex-wrap: wrap; gap: 6px; }
 
+/* Agent Thread (Codex/pi 对话流) */
+.thread-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+  scroll-behavior: smooth;
+}
+.thread .stream-container { max-width: 760px; margin: 0 auto; }
+.msg-user { display: flex; justify-content: flex-end; margin-bottom: 14px; }
+.msg-user-bubble {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-strong);
+  border-radius: 14px 14px 4px 14px;
+  padding: 10px 14px;
+  max-width: 78%;
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.6;
+}
+.turn { display: flex; flex-direction: column; gap: 10px; }
+.turn-agent-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  margin-bottom: 2px;
+}
+.toolcall {
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+.toolcall-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+}
+.toolcall-header:hover { background: var(--bg-tertiary); }
+.toolcall-caret { color: var(--text-muted); font-size: 10px; transition: transform 0.12s; }
+.toolcall:not(.open) .toolcall-caret { transform: rotate(-90deg); }
+.toolcall-name {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.toolcall-status { margin-left: auto; font-size: 11px; color: #35b99a; font-family: var(--font-mono); }
+.toolcall-body {
+  display: none;
+  padding: 4px 12px 12px;
+  border-top: 1px solid var(--border-color);
+}
+.toolcall.open .toolcall-body { display: block; }
+.artifact-card {
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  padding: 14px;
+}
+.artifact-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.artifact-card #viewport3d { height: 300px; margin-bottom: 0; }
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -579,6 +658,7 @@ pre {
     <div class="brand-badge">Studio M2</div>
   </div>
   <button class="btn btn-secondary" style="padding: 4px 12px; font-size: 11px;" onclick="loadAll()">刷新</button>
+  <button class="btn btn-secondary" style="padding: 4px 12px; font-size: 11px; margin-left: 8px;" id="workbenchToggle" onclick="toggleWorkbench()">⇱ 工作台</button>
 </header>
 
 <div class="app-container">
@@ -639,82 +719,114 @@ pre {
     </div>
   </div>
 
-  <!-- Center Column: Interaction & Execution Stream -->
-  <div class="column" style="background: var(--bg-primary);">
+  <!-- Center: Agent Thread (对话流为中心 · Codex/pi 布局) -->
+  <div class="column thread" style="background: var(--bg-primary);">
     <div class="col-header">
-      <span id="currentSessionLabel">当前执行流: 实时监控</span>
-      <span id="eventCountBadge" class="card-tag tag-solver">0 Events</span>
+      <span id="currentSessionLabel">会话线程 · 市政管网演示 (SH-2)</span>
+      <span id="eventCountBadge" class="card-tag tag-solver">Turn 1</span>
     </div>
-    <div class="col-body">
+    <div class="thread-scroll" id="threadScroll">
       <div class="stream-container" id="streamContainer">
-        <!-- 默认展示市政管网全流程卡片 -->
-        <div class="card">
-          <div class="card-header">
-            <span>Playbook 需求目标 (Prompt & Slots)</span>
-            <span class="card-tag tag-clarify">Clarify</span>
-          </div>
-          <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.5;">
-            为市政干道规划一条污水重力主管网（内置演示场景 SH-2：起点井 → 折点井 → 接驳井，含合成障碍物），由规则自愈求解器生成。
-          </div>
-          <div class="grid-kv">
-            <div class="kv-item"><div class="kv-label">管线系统</div><div class="kv-val">Wastewater (DN300)</div></div>
-            <div class="kv-item"><div class="kv-label">设计坡度</div><div class="kv-val">3.0‰ (0.003)</div></div>
-            <div class="kv-item"><div class="kv-label">障碍物</div><div class="kv-val" id="flowObstacle">加载中…</div></div>
-            <div class="kv-item"><div class="kv-label">收敛状态</div><div class="kv-val" id="flowConverged">加载中…</div></div>
+
+        <!-- 用户消息 -->
+        <div class="msg-user">
+          <div class="msg-user-bubble">
+            为市政干道规划一条污水重力主管网：起点井 → 折点井 → 接驳井，DN300，坡度 3‰，
+            走廊内含合成障碍物，需满足 GB 50289-2016 净距与覆土要求，并给出可交付 CAD 工件。
           </div>
         </div>
 
-        <div class="card">
-          <div class="card-header">
-            <span>规则自愈求解 (Self-Healing Solver)</span>
-            <span class="card-tag tag-solver">CompiledUtilityIR v1</span>
+        <!-- Agent Turn -->
+        <div class="turn">
+          <div class="turn-agent-label">◆ openBIMAgent · profile.municipal.complete</div>
+
+          <div class="toolcall open">
+            <div class="toolcall-header" onclick="toggleToolcall(this)">
+              <span class="toolcall-caret">▾</span>
+              <span class="toolcall-name">solver:self_healing</span>
+              <span class="toolcall-status">✓ converged · 2 iterations</span>
+            </div>
+            <div class="toolcall-body">
+              <div style="font-size: 11.5px; color: var(--text-muted); margin-bottom: 6px;">
+                冲突驱动自愈：净距/覆土违规检测 → 自适应膨胀避障 → 重规划，直至规则全通过
+              </div>
+              <div class="grid-kv">
+                <div class="kv-item"><div class="kv-label">障碍物</div><div class="kv-val" id="flowObstacle">加载中…</div></div>
+                <div class="kv-item"><div class="kv-label">收敛状态</div><div class="kv-val" id="flowConverged">加载中…</div></div>
+                <div class="kv-item"><div class="kv-label">自愈迭代</div><div class="kv-val" id="flowIterations">—</div></div>
+                <div class="kv-item"><div class="kv-label">检查井/管段</div><div class="kv-val" id="flowTopology">—</div></div>
+                <div class="kv-item"><div class="kv-label">已消除违规</div><div class="kv-val" id="flowResolved">—</div></div>
+                <div class="kv-item"><div class="kv-label">管道总长</div><div class="kv-val" id="flowLength">—</div></div>
+              </div>
+              <div id="flowViolationDetail" style="font-size: 11px; color: var(--text-muted); line-height: 1.6; margin-top: 8px;"></div>
+            </div>
           </div>
-          <div style="font-size: 12px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 8px;">
-            冲突驱动的迭代求解：检测净距/覆土违规 → 自适应膨胀避障 → 重规划，直至规则全通过：
+
+          <div class="toolcall open">
+            <div class="toolcall-header" onclick="toggleToolcall(this)">
+              <span class="toolcall-caret">▾</span>
+              <span class="toolcall-name">rules:gb50289</span>
+              <span class="toolcall-status">✓ 12 rules · self-tests 33/33</span>
+            </div>
+            <div class="toolcall-body">
+              <div style="font-size: 11.5px; color: var(--text-secondary); line-height: 1.5;">
+                MunicipalRuleSet v1.2 编译通过：建筑净距 2.5m、给水 1.0/1.5m 分档、燃气按压力五档…
+                每条规则携带编译期自检样例（加载即单测），production 规则缺样例即拒绝编译。
+                <a href="javascript:void(0)" onclick="openWorkbenchTab('tab-rules')" style="color: #35b99a;">在规则树查看全部 →</a>
+              </div>
+            </div>
           </div>
-          <div class="grid-kv">
-            <div class="kv-item"><div class="kv-label">自愈迭代</div><div class="kv-val" id="flowIterations">—</div></div>
-            <div class="kv-item"><div class="kv-label">检查井/管段</div><div class="kv-val" id="flowTopology">—</div></div>
-            <div class="kv-item"><div class="kv-label">已消除违规</div><div class="kv-val" id="flowResolved">—</div></div>
-            <div class="kv-item"><div class="kv-label">管道总长</div><div class="kv-val" id="flowLength">—</div></div>
+
+          <!-- 内联工件: 3D 视口 -->
+          <div class="artifact-card">
+            <div class="artifact-head">
+              <span>CompiledUtilityIR · 三维预览</span>
+              <span class="card-tag tag-solver">IR v1.0 · registry.invoke 实测</span>
+            </div>
+            <div id="viewport3d">
+              <div id="viewportOverlay" class="viewport-overlay">WebGL 3D Pipe Preview · 加载真实 Compiled IR 中...</div>
+            </div>
           </div>
-          <div id="flowViolationDetail" style="font-size: 11px; color: var(--text-muted); line-height: 1.6;"></div>
+
+          <!-- HITL 审批工件 -->
+          <div class="artifact-card hitl-box">
+            <div class="artifact-head">
+              <span style="color: #d4b45a;">人机协同审批门禁 (HITL)</span>
+              <span class="card-tag tag-hitl">Prompt Policy</span>
+            </div>
+            <div style="font-size: 12px; color: var(--text-secondary); line-height: 1.5;">
+              <strong>cad_host:*.execute 默认 prompt 策略</strong>——批准即带 confirm 经微内核调度真实执行
+              （Blender headless 自动 / VW 需宿主 runner 运行中），受控写盘 + sidecar 回执。
+            </div>
+            <div class="hitl-actions">
+              <button class="btn btn-success" onclick="exportBlend()">✓ 批准并导出 Blender</button>
+              <button class="btn btn-success" onclick="exportVWX()">✓ 批准并导出 VWX</button>
+              <button class="btn btn-secondary" onclick="openWorkbenchTab('tab-ir')">查看 Compiled IR</button>
+            </div>
+          </div>
+
+          <!-- 交付工件 -->
+          <div class="artifact-card">
+            <div class="artifact-head">
+              <span>不可变交付物 (Controlled Save)</span>
+              <span class="card-tag tag-deliver">Deliver</span>
+            </div>
+            <div style="font-size: 12px; color: var(--text-secondary);" id="deliverCardText">
+              受控写盘协议：.blend/.vwx + canonical SHA-256 sidecar 回执（semantic snapshot 与 IR 哈希绑定）。批准导出后此处显示真实产物路径。
+            </div>
+          </div>
         </div>
 
-        <div class="card hitl-box">
-          <div class="card-header">
-            <span style="color: #d4b45a;">人机协同审批门禁 (HITL Approval Gate)</span>
-            <span class="card-tag tag-hitl">Prompt Policy</span>
-          </div>
-          <div style="font-size: 12px; color: var(--text-secondary); line-height: 1.5;">
-            求解结果即将向真实 CAD 宿主发送受控写盘批次；<strong>cad_host:*.execute 能力默认 prompt 策略</strong>，批准即带 confirm 经微内核调度执行（Blender headless / VW 宿主 runner）。
-          </div>
-          <div class="hitl-actions">
-            <button class="btn btn-success" onclick="exportBlend()">✓ 批准并导出 Blender (真实执行)</button>
-            <button class="btn btn-success" onclick="exportVWX()">✓ 批准并导出 VWX (需宿主运行)</button>
-            <button class="btn btn-secondary" onclick="viewIR()">查看 Compiled IR</button>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
-            <span>不可变交付物就绪 (Deliver Gate)</span>
-            <span class="card-tag tag-deliver">Controlled Save</span>
-          </div>
-          <div style="font-size: 12px; color: var(--text-secondary);" id="deliverCardText">
-            受控写盘协议：.blend/.vwx + 带 canonical SHA-256 的 sidecar 回执（completed + semantic snapshot 与 IR 哈希绑定）。批准上方任一导出后，此处显示真实产物路径。
-          </div>
-        </div>
       </div>
     </div>
     <div class="input-box">
-      <input type="text" class="chat-input" placeholder="输入工程指令或斜杠命令 (/tree, /export, /sessions)..." onkeydown="if(event.key==='Enter')handleChat(this.value)">
-      <button class="btn btn-primary" onclick="handleChat(document.querySelector('.chat-input').value)">发送</button>
+      <input type="text" class="chat-input" placeholder="输入工程指令，或 /tree /rules /ir /export /capabilities ..." onkeydown="if(event.key==='Enter')handleChat(this.value)">
+      <button class="btn btn-primary" onclick="handleChat(document.querySelector('.chat-input').value)">发送 ➤</button>
     </div>
   </div>
 
-  <!-- Right Column: BIM Digital Workbench -->
-  <div class="column">
+  <!-- Right: Workbench Drawer (可开合工作台抽屉, 默认收起) -->
+  <div class="column workbench-drawer" id="workbenchDrawer">
     <div class="tabs" id="workbenchTabs">
       <div class="tab active" onclick="switchTab('tab-3d')">3D 视口</div>
       <div class="tab" onclick="switchTab('tab-rules')">GB 50289 规则树</div>
@@ -724,10 +836,10 @@ pre {
       <div class="tab" onclick="switchTab('tab-plugins')">插件清单 (DSH Slots)</div>
     </div>
 
-    <!-- Tab 1: 3D Viewport -->
+    <!-- Tab 1: 3D Viewport (视口已内联到会话线程; 此处保留精检矩阵) -->
     <div id="tab-3d" class="tab-content active">
-      <div id="viewport3d">
-        <div id="viewportOverlay" class="viewport-overlay">WebGL 3D Pipe Preview · 加载真实 Compiled IR 中...</div>
+      <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 10px;">
+        三维视口已内联至会话线程（工件卡）；本页保留视觉双闭环评测矩阵。
       </div>
       <div style="font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase;">
         视觉双闭环评测矩阵 (VLM 6-Score)
@@ -1099,6 +1211,96 @@ async function exportBlend() { return exportHost('/api/v1/demo/export-blender', 
 async function exportVWX() { return exportHost('/api/v1/demo/export-vectorworks', 'btnExportVWX', '⬇ 导出真实 Vectorworks .vwx'); }
 
 const slotRegistry = new BIMSlotRegistry();
+
+function toggleWorkbench() {
+  const drawer = document.getElementById('workbenchDrawer');
+  const btn = document.getElementById('workbenchToggle');
+  if (!drawer) return;
+  drawer.classList.toggle('open');
+  if (btn) btn.textContent = drawer.classList.contains('open') ? '⇱ 收起工作台' : '⇱ 工作台';
+}
+function openWorkbenchTab(tabId) {
+  const drawer = document.getElementById('workbenchDrawer');
+  if (drawer && !drawer.classList.contains('open')) toggleWorkbench();
+  switchTab(tabId);
+}
+function toggleToolcall(headerEl) {
+  headerEl.parentElement.classList.toggle('open');
+}
+function appendUserMsg(text) {
+  const wrap = document.createElement('div');
+  wrap.className = 'msg-user';
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-user-bubble';
+  bubble.textContent = text;
+  wrap.appendChild(bubble);
+  const stream = document.getElementById('streamContainer');
+  if (stream) stream.appendChild(wrap);
+  const sc = document.getElementById('threadScroll');
+  if (sc) sc.scrollTop = sc.scrollHeight;
+  return wrap;
+}
+function appendAgentNote(html) {
+  const turn = document.createElement('div');
+  turn.className = 'turn';
+  turn.innerHTML = '<div class="turn-agent-label">◆ openBIMAgent</div>' +
+    '<div class="artifact-card" style="font-size:12px; color:var(--text-secondary); line-height:1.6;">' + html + '</div>';
+  const stream = document.getElementById('streamContainer');
+  if (stream) stream.appendChild(turn);
+  const sc = document.getElementById('threadScroll');
+  if (sc) sc.scrollTop = sc.scrollHeight;
+  return turn;
+}
+function appendToolcallTurn(name) {
+  const turn = document.createElement('div');
+  turn.className = 'turn';
+  turn.innerHTML =
+    '<div class="turn-agent-label">◆ openBIMAgent · registry.invoke</div>' +
+    '<div class="toolcall open"><div class="toolcall-header">' +
+    '<span class="toolcall-caret">▾</span>' +
+    '<span class="toolcall-name">' + name + '</span>' +
+    '<span class="toolcall-status">running…</span></div>' +
+    '<div class="toolcall-body"><div class="tkv" style="font-size:12px;color:var(--text-secondary);"></div></div></div>';
+  const stream = document.getElementById('streamContainer');
+  if (stream) stream.appendChild(turn);
+  const sc = document.getElementById('threadScroll');
+  if (sc) sc.scrollTop = sc.scrollHeight;
+  return turn;
+}
+
+async function handleChat(text) {
+  text = (text || '').trim();
+  if (!text) return;
+  const input = document.querySelector('.chat-input');
+  if (input) input.value = '';
+  appendUserMsg(text);
+  const cmd = text.split(/\s+/)[0].toLowerCase();
+  if (cmd === '/tree' || cmd === '/graph') { openWorkbenchTab('tab-graph'); appendAgentNote('已打开 <b>空间图谱 & 自愈</b> 面板（真实自愈时间线 + 消融指标）。'); return; }
+  if (cmd === '/rules') { openWorkbenchTab('tab-rules'); appendAgentNote('已打开 <b>GB 50289 规则树</b>——12 条真实编译净距规则（经 rules:gb50289 编译，含自检样例）。'); return; }
+  if (cmd === '/ir') { openWorkbenchTab('tab-ir'); appendAgentNote('已打开 <b>Compiled IR</b> 视图。'); return; }
+  if (cmd === '/plugins' || cmd === '/capabilities') { openWorkbenchTab('tab-plugins'); appendAgentNote('已打开 <b>插件清单</b>（DSH Slots 视图，可用能力见 Live Capability Console）。'); return; }
+  if (cmd === '/sessions') { appendAgentNote('左侧为 Session JSONL 会话树（id/parentId 树结构，可回放）。'); return; }
+  if (cmd === '/export') { appendAgentNote('触发 Blender 受控导出（prompt 策略，浏览器确认后执行）…'); exportBlend(); return; }
+  // 默认: 真实经微内核调度自愈求解演示, 结果以工具调用块追加到线程
+  const turn = appendToolcallTurn('solver:self_healing');
+  const status = turn.querySelector('.toolcall-status');
+  const body = turn.querySelector('.tkv');
+  try {
+    const data = await fetchJSON(API + '/api/v1/demo/municipal-pipeline');
+    if (!data || data.status !== 'success') throw new Error((data && data.error) || '调度失败');
+    status.textContent = '✓ converged · ' + data.iterations_spent + ' iterations';
+    const totalLen = data.segments.reduce((a, s) => a + (s.length_m || 0), 0).toFixed(1);
+    body.innerHTML =
+      '演示语义：以内置 SH-2 场景真实执行 <code>registry.invoke("solver:self_healing")</code>。<br>' +
+      '收敛 <b>' + data.iterations_spent + '</b> 轮 · ' + data.nodes.length + ' 检查井 / ' + data.segments.length +
+      ' 管段 · 总长 ' + totalLen + ' m · 消除违规 ' + data.resolved_violations.length + ' 项。' +
+      '<br><span style="color:var(--text-muted);font-size:11px;">自然语言→任务规划的 LLM 链路属 M4 范围；当前对话入口真实调度确定性内核。</span>';
+  } catch (e) {
+    status.textContent = '✗ failed';
+    status.style.color = 'var(--accent-rose)';
+    body.textContent = String(e.message || e);
+  }
+}
 
 async function loadAll() {
   await loadSessions();
