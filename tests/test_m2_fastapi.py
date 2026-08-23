@@ -370,3 +370,20 @@ def test_export_vectorworks_endpoint_success(monkeypatch) -> None:
     assert d["status"] == "success"
     assert d["receipt"]["status"] == "completed"
     assert d["receipt"]["applied_operations"] == 7
+
+
+def test_rule_tree_endpoint_returns_real_compiled_ruleset() -> None:
+    """规则树数据面：真实 MunicipalRuleSet v1.2（12 条 + 自检样例计数）。"""
+    client = _app()
+    resp = client.get("/api/v1/demo/rule-tree")
+    assert resp.status_code == 200
+    d = resp.json()
+    assert d["status"] == "success"
+    assert d["protocol_version"] == "1.2"
+    assert d["total_rules"] == 12
+    building = next(r for r in d["rules"] if r["rule_key"] == "MU-CLEAR-001:building")
+    assert building["required_clearance_m"] == 2.5
+    assert building["enforcement"] == "production"
+    assert building["self_test_match"] >= 1 and building["self_test_not_match"] >= 2
+    assert building["standard_id"] == "GB 50289-2016"
+    assert all(r["self_test_match"] + r["self_test_not_match"] >= 2 for r in d["rules"])

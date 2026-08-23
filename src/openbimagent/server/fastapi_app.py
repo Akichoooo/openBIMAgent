@@ -355,6 +355,46 @@ def build_m2_readonly_app(
         finally:
             export_guard.release()
 
+    @app.get(
+        "/api/v1/demo/rule-tree",
+        summary="真实 MunicipalRuleSet v1.2 规则树（经微内核 rules:gb50289 编译）",
+        tags=["Plugins"],
+    )
+    async def demo_rule_tree() -> dict:
+        from openbimagent.core.plugin import default_plugin_registry
+
+        try:
+            rule_set = default_plugin_registry.invoke("rules:gb50289")
+        except Exception as exc:  # noqa: BLE001 — 结构化错误而非 500
+            return {"status": "error", "error": str(exc)}
+        rules = [
+            {
+                "rule_key": rule.rule_key,
+                "source_rule_id": rule.source_rule_id,
+                "obstacle_kind": rule.obstacle_kind,
+                "obstacle_category": rule.obstacle_category,
+                "required_clearance_m": rule.required_clearance_m,
+                "source_clause": rule.source_clause,
+                "confidence": rule.confidence.value,
+                "enforcement": rule.enforcement.value,
+                "self_test_match": len(rule.self_tests.match),
+                "self_test_not_match": len(rule.self_tests.not_match),
+                "standard_id": rule.verification.standard_id,
+                "clause": rule.verification.clause,
+                "table": rule.verification.table,
+                "production_eligible": rule.verification.production_eligible(),
+            }
+            for rule in rule_set.rules
+        ]
+        return {
+            "status": "success",
+            "protocol_version": rule_set.protocol_version,
+            "compiler_version": rule_set.compiler_version,
+            "canonical_sha256": rule_set.canonical_sha256,
+            "total_rules": len(rules),
+            "rules": rules,
+        }
+
     @app.api_route(
         "/api/v1/{path:path}",
         methods=["GET", "POST", "PUT", "PATCH", "DELETE"],

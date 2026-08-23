@@ -529,43 +529,44 @@ pre {
             <span class="card-tag tag-clarify">Clarify</span>
           </div>
           <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.5;">
-            为市政干道规划一条污水重力主管网，连接 3 座检查井（起点井 MH-01，折点井 MH-02，终点接驳井 MH-03），埋深 2.5m，管径 DN400，坡度 3‰。
+            为市政干道规划一条污水重力主管网（内置演示场景 SH-2：起点井 → 折点井 → 接驳井，含合成障碍物），由规则自愈求解器生成。
           </div>
           <div class="grid-kv">
-            <div class="kv-item"><div class="kv-label">管线系统</div><div class="kv-val">Wastewater</div></div>
-            <div class="kv-item"><div class="kv-label">标准管径</div><div class="kv-val">DN400 (HDPE)</div></div>
-            <div class="kv-item"><div class="kv-label">水力坡度</div><div class="kv-val">3.0‰ (0.003)</div></div>
-            <div class="kv-item"><div class="kv-label">覆土深度</div><div class="kv-val">2.50 m</div></div>
+            <div class="kv-item"><div class="kv-label">管线系统</div><div class="kv-val">Wastewater (DN300)</div></div>
+            <div class="kv-item"><div class="kv-label">设计坡度</div><div class="kv-val">3.0‰ (0.003)</div></div>
+            <div class="kv-item"><div class="kv-label">障碍物</div><div class="kv-val" id="flowObstacle">加载中…</div></div>
+            <div class="kv-item"><div class="kv-label">收敛状态</div><div class="kv-val" id="flowConverged">加载中…</div></div>
           </div>
         </div>
 
         <div class="card">
           <div class="card-header">
-            <span>确定性水力与几何求解 (Deterministic Solver)</span>
+            <span>规则自愈求解 (Self-Healing Solver)</span>
             <span class="card-tag tag-solver">CompiledUtilityIR v1</span>
           </div>
           <div style="font-size: 12px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 8px;">
-            执行 Manning 水力公式求解开槽满流与充满度，节点拓扑闭合无环：
+            冲突驱动的迭代求解：检测净距/覆土违规 → 自适应膨胀避障 → 重规划，直至规则全通过：
           </div>
           <div class="grid-kv">
-            <div class="kv-item"><div class="kv-label">糙率 Manning n</div><div class="kv-val">0.010</div></div>
-            <div class="kv-item"><div class="kv-label">设计流速 v</div><div class="kv-val">0.82 m/s (≥0.6)</div></div>
-            <div class="kv-item"><div class="kv-label">水力容量 Q</div><div class="kv-val">103.0 L/s</div></div>
-            <div class="kv-item"><div class="kv-label">充满度 h/D</div><div class="kv-val">0.55 (Design)</div></div>
+            <div class="kv-item"><div class="kv-label">自愈迭代</div><div class="kv-val" id="flowIterations">—</div></div>
+            <div class="kv-item"><div class="kv-label">检查井/管段</div><div class="kv-val" id="flowTopology">—</div></div>
+            <div class="kv-item"><div class="kv-label">已消除违规</div><div class="kv-val" id="flowResolved">—</div></div>
+            <div class="kv-item"><div class="kv-label">管道总长</div><div class="kv-val" id="flowLength">—</div></div>
           </div>
+          <div id="flowViolationDetail" style="font-size: 11px; color: var(--text-muted); line-height: 1.6;"></div>
         </div>
 
         <div class="card hitl-box">
           <div class="card-header">
             <span style="color: #fbbf24;">人机协同审批门禁 (HITL Approval Gate)</span>
-            <span class="card-tag tag-hitl">Waiting Decision</span>
+            <span class="card-tag tag-hitl">Prompt Policy</span>
           </div>
           <div style="font-size: 12px; color: var(--text-secondary); line-height: 1.5;">
-            已生成 22 个 Typed Operations 并核验 10 个稳定几何对象。即将向宿主 <strong>Vectorworks 2024</strong> (M1-Municipal-Utility 图层) 与 <strong>Blender 4.2</strong> 发送不可变执行批次。
+            求解结果即将向真实 CAD 宿主发送受控写盘批次；<strong>cad_host:*.execute 能力默认 prompt 策略</strong>，批准即带 confirm 经微内核调度执行（Blender headless / VW 宿主 runner）。
           </div>
           <div class="hitl-actions">
-            <button class="btn btn-success" onclick="approveAction('approve')">✓ 批准执行并提交 (Approve)</button>
-            <button class="btn btn-danger" onclick="approveAction('reject')">✕ 拒绝并要求重算 (Reject)</button>
+            <button class="btn btn-success" onclick="exportBlend()">✓ 批准并导出 Blender (真实执行)</button>
+            <button class="btn btn-success" onclick="exportVWX()">✓ 批准并导出 VWX (需宿主运行)</button>
             <button class="btn btn-secondary" onclick="viewIR()">查看 Compiled IR</button>
           </div>
         </div>
@@ -573,10 +574,10 @@ pre {
         <div class="card">
           <div class="card-header">
             <span>不可变交付物就绪 (Deliver Gate)</span>
-            <span class="card-tag tag-deliver">ArtifactManifest v1.1</span>
+            <span class="card-tag tag-deliver">Controlled Save</span>
           </div>
-          <div style="font-size: 12px; color: var(--text-secondary);">
-            IFC4X3 标准模型已生成并通过 IDS 1.0 架构几何合规校验，双宿主 SemanticSnapshot 严格一致。
+          <div style="font-size: 12px; color: var(--text-secondary);" id="deliverCardText">
+            受控写盘协议：.blend/.vwx + 带 canonical SHA-256 的 sidecar 回执（completed + semantic snapshot 与 IR 哈希绑定）。批准上方任一导出后，此处显示真实产物路径。
           </div>
         </div>
       </div>
@@ -620,42 +621,10 @@ pre {
     <!-- Tab 2: Rule Evidence -->
     <div id="tab-rules" class="tab-content">
       <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 10px;">
-        GB 50289-2016《城市工程管线综合规划规范》核验证据（失败关闭，4 态判定）：
+        <span id="ruleTreeMeta">加载真实 MunicipalRuleSet 中（经 rules:gb50289 编译，含自检样例）…</span>
       </div>
-      <div class="rule-item">
-        <div class="rule-header">
-          <span class="rule-id">MU-CLEAR-001</span>
-          <span class="badge-pass">PASS</span>
-        </div>
-        <div class="rule-desc">排水管与给水管水平净距：实测 1.85m ≥ 规范要求 1.00m。</div>
-      </div>
-      <div class="rule-item">
-        <div class="rule-header">
-          <span class="rule-id">MU-CLEAR-002</span>
-          <span class="badge-pass">PASS</span>
-        </div>
-        <div class="rule-desc">与燃气管垂直交叉净距：实测 0.45m ≥ 规范要求 0.15m。</div>
-      </div>
-      <div class="rule-item">
-        <div class="rule-header">
-          <span class="rule-id">MU-COVER-001</span>
-          <span class="badge-pass">PASS</span>
-        </div>
-        <div class="rule-desc">车行道最小覆土深度：实测 2.50m ≥ 规范要求 0.70m。</div>
-      </div>
-      <div class="rule-item">
-        <div class="rule-header">
-          <span class="rule-id">MU-SLOPE-001</span>
-          <span class="badge-pass">PASS</span>
-        </div>
-        <div class="rule-desc">DN400 污水管最小坡度：设计坡度 0.0030 ≥ 规范最小坡度 0.0020。</div>
-      </div>
-      <div class="rule-item">
-        <div class="rule-header">
-          <span class="rule-id">MU-HYDR-001</span>
-          <span class="badge-pass">PASS</span>
-        </div>
-        <div class="rule-desc">非淤积最小流速核验：设计流速 0.82m/s ≥ 规范要求 0.60m/s。</div>
+      <div id="ruleTreeList">
+        <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">加载中...</div>
       </div>
     </div>
 
@@ -987,6 +956,10 @@ async function exportHost(endpoint, btnId, label) {
       const size = r.output_bytes ? `${(r.output_bytes/1024).toFixed(0)} KB` : `${r.applied_operations} ops`;
       const cnt = r.objects !== undefined ? `${r.objects} 对象` : `${r.confirmed_objects} 确认对象`;
       if (status) status.textContent = `✓ ${r.status} | ${cnt} | ${size} | ${r.elapsed_ms} ms → ${r.output_path}`;
+      const deliver = document.getElementById('deliverCardText');
+      if (deliver) {
+        deliver.innerHTML = `✓ 真实产物已落盘: <strong>${r.output_path}</strong> (${cnt}, ${size}, ${r.elapsed_ms} ms)<br>回执 status=${r.status}, plan SHA ${String(r.plan_sha256 || '').slice(0, 12)}…; sidecar 与 IR 哈希绑定 (受控保存协议)。`;
+      }
     } else {
       if (status) status.textContent = '✗ ' + (typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
     }
@@ -1006,6 +979,51 @@ async function loadAll() {
   await loadSessions();
   await slotRegistry.init();
   await loadSelfHealingDemo();
+  await loadRuleTree();
+}
+
+function fillExecutionFlowCards(data) {
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  set('flowObstacle', '合成障碍 @(' + (data.resolved_violations && data.resolved_violations.length ? data.resolved_violations[0].location_xy.join(',') : '—') + ')');
+  set('flowConverged', data.converged ? '✅ 收敛' : '❌ 未收敛');
+  set('flowIterations', data.iterations_spent + ' 轮');
+  set('flowTopology', data.nodes.length + ' 井 / ' + data.segments.length + ' 段');
+  set('flowResolved', data.resolved_violations.length + ' 项');
+  const totalLen = data.segments.reduce((a, s) => a + (s.length_m || 0), 0);
+  set('flowLength', totalLen.toFixed(1) + ' m');
+  const det = document.getElementById('flowViolationDetail');
+  if (det) {
+    det.innerHTML = (data.resolved_violations || []).map(v =>
+      `✓ ${v.rule_id}: ${v.description} (要求 ${v.required} / 实测 ${v.actual})`
+    ).join('<br>') || '首轮无规则违规';
+  }
+}
+
+async function loadRuleTree() {
+  const meta = document.getElementById('ruleTreeMeta');
+  const list = document.getElementById('ruleTreeList');
+  const data = await fetchJSON(API + '/api/v1/demo/rule-tree');
+  if (!data || data.status !== 'success') {
+    if (meta) meta.textContent = '规则集加载失败: ' + (data && data.error ? data.error : '网络错误');
+    return;
+  }
+  if (meta) {
+    meta.textContent = `MunicipalRuleSet v${data.protocol_version} (编译器 v${data.compiler_version}) · ${data.total_rules} 条可执行净距规则 · canonical ${data.canonical_sha256.slice(0, 12)}… · 全部携带编译期自检样例`;
+  }
+  if (!list) return;
+  list.innerHTML = data.rules.map(r => {
+    const badge = r.enforcement === 'production'
+      ? '<span class="badge-pass">PRODUCTION</span>'
+      : '<span class="card-tag tag-hitl">REVIEW</span>';
+    const cat = { building: '建(构)筑物', water: '给水管', gas: '燃气管', telecom: '通信管线', power: '电力管线' }[r.obstacle_category] || r.obstacle_category;
+    return `<div class="rule-item">
+      <div class="rule-header">
+        <span class="rule-id">${r.rule_key}</span>
+        ${badge}
+      </div>
+      <div class="rule-desc">${cat}(${r.obstacle_kind}) 水平净距要求 <strong>${r.required_clearance_m} m</strong> · ${r.standard_id} ${r.clause}${r.table ? ' 表 ' + r.table : ''} · 自检样例 ${r.self_test_match}✓/${r.self_test_not_match}✗</div>
+    </div>`;
+  }).join('');
 }
 
 async function loadSelfHealingDemo() {
@@ -1015,6 +1033,7 @@ async function loadSelfHealingDemo() {
     if (badge) { badge.textContent = 'DEMO UNAVAILABLE'; badge.classList.remove('badge-pass'); }
     return;
   }
+  fillExecutionFlowCards(data);
   const badge = document.getElementById('healingBadge');
   const body = document.getElementById('healingTimeline');
   if (badge) {
