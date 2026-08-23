@@ -5,11 +5,15 @@
 - 显式配置契约不完整（OPENBIMAGENT_VW_JOBS_DIR / RESULTS_DIR / AUTHORIZED_ROOT）；
 - VW 宿主不可达（探测 jobs 目录无 runner 消费迹象时由用例内超时给出明确失败）。
 
-前置（人工，一次性）：
-  1. 启动 Vectorworks 2024；
-  2. 在 VW 内加载 mcp_servers/vectorworks_mcp/runner.py（Python 脚本面板），
-     其轮询目录 = OPENBIMAGENT_VW_JOBS_DIR；
-  3. 导出三个环境变量后运行：
+前置（人工，一次性；runner 现用固定 IPC 根 D:\devloopw_ipc，心跳可探活）：
+  1. 启动 Vectorworks 2024（从哪里启动都行，不依赖 CWD）；
+  2. 在 VW 内运行 mcp_servers/vectorworks_mcp/runner.py —— VW UI 显示"未响应"是
+     预期形态（死循环占住脚本线程但仍消费 jobs）；确认
+     D:\devloopw_ipcunner_heartbeat.json 存在且时间戳持续更新即存活；
+  3. 导出环境变量后运行：
+     export OPENBIMAGENT_VW_JOBS_DIR=D:/devloop/vw_ipc/jobs
+     export OPENBIMAGENT_VW_RESULTS_DIR=D:/devloop/vw_ipc/results
+     export OPENBIMAGENT_VW_AUTHORIZED_ROOT=D:/devloop/G6_Test
      OPENBIMAGENT_RUN_REAL_VW=1 uv run pytest tests/test_vectorworks_integration_real.py -v
 """
 

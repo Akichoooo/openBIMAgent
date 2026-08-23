@@ -839,3 +839,34 @@ def test_execute_vs_code_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "stdout" in result
     assert result["error"] if not result["ok"] else True  # ok 时无 error 键
     assert captured.get("message") == "hello"
+
+
+def test_resolve_ipc_dirs_fixed_root_and_env_override(tmp_path, monkeypatch) -> None:
+    """IPC 目录约定：默认固定根（免 VW CWD 依赖），env 可覆盖。"""
+    runner = _load_runner_module()
+    default_root, jobs, results, heartbeat = runner.resolve_ipc_dirs()
+    assert jobs == default_root / "jobs"
+    assert results == default_root / "results"
+    assert heartbeat == default_root / "runner_heartbeat.json"
+    assert default_root.is_absolute()
+
+    monkeypatch.setenv("OPENBIMAGENT_VW_IPC_ROOT", str(tmp_path))
+    root2, jobs2, _, hb2 = runner.resolve_ipc_dirs()
+    assert root2 == tmp_path
+    assert jobs2 == tmp_path / "jobs"
+    assert hb2 == tmp_path / "runner_heartbeat.json"
+
+
+def test_write_heartbeat_roundtrip(tmp_path) -> None:
+    """心跳文件可被外部探测（时间戳 + 启动时间 + VW 版本回退 unknown）。"""
+    import time as _time
+    from datetime import datetime
+
+    runner = _load_runner_module()
+    hb = tmp_path / "runner_heartbeat.json"
+    before = _time.time()
+    runner.write_heartbeat(hb, datetime.now())
+    data = json.loads(hb.read_text(encoding="utf-8"))
+    assert data["ts"] >= before
+    assert data["vw_version"] in {"unknown"} or data["vw_version"].startswith("VectorWorks")
+    assert "started_at" in data

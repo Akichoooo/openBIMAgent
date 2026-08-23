@@ -1098,21 +1098,56 @@ def poll_jobs_once(jobs_dir: Path, results_dir: Path) -> list[str]:
     return processed
 
 
-def main() -> None:
-    """runner 主循环:死循环轮询 jobs/,100ms 间隔。
+DEFAULT_IPC_ROOT = Path(r"D:\devloopw_ipc")
 
-    在 VW 内嵌 Python 中运行;Ctrl-C 或 VW 退出时停止。
+
+def resolve_ipc_dirs(ipc_root: Path | str | None = None) -> tuple[Path, Path, Path, Path]:
+    """IPC 目录约定:固定根目录(OPENBIMAGENT_VW_IPC_ROOT 可覆盖)下的 jobs/ + results/。
+
+    不再依赖 VW 进程 CWD(相对路径在 Program Files 下不可写且路径不可见),
+    并返回 heartbeat 路径供外部探测 runner 存活。
     """
-    jobs_dir = Path("jobs")
-    results_dir = Path("results")
+    root = Path(ipc_root or os.environ.get("OPENBIMAGENT_VW_IPC_ROOT") or DEFAULT_IPC_ROOT)
+    return root, root / "jobs", root / "results", root / "runner_heartbeat.json"
+
+
+def write_heartbeat(heartbeat_path: Path, started_at: datetime) -> None:
+    """落盘心跳(每秒节流由调用方负责);外部用时间戳判断 runner 是否存活。"""
+    heartbeat_path.write_text(
+        json.dumps(
+            {
+                "ts": time.time(),
+                "started_at": started_at.isoformat(),
+                "vw_version": get_vw_version(),
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def main() -> None:
+    """runner 主循环:死循环轮询 jobs/,100ms 间隔;每 ~1s 更新心跳文件。
+
+    在 VW 内嵌 Python 中运行——UI 会显示"未响应"(脚本线程被本循环占用),
+    这是预期形态:循环仍在消费 jobs 并写 results;停止方式是关闭 VW。
+    """
+    root, jobs_dir, results_dir, heartbeat_path = resolve_ipc_dirs()
     jobs_dir.mkdir(parents=True, exist_ok=True)
     results_dir.mkdir(parents=True, exist_ok=True)
+    started_at = datetime.now()
+    last_heartbeat = 0.0
     print("VW MCP runner started", flush=True)
+    print(f"  ipc_root:   {root.resolve()}", flush=True)
     print(f"  jobs_dir:   {jobs_dir.resolve()}", flush=True)
     print(f"  results_dir:{results_dir.resolve()}", flush=True)
     try:
         while True:
             poll_jobs_once(jobs_dir, results_dir)
+            now = time.time()
+            if now - last_heartbeat >= 1.0:
+                write_heartbeat(heartbeat_path, started_at)
+                last_heartbeat = now
             time.sleep(0.1)
     except KeyboardInterrupt:
         print("Runner stopped", flush=True)
