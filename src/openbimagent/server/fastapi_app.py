@@ -395,6 +395,35 @@ def build_m2_readonly_app(
             "rules": rules,
         }
 
+    @app.get(
+        "/api/v1/demo/runtime-info",
+        summary="运行时信息：LLM 基线模型（不含 key）+ 微内核统计",
+        tags=["Plugins"],
+    )
+    async def demo_runtime_info() -> dict:
+        from openbimagent.core.plugin import default_plugin_registry
+
+        try:
+            from openbimagent.benchmark.llm_direct_baseline import load_llm_baseline_config
+
+            cfg = load_llm_baseline_config()
+        except Exception:  # noqa: BLE001 — 配置缺失不致命, 前端显示未配置
+            cfg = None
+        inventory = default_plugin_registry.export_inventory()
+        return {
+            "status": "success",
+            "llm": {
+                "configured": cfg is not None,
+                "model": cfg.model if cfg else None,
+                "base_url": cfg.base_url if cfg else None,
+            },
+            "registry": {
+                "plugins": inventory["plugin_count"],
+                "capabilities": inventory["total_capabilities"],
+                "policies": len(inventory["capability_policies"]),
+            },
+        }
+
     @app.api_route(
         "/api/v1/{path:path}",
         methods=["GET", "POST", "PUT", "PATCH", "DELETE"],

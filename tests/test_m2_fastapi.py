@@ -387,3 +387,16 @@ def test_rule_tree_endpoint_returns_real_compiled_ruleset() -> None:
     assert building["self_test_match"] >= 1 and building["self_test_not_match"] >= 2
     assert building["standard_id"] == "GB 50289-2016"
     assert all(r["self_test_match"] + r["self_test_not_match"] >= 2 for r in d["rules"])
+
+
+def test_runtime_info_endpoint_never_leaks_key() -> None:
+    """设置面板数据面：模型可见、key 永不出现。"""
+    client = _app()
+    resp = client.get("/api/v1/demo/runtime-info")
+    assert resp.status_code == 200
+    d = resp.json()
+    assert d["status"] == "success"
+    assert "llm" in d and "registry" in d
+    assert d["registry"]["capabilities"] >= 14
+    raw = resp.text
+    assert "api_key" not in raw and "sk-" not in raw and "tf_" not in raw

@@ -24,25 +24,31 @@ PAGE = r"""<!DOCTYPE html>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <style>
+/* ============================================================
+   Design language: Codex-style minimal neutral
+   - 近无彩中性灰阶, 白色主按钮(签名元素), 绿色仅成功态
+   - 1px 细边框扁平卡片, 无渐变无发光, tabular-nums 等宽数字
+   ============================================================ */
 :root {
-  --bg-primary: #090d16;
-  --bg-secondary: #101726;
-  --bg-tertiary: #172033;
-  --bg-card: #141c2e;
-  --bg-card-hover: #1b253b;
-  --border-color: #243049;
-  --border-focus: #38bdf8;
-  --text-primary: #f1f5f9;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
-  --accent-cyan: #06b6d4;
-  --accent-blue: #38bdf8;
-  --accent-emerald: #10b981;
-  --accent-amber: #f59e0b;
-  --accent-rose: #f43f5e;
-  --accent-purple: #8b5cf6;
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  --bg-primary: #0d0f11;
+  --bg-secondary: #141619;
+  --bg-tertiary: #1a1d21;
+  --bg-card: #141619;
+  --bg-card-hover: #1d2024;
+  --border-color: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --border-focus: rgba(255, 255, 255, 0.45);
+  --text-primary: #ececec;
+  --text-secondary: #b4b8bd;
+  --text-muted: #8b9096;
+  --accent-cyan: #9aa4ad;
+  --accent-blue: #d4d9de;
+  --accent-emerald: #10a37f;
+  --accent-amber: #c9a227;
+  --accent-rose: #e5534b;
+  --accent-purple: #a08dde;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'SFMono-Regular', 'Cascadia Code', Consolas, 'Courier New', monospace;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -54,17 +60,19 @@ body {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
 }
 
 /* Header */
 header {
-  height: 54px;
-  background: var(--bg-secondary);
+  height: 52px;
+  background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 18px;
+  padding: 0 20px;
   z-index: 100;
 }
 .brand {
@@ -73,67 +81,67 @@ header {
   gap: 12px;
 }
 .brand-logo {
-  width: 28px;
-  height: 28px;
-  background: linear-gradient(135deg, #0ea5e9, #6366f1);
-  border-radius: 6px;
+  width: 26px;
+  height: 26px;
+  background: #ffffff;
+  border-radius: 7px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
-  font-size: 14px;
-  color: white;
+  font-size: 13px;
+  color: #0d0f11;
 }
 .brand-title {
-  font-size: 15px;
-  font-weight: 700;
+  font-size: 14px;
+  font-weight: 600;
   letter-spacing: -0.01em;
   color: #ffffff;
 }
 .brand-badge {
   font-size: 11px;
-  font-weight: 600;
-  padding: 2px 8px;
-  background: rgba(56, 189, 248, 0.12);
-  border: 1px solid rgba(56, 189, 248, 0.3);
-  color: var(--accent-blue);
-  border-radius: 12px;
+  font-weight: 500;
+  padding: 2px 9px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+  border-radius: 999px;
+  font-family: var(--font-mono);
 }
 .header-status {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 .status-pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 10px;
-  border-radius: 20px;
-  font-size: 12px;
+  padding: 3px 11px;
+  border-radius: 999px;
+  font-size: 11.5px;
   font-weight: 500;
-  background: var(--bg-tertiary);
+  background: transparent;
   border: 1px solid var(--border-color);
   color: var(--text-secondary);
 }
 .status-pill.online {
-  border-color: rgba(16, 185, 129, 0.4);
-  color: #34d399;
-  background: rgba(16, 185, 129, 0.08);
+  border-color: rgba(16, 163, 127, 0.35);
+  color: #35b99a;
+  background: rgba(16, 163, 127, 0.06);
 }
 .pulse-dot {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: currentColor;
-  box-shadow: 0 0 8px currentColor;
 }
 
 /* Layout */
 .app-container {
   display: grid;
   grid-template-columns: 280px 1fr 440px;
-  height: calc(100vh - 54px);
+  height: calc(100vh - 52px);
   overflow: hidden;
 }
 
@@ -149,37 +157,37 @@ header {
   border-right: none;
 }
 .col-header {
-  height: 44px;
-  padding: 0 16px;
-  background: var(--bg-secondary);
+  height: 42px;
+  padding: 0 18px;
+  background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 600;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.07em;
 }
 .col-body {
   flex: 1;
   overflow-y: auto;
-  padding: 14px;
+  padding: 16px;
 }
 
 /* Left Panel: Navigation */
 .domain-card {
-  background: var(--bg-card);
+  background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
-  padding: 12px;
-  margin-bottom: 16px;
+  border-radius: 12px;
+  padding: 13px;
+  margin-bottom: 18px;
 }
 .domain-card-title {
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 600;
-  color: var(--accent-cyan);
+  color: var(--text-primary);
   margin-bottom: 4px;
   display: flex;
   align-items: center;
@@ -188,28 +196,28 @@ header {
 .domain-card-desc {
   font-size: 11px;
   color: var(--text-muted);
-  line-height: 1.4;
+  line-height: 1.5;
 }
 .session-item {
-  background: var(--bg-card);
+  background: transparent;
   border: 1px solid var(--border-color);
-  border-radius: 8px;
-  padding: 12px;
-  margin-bottom: 10px;
+  border-radius: 10px;
+  padding: 11px 12px;
+  margin-bottom: 8px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: border-color 0.12s ease, background 0.12s ease;
 }
 .session-item:hover {
-  background: var(--bg-card-hover);
-  border-color: var(--border-focus);
+  background: var(--bg-secondary);
+  border-color: var(--border-strong);
 }
 .session-item.active {
-  background: rgba(56, 189, 248, 0.08);
-  border-color: var(--accent-blue);
+  background: var(--bg-tertiary);
+  border-color: var(--border-strong);
 }
 .session-id {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
   color: var(--text-primary);
   display: flex;
@@ -219,7 +227,7 @@ header {
 .session-title {
   font-size: 12px;
   color: var(--text-secondary);
-  margin-bottom: 6px;
+  margin-bottom: 5px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -229,18 +237,19 @@ header {
   color: var(--text-muted);
   display: flex;
   justify-content: space-between;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Center Panel: Stream */
 .stream-container {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
 }
 .card {
-  background: var(--bg-card);
+  background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: 12px;
   padding: 16px;
   position: relative;
 }
@@ -249,31 +258,36 @@ header {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 10px;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 600;
+  color: var(--text-primary);
 }
 .card-tag {
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 600;
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  background: transparent;
 }
-.tag-clarify { background: rgba(139, 92, 246, 0.2); color: #c084fc; border: 1px solid rgba(139, 92, 246, 0.4); }
-.tag-solver { background: rgba(6, 182, 212, 0.2); color: #22d3ee; border: 1px solid rgba(6, 182, 212, 0.4); }
-.tag-rule { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); }
-.tag-hitl { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); }
-.tag-deliver { background: rgba(56, 189, 248, 0.2); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); }
+.tag-clarify { color: #b9a7e8; border-color: rgba(160, 141, 222, 0.35); }
+.tag-solver { color: #9fc3d8; border-color: rgba(159, 195, 216, 0.35); }
+.tag-rule { color: #35b99a; border-color: rgba(16, 163, 127, 0.4); }
+.tag-hitl { color: #d4b45a; border-color: rgba(201, 162, 39, 0.4); }
+.tag-deliver { color: #b4b8bd; border-color: var(--border-strong); }
 
 .grid-kv {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-  gap: 8px;
-  background: var(--bg-secondary);
-  padding: 10px;
-  border-radius: 6px;
+  gap: 10px;
+  background: var(--bg-primary);
+  padding: 11px 12px;
+  border-radius: 8px;
   margin-top: 8px;
+  border: 1px solid var(--border-color);
 }
 .kv-item {
   display: flex;
@@ -281,85 +295,92 @@ header {
   gap: 2px;
 }
 .kv-label {
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 .kv-val {
   font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 12.5px;
+  font-weight: 500;
   color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
 }
 
 /* HITL Action Bar */
 .hitl-box {
-  background: rgba(245, 158, 11, 0.05);
-  border: 1px solid rgba(245, 158, 11, 0.3);
-  border-radius: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid rgba(201, 162, 39, 0.35);
+  border-radius: 12px;
   padding: 14px;
 }
 .hitl-actions {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   margin-top: 12px;
+  flex-wrap: wrap;
 }
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 7px 16px;
-  border-radius: 6px;
+  padding: 7px 15px;
+  border-radius: 8px;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   border: 1px solid transparent;
-  transition: all 0.15s ease;
+  transition: opacity 0.12s ease, background 0.12s ease;
 }
+.btn:disabled { opacity: 0.55; cursor: wait; }
 .btn-primary {
-  background: #0284c7;
-  color: white;
+  background: #ffffff;
+  color: #0d0f11;
 }
-.btn-primary:hover { background: #0369a1; }
+.btn-primary:hover { background: #e8e8e8; }
 .btn-success {
-  background: #059669;
-  color: white;
+  background: var(--accent-emerald);
+  color: #ffffff;
 }
-.btn-success:hover { background: #047857; }
+.btn-success:hover { background: #0d8a6c; }
 .btn-danger {
-  background: #dc2626;
-  color: white;
+  background: transparent;
+  color: var(--accent-rose);
+  border-color: rgba(229, 83, 75, 0.4);
 }
-.btn-danger:hover { background: #b91c1c; }
+.btn-danger:hover { background: rgba(229, 83, 75, 0.08); }
 .btn-secondary {
-  background: var(--bg-tertiary);
-  border-color: var(--border-color);
+  background: transparent;
+  border-color: var(--border-strong);
   color: var(--text-primary);
 }
-.btn-secondary:hover { background: var(--bg-card-hover); }
+.btn-secondary:hover { background: var(--bg-tertiary); }
 
 /* Right Panel: Tabs */
 .tabs {
   display: flex;
   border-bottom: 1px solid var(--border-color);
-  background: var(--bg-secondary);
+  background: var(--bg-primary);
+  overflow-x: auto;
 }
 .tab {
   flex: 1;
   padding: 10px 4px;
   text-align: center;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 11.5px;
+  font-weight: 500;
   color: var(--text-muted);
   cursor: pointer;
-  border-bottom: 2px solid transparent;
-  transition: all 0.15s;
+  border-bottom: 1.5px solid transparent;
+  transition: color 0.12s, border-color 0.12s;
+  white-space: nowrap;
 }
 .tab:hover { color: var(--text-secondary); }
 .tab.active {
-  color: var(--accent-blue);
-  border-bottom-color: var(--accent-blue);
-  background: var(--bg-primary);
+  color: #ffffff;
+  border-bottom-color: #ffffff;
 }
 
 .tab-content {
@@ -367,7 +388,7 @@ header {
   flex-direction: column;
   height: 100%;
   overflow-y: auto;
-  padding: 14px;
+  padding: 16px;
 }
 .tab-content.active { display: flex; }
 
@@ -375,9 +396,9 @@ header {
 #viewport3d {
   width: 100%;
   height: 240px;
-  background: #070a10;
+  background: #0a0c0d;
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: 12px;
   position: relative;
   overflow: hidden;
   margin-bottom: 12px;
@@ -388,87 +409,165 @@ header {
   left: 8px;
   font-size: 10px;
   font-family: var(--font-mono);
-  background: rgba(16, 23, 38, 0.8);
+  background: rgba(13, 15, 17, 0.85);
   padding: 4px 8px;
-  border-radius: 4px;
+  border-radius: 6px;
   border: 1px solid var(--border-color);
-  color: var(--accent-cyan);
+  color: var(--text-secondary);
 }
 
 /* Rule Tree */
 .rule-item {
-  background: var(--bg-card);
+  background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
-  padding: 10px;
+  border-radius: 10px;
+  padding: 11px 12px;
   margin-bottom: 8px;
 }
 .rule-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 4px;
+  margin-bottom: 5px;
 }
 .rule-id {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
-  color: var(--accent-cyan);
+  color: var(--text-primary);
 }
 .badge-pass {
-  background: rgba(16, 185, 129, 0.15);
-  color: #34d399;
-  border: 1px solid rgba(16, 185, 129, 0.4);
-  font-size: 10px;
+  background: rgba(16, 163, 127, 0.1);
+  color: #35b99a;
+  border: 1px solid rgba(16, 163, 127, 0.35);
+  font-size: 9.5px;
   font-weight: 700;
-  padding: 1px 6px;
-  border-radius: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  letter-spacing: 0.04em;
 }
 .rule-desc {
   font-size: 12px;
   color: var(--text-secondary);
-  line-height: 1.4;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Code Pre */
 pre {
-  background: var(--bg-secondary);
+  background: var(--bg-primary);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
-  padding: 10px;
+  border-radius: 10px;
+  padding: 11px;
   font-family: var(--font-mono);
   font-size: 11px;
-  color: #93c5fd;
+  color: var(--text-secondary);
   overflow-x: auto;
-  line-height: 1.4;
+  line-height: 1.5;
 }
 
 /* Input area */
 .input-box {
   padding: 12px 16px;
-  background: var(--bg-secondary);
+  background: var(--bg-primary);
   border-top: 1px solid var(--border-color);
   display: flex;
-  gap: 10px;
+  gap: 8px;
 }
 .chat-input {
   flex: 1;
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
-  padding: 8px 12px;
+  border-radius: 9px;
+  padding: 9px 13px;
   color: var(--text-primary);
   font-family: var(--font-sans);
   font-size: 13px;
   outline: none;
+  transition: border-color 0.12s;
 }
 .chat-input:focus { border-color: var(--border-focus); }
 
+/* Sidebar footer: model chip + settings (Codex sidebar-bottom) */
+.sidebar-footer {
+  position: relative;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  padding: 10px 12px;
+}
+.model-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 11px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  color: var(--text-primary);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.model-chip:hover { border-color: var(--border-strong); background: var(--bg-tertiary); }
+.model-chip-icon { color: var(--text-muted); font-size: 10px; }
+.model-chip-caret { margin-left: auto; color: var(--text-muted); font-size: 11px; }
+.settings-popover {
+  display: none;
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: calc(100% + 6px);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  padding: 4px 0;
+  z-index: 200;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.settings-popover.open { display: block; }
+.settings-section { padding: 10px 14px; }
+.settings-section + .settings-section { border-top: 1px solid var(--border-color); }
+.settings-title {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 8px;
+}
+.settings-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+.settings-key { color: var(--text-muted); }
+.settings-val {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-primary);
+  text-align: right;
+  word-break: break-all;
+}
+.settings-hint {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  margin-top: 8px;
+  line-height: 1.5;
+}
+.settings-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+
 /* Scrollbar */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: var(--bg-primary); }
-::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #334155; }
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); }
 </style>
 </head>
 <body>
@@ -479,13 +578,7 @@ pre {
     <div class="brand-title">openBIMAgent</div>
     <div class="brand-badge">Studio M2</div>
   </div>
-  <div class="header-status">
-    <div class="status-pill online"><span class="pulse-dot"></span>Blender MCP: Ready</div>
-    <div class="status-pill online"><span class="pulse-dot"></span>Vectorworks MCP: Ready</div>
-    <div class="status-pill online"><span class="pulse-dot"></span>CodeGraph: 4.9k Nodes</div>
-    <div id="sseStatus" class="status-pill online"><span class="pulse-dot"></span>SSE Live</div>
-    <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 11px;" onclick="loadAll()">刷新</button>
-  </div>
+  <button class="btn btn-secondary" style="padding: 4px 12px; font-size: 11px;" onclick="loadAll()">刷新</button>
 </header>
 
 <div class="app-container">
@@ -511,6 +604,38 @@ pre {
       <div id="sessionList">
         <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">加载会话中...</div>
       </div>
+    </div>
+
+    <!-- 左栏底部: 模型芯片 + 设置 (Codex sidebar-bottom 模式) -->
+    <div class="sidebar-footer">
+      <div class="settings-popover" id="settingsPopover">
+        <div class="settings-section">
+          <div class="settings-title">模型 (LLM 基线)</div>
+          <div class="settings-row"><span class="settings-key">model</span><span class="settings-val" id="cfgModel">—</span></div>
+          <div class="settings-row"><span class="settings-key">endpoint</span><span class="settings-val" id="cfgEndpoint">—</span></div>
+          <div class="settings-row"><span class="settings-key">基线状态</span><span class="settings-val" id="cfgStatus">—</span></div>
+          <div class="settings-hint">配置文件: config/llm_baseline.local.toml (gitignored, key 永不出现在前端)</div>
+        </div>
+        <div class="settings-section">
+          <div class="settings-title">宿主与连接</div>
+          <div class="settings-pills">
+            <div class="status-pill online"><span class="pulse-dot"></span>Blender MCP</div>
+            <div class="status-pill online"><span class="pulse-dot"></span>Vectorworks MCP</div>
+            <div class="status-pill online"><span class="pulse-dot"></span>CodeGraph</div>
+            <div id="sseStatus" class="status-pill online"><span class="pulse-dot"></span>SSE Live</div>
+          </div>
+        </div>
+        <div class="settings-section">
+          <div class="settings-title">运行时</div>
+          <div class="settings-row"><span class="settings-key">插件 / 能力</span><span class="settings-val" id="cfgRuntime">—</span></div>
+          <div class="settings-row"><span class="settings-key">策略门规则</span><span class="settings-val" id="cfgPolicies">—</span></div>
+        </div>
+      </div>
+      <button class="model-chip" onclick="toggleSettings(event)">
+        <span class="model-chip-icon">◆</span>
+        <span id="modelChipName">模型加载中…</span>
+        <span class="model-chip-caret">⌃</span>
+      </button>
     </div>
   </div>
 
@@ -558,7 +683,7 @@ pre {
 
         <div class="card hitl-box">
           <div class="card-header">
-            <span style="color: #fbbf24;">人机协同审批门禁 (HITL Approval Gate)</span>
+            <span style="color: #d4b45a;">人机协同审批门禁 (HITL Approval Gate)</span>
             <span class="card-tag tag-hitl">Prompt Policy</span>
           </div>
           <div style="font-size: 12px; color: var(--text-secondary); line-height: 1.5;">
@@ -608,10 +733,10 @@ pre {
         视觉双闭环评测矩阵 (VLM 6-Score)
       </div>
       <div class="grid-kv" style="margin-bottom: 12px;">
-        <div class="kv-item"><div class="kv-label">几何拓扑准确度</div><div class="kv-val" style="color:#34d399;">9.8 / 10</div></div>
-        <div class="kv-item"><div class="kv-label">净距合规性</div><div class="kv-val" style="color:#34d399;">10.0 / 10</div></div>
-        <div class="kv-item"><div class="kv-label">水力坡度连续性</div><div class="kv-val" style="color:#34d399;">10.0 / 10</div></div>
-        <div class="kv-item"><div class="kv-label">双宿主一致性</div><div class="kv-val" style="color:#34d399;">9.9 / 10</div></div>
+        <div class="kv-item"><div class="kv-label">几何拓扑准确度</div><div class="kv-val" style="color:#35b99a;">9.8 / 10</div></div>
+        <div class="kv-item"><div class="kv-label">净距合规性</div><div class="kv-val" style="color:#35b99a;">10.0 / 10</div></div>
+        <div class="kv-item"><div class="kv-label">水力坡度连续性</div><div class="kv-val" style="color:#35b99a;">10.0 / 10</div></div>
+        <div class="kv-item"><div class="kv-label">双宿主一致性</div><div class="kv-val" style="color:#35b99a;">9.9 / 10</div></div>
       </div>
       <div style="font-size: 11px; color: var(--text-muted); line-height: 1.4;">
         SCAD 毫秒级白模快检：PASS · Blender 渲染精检：PASS · Vectorworks 2D/3D 同步：PASS
@@ -659,9 +784,9 @@ pre {
       </div>
       <div class="grid-kv" style="margin-bottom: 10px;">
         <div class="kv-item"><div class="kv-label">图谱节点 / 边数</div><div class="kv-val">3 Nodes / 2 Edges</div></div>
-        <div class="kv-item"><div class="kv-label">水力 DAG 连续性</div><div class="kv-val" style="color:#34d399;">PASS (无环)</div></div>
-        <div class="kv-item"><div class="kv-label">openBIMAgent 合规率</div><div class="kv-val" style="color:#34d399;">M1.5 T7 实测</div></div>
-        <div class="kv-item"><div class="kv-label">LLM Direct 对照</div><div class="kv-val" style="color:#fbbf24;">待实测 (UNMEASURED)</div></div>
+        <div class="kv-item"><div class="kv-label">水力 DAG 连续性</div><div class="kv-val" style="color:#35b99a;">PASS (无环)</div></div>
+        <div class="kv-item"><div class="kv-label">openBIMAgent 合规率</div><div class="kv-val" style="color:#35b99a;">M1.5 T7 实测</div></div>
+        <div class="kv-item"><div class="kv-label">LLM Direct 对照</div><div class="kv-val" style="color:#d4b45a;">待实测 (UNMEASURED)</div></div>
       </div>
     </div>
 
@@ -980,6 +1105,33 @@ async function loadAll() {
   await slotRegistry.init();
   await loadSelfHealingDemo();
   await loadRuleTree();
+  await loadRuntimeInfo();
+}
+
+function toggleSettings(ev) {
+  ev && ev.stopPropagation();
+  const pop = document.getElementById('settingsPopover');
+  if (pop) pop.classList.toggle('open');
+}
+document.addEventListener('click', (ev) => {
+  const pop = document.getElementById('settingsPopover');
+  const footer = document.querySelector('.sidebar-footer');
+  if (pop && pop.classList.contains('open') && footer && !footer.contains(ev.target)) {
+    pop.classList.remove('open');
+  }
+});
+
+async function loadRuntimeInfo() {
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  const data = await fetchJSON(API + '/api/v1/demo/runtime-info');
+  if (!data || data.status !== 'success') { set('modelChipName', '模型未配置'); return; }
+  const m = data.llm;
+  set('modelChipName', m.configured ? m.model : '模型未配置');
+  set('cfgModel', m.configured ? m.model : '—');
+  set('cfgEndpoint', m.configured ? m.base_url : '—');
+  set('cfgStatus', m.configured ? '已配置 (key 仅存本地)' : '未配置 (config/llm_baseline.local.toml)');
+  set('cfgRuntime', data.registry.plugins + ' 插件 / ' + data.registry.capabilities + ' 能力');
+  set('cfgPolicies', data.registry.policies + ' 条 (含 cad_host:*.execute prompt)');
 }
 
 function fillExecutionFlowCards(data) {
