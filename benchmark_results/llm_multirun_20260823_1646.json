@@ -1,0 +1,89 @@
+{
+  "runs": 3,
+  "model": "LLM-Direct Prompting (gpt-5.6-terra)",
+  "summary": {
+    "topology_valid_rate": {
+      "mean": 60.0,
+      "std": 0.0,
+      "values": [
+        60.0,
+        60.0,
+        60.0
+      ]
+    },
+    "rule_compliance_rate": {
+      "mean": 60.0,
+      "std": 0.0,
+      "values": [
+        60.0,
+        60.0,
+        60.0
+      ]
+    },
+    "hydraulic_valid_rate": {
+      "mean": 60.0,
+      "std": 0.0,
+      "values": [
+        60.0,
+        60.0,
+        60.0
+      ]
+    },
+    "avg_latency_ms": {
+      "mean": 7105.2,
+      "std": 329.99,
+      "values": [
+        7406.1,
+        7157.2,
+        6752.3
+      ]
+    },
+    "avg_token_count": {
+      "mean": 10447.0,
+      "std": 293.59,
+      "values": [
+        10619.0,
+        10614.0,
+        10108.0
+      ]
+    }
+  },
+  "rows": [
+    {
+      "method_name": "LLM-Direct Prompting (gpt-5.6-terra)",
+      "total_cases": 10,
+      "topology_valid_rate": 60.0,
+      "rule_compliance_rate": 60.0,
+      "hydraulic_valid_rate": 60.0,
+      "avg_latency_ms": 7406.1,
+      "avg_tool_calls": 2.1,
+      "avg_token_count": 10619,
+      "measured": true,
+      "provenance": "LLM-Direct 真实调用 https://freetokenfaucet.com/v1 model=gpt-5.6-terra (repetitions=3)：拓扑口径=LLM 输出逐节点标高可解析，合规口径=覆土0.70m+坡度0.003+流向单调，水力口径=Manning 防淤流速≥0.60m/s；同口径几何规则评测，无求解器矩阵 / 自愈介入。"
+    },
+    {
+      "method_name": "LLM-Direct Prompting (gpt-5.6-terra)",
+      "total_cases": 10,
+      "topology_valid_rate": 60.0,
+      "rule_compliance_rate": 60.0,
+      "hydraulic_valid_rate": 60.0,
+      "avg_latency_ms": 7157.2,
+      "avg_tool_calls": 2.1,
+      "avg_token_count": 10614,
+      "measured": true,
+      "provenance": "LLM-Direct 真实调用 https://freetokenfaucet.com/v1 model=gpt-5.6-terra (repetitions=3)：拓扑口径=LLM 输出逐节点标高可解析，合规口径=覆土0.70m+坡度0.003+流向单调，水力口径=Manning 防淤流速≥0.60m/s；同口径几何规则评测，无求解器矩阵 / 自愈介入。"
+    },
+    {
+      "method_name": "LLM-Direct Prompting (gpt-5.6-terra)",
+      "total_cases": 10,
+      "topology_valid_rate": 60.0,
+      "rule_compliance_rate": 60.0,
+      "hydraulic_valid_rate": 60.0,
+      "avg_latency_ms": 6752.3,
+      "avg_tool_calls": 2.0,
+      "avg_token_count": 10108,
+      "measured": true,
+      "provenance": "LLM-Direct 真实调用 https://freetokenfaucet.com/v1 model=gpt-5.6-terra (repetitions=3)：拓扑口径=LLM 输出逐节点标高可解析，合规口径=覆土0.70m+坡度0.003+流向单调，水力口径=Manning 防淤流速≥0.60m/s；同口径几何规则评测，无求解器矩阵 / 自愈介入。"
+    }
+  ]
+}
