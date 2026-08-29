@@ -19,15 +19,19 @@
 }
 *{margin:0;padding:0;box-sizing:border-box}html,body{height:100%}
 body{font:14px/1.6 var(--sans);background:var(--paper);color:var(--ink);display:flex;overflow:hidden}
-/* ============ 左栏 260px ============ */
-.side{width:260px;flex:none;display:flex;flex-direction:column;border-right:1px solid var(--line)}
+/* ============ 左栏 260px (可折叠) ============ */
+.side{width:260px;flex:none;display:flex;flex-direction:column;border-right:1px solid var(--line);transition:width .18s ease,opacity .18s ease}
+.side.hid{width:0;overflow:hidden;border-right:none;opacity:0}
+.railbtn{width:34px;height:34px;border-radius:9px;border:none;background:none;color:var(--ink2);font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.railbtn:hover{background:var(--surface);color:var(--ink)}
 .st{display:flex;align-items:center;gap:10px;padding:14px 16px 10px}
 .lg{width:30px;height:30px;border-radius:50%;background:var(--ink);color:#fff;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center}
 .st b{font-size:15px;font-weight:600}
 .quick{display:grid;grid-template-columns:1fr 1fr;gap:2px;padding:2px 10px 10px;border-bottom:1px solid var(--line)}
-.qi{display:flex;align-items:center;gap:8px;padding:8px 11px;border-radius:10px;color:var(--ink2);font-size:12.5px;cursor:pointer}
+.qi{display:flex;align-items:center;gap:9px;padding:8px 11px;border-radius:10px;color:var(--ink2);font-size:12.5px;cursor:pointer}
 .qi:hover{background:var(--surface);color:var(--ink)}
-.qi .ic{font-size:14px;width:18px;text-align:center}
+.qi svg{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.qi .kb{margin-left:auto;font:10.5px var(--mono);color:var(--ink3)}
 .ssc{flex:1;overflow-y:auto;padding:8px}
 .grp{display:flex;justify-content:space-between;align-items:center;padding:8px 9px 4px;font-size:11.5px;color:var(--ink3)}
 .grp b{color:var(--ink);font-size:12.5px}
@@ -105,10 +109,10 @@ body{font:14px/1.6 var(--sans);background:var(--paper);color:var(--ink);display:
 .bg{background:rgba(15,138,95,.08);border-color:rgba(15,138,95,.35);color:var(--green)}.bg:hover{background:rgba(15,138,95,.16)}
 .dlv{font:11.5px/1.7 var(--mono);color:var(--ink2)}.dlv .ok{color:var(--green)}
 .cmp{flex:none;padding:8px 16px 14px}
-.cmpin{background:#fff;border:1px solid var(--line2);border-radius:20px;padding:12px 16px 8px;box-shadow:0 3px 18px rgba(0,0,0,.04)}
-.cmpin input{width:100%;border:none;outline:none;font:13.5px inherit;color:var(--ink);padding:1px 0 8px;background:none}
-.cmpin input::placeholder{color:var(--ink3)}
-.crow{display:flex;align-items:center;gap:6px}
+.cmpin{background:#fff;border:1px solid var(--line2);border-radius:18px;padding:10px 12px 8px 16px;box-shadow:0 3px 18px rgba(0,0,0,.04)}
+.cmpin textarea{width:100%;border:none;outline:none;resize:none;font:13.5px/1.55 inherit;color:var(--ink);background:none;max-height:120px;min-height:22px;display:block}
+.cmpin textarea::placeholder{color:var(--ink3)}
+.crow{display:flex;align-items:center;gap:5px}
 .cb{width:28px;height:28px;border-radius:50%;border:none;background:none;color:var(--ink2);cursor:pointer;font-size:14px}
 .cb:hover{background:var(--surface)}
 .mp{display:inline-flex;align-items:center;gap:5px;font:12px var(--mono);color:var(--ink2);padding:5px 9px;border-radius:8px;cursor:pointer;border:none;background:none}
@@ -118,8 +122,11 @@ body{font:14px/1.6 var(--sans);background:var(--paper);color:var(--ink);display:
 .chint{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px}
 .chp{font:11px var(--mono);color:var(--ink2);border:1px solid var(--line);border-radius:999px;padding:2px 10px;cursor:pointer;background:#fff}
 .chp:hover{background:var(--surface)}
-/* ---- 画布 ---- */
-.cvbar{display:flex;flex-direction:column;border-left:1px solid var(--line);min-width:0;background:var(--surface)}
+/* ---- 画布 (可折叠) ---- */
+.cvbar.hid{display:none}
+.cvh .mini{display:flex;flex-direction:column;gap:1px;padding:6px;border-radius:8px;cursor:pointer}
+.cvh .mini i{display:block;width:15px;height:1.5px;background:var(--ink2);border-radius:1px}
+.cvh .mini:hover{background:var(--surface)}
 .cvh{height:50px;flex:none;display:flex;align-items:center;gap:8px;padding:0 12px;background:#fff;border-bottom:1px solid var(--line)}
 .cvh .t{font-size:13px;font-weight:600}
 .cvh .sub{font:11px var(--mono);color:var(--ink3)}
@@ -171,10 +178,11 @@ body{font:14px/1.6 var(--sans);background:var(--paper);color:var(--ink);display:
 <aside class="side">
   <div class="st"><div class="lg">B</div><b>openBIMAgent</b></div>
   <div class="quick">
-    <div class="qi" onclick="newTask()"><span class="ic">✎</span>新建任务</div>
-    <div class="qi" onclick="openStat()"><span class="ic">📊</span>用量统计</div>
-    <div class="qi" onclick="openPop('pop')"><span class="ic">🧩</span>模型配置</div>
-    <div class="qi" onclick="openWb('wbdata')"><span class="ic">📈</span>数据看板</div>
+    <div class="qi" onclick="newTask()" title="新建任务 Ctrl+N"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>新建任务<span class="kb">⌘N</span></div>
+    <div class="qi" onclick="openStat()" title="用量统计"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>用量统计</div>
+    <div class="qi" onclick="openPop('pop')" title="模型配置"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h0a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55h0a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v0a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z"/></svg>模型配置</div>
+    <div class="qi" onclick="openWb('cvr')" title="规则树"><svg viewBox="0 0 24 24"><path d="M12 3v6m0 0c-4 0-7 2-7 6v6m7-12c4 0 7 2 7 6v6"/><circle cx="12" cy="3" r="1.6"/></svg>规则树</div>
+    <div class="qi" onclick="openWb('cvd')" title="数据看板"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 16v-5M12 16V8M16 16v-3"/></svg>数据看板</div>
   </div>
   <div class="ssc">
     <div class="grp"><b>项目 · openBIMAgent</b></div>
@@ -203,7 +211,8 @@ body{font:14px/1.6 var(--sans);background:var(--paper);color:var(--ink);display:
 
 <div class="main">
   <div class="top">
-    <h1>市政管网 SH-2</h1><span class="sub">自愈绕障 · IR 71006e1a…</span>
+    <button class="railbtn" id="btnSide" onclick="toggleSide()" title="折叠/展开左栏">⟨</button>
+    <h1 id="th1">市政管网 SH-2</h1><span class="sub">自愈绕障 · IR 71006e1a…</span>
     <div class="top-actions">
       <span class="tb on" id="modeSplit" onclick="setView('split')">⿴ 分屏</span>
       <span class="tb" id="modeFull" onclick="setView('full')">⛶ 画布全屏</span>
@@ -248,12 +257,11 @@ body{font:14px/1.6 var(--sans);background:var(--paper);color:var(--ink);display:
       </div></div>
       <div class="cmp">
         <div class="cmpin">
-          <input id="cin" placeholder="向 openBIMAgent 提问…">
+          <textarea id="cin" rows="1" placeholder="向 openBIMAgent 提问，Shift+Enter 换行…"></textarea>
           <div class="crow">
             <button class="cb" onclick="streamTurn()" title="流式演示">⚡</button>
             <button class="mp" onclick="openPop('mpop')"><b>5.6-terra</b> ⌃</button>
-            <button class="cb" onclick="openStat()" title="用量统计">📊</button>
-            <button class="send" onclick="send()">↑</button>
+            <button class="send" onclick="send()" title="发送">↑</button>
           </div>
         </div>
         <div class="chint">
@@ -290,6 +298,7 @@ body{font:14px/1.6 var(--sans);background:var(--paper);color:var(--ink);display:
     <!-- 建模画布 -->
     <section class="cvbar">
       <div class="cvh">
+        <span class="mini" onclick="toggleCv()" title="折叠画布"><i></i><i></i><i></i></span>
         <span class="t">建模视图</span><span class="sub">CompiledUtilityIR v1.0</span>
         <div class="cv-tabs">
           <div class="cvt on" data-t="cvp" onclick="cvTab(this)">平面</div>
@@ -344,6 +353,12 @@ d+=`<polyline points="${gr.map(p=>p.join(',')).join(' ')}" fill="none" stroke="v
 d+=`<polyline points="${inv.map(p=>p.join(',')).join(' ')}" fill="none" stroke="var(--green)" stroke-width="2.5"/>`;
 inv.forEach((p,i)=>{d+=`<circle cx="${p[0]}" cy="${p[1]}" r="4" fill="#fff" stroke="var(--ink)" stroke-width="1.5"/>`;if(i%2==0)d+=`<text x="${p[0]}" y="${H-10}" fill="var(--ink3)" font-size="9" font-family="monospace" text-anchor="middle">MH-0${i+1}</text>`});
 document.getElementById('svgProf').innerHTML=d})();
+function toggleSide(){const s=document.querySelector('.side');s.classList.toggle('hid');
+document.getElementById('btnSide').textContent=s.classList.contains('hid')?'\u27e9':'\u27e8'}
+function toggleCv(){document.querySelector('.cvbar').classList.toggle('hid')}
+const cinEl=document.getElementById('cin');
+cinEl.addEventListener('input',()=>{cinEl.style.height='auto';cinEl.style.height=Math.min(cinEl.scrollHeight,120)+'px'});
+cinEl.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
 function setView(m){const app=document.body;app.classList.remove('full','nocv');
 if(m==='full')app.classList.add('full');if(m==='chat')app.classList.add('nocv');
 document.querySelectorAll('.top-actions .tb').forEach((b,i)=>{if(i<3)b.classList.toggle('on',['split','full','chat'][i]===m)})}
@@ -376,7 +391,7 @@ const e2=document.getElementById('s2');e2.className='tst';e2.textContent='✓ 2/
 t.insertAdjacentHTML('beforeend','<div class="panel" style="border:1px solid var(--line);border-radius:12px;padding:13px"><div class="ah"><span>结论</span><span class="tag">MEASURED</span></div><div class="atxt" id="sx"></div></div>');
 await typeText(document.getElementById('sx'),'自愈 +50pp（33.3→83.3，n=6），1.67 轮零 token；LLM 60.0±0.0（n=3）。柱状对比已同步到右侧「数据」页。');
 setView('split');cvTab({dataset:{t:'cvd'}});b.disabled=false}
-async function send(){const el=document.getElementById('cin');const t=el.value.trim();if(!t)return;el.value='';
+async function send(){const el=document.getElementById('cin');const t=el.value.trim();if(!t)return;el.value='';el.style.height='auto';
 const th=document.getElementById('thread');th.insertAdjacentHTML('beforeend',`<div class="you"><span class="w">你</span><div class="b">${t.replace(/</g,'&lt;')}</div></div>`);
 const c=t.split(/\s+/)[0].toLowerCase();let n='（集成态）指令经微内核调度后流式渲染；几何结果实时同步右侧画布。';
 if(c==='/rules'){cvTab({dataset:{t:'cvr'}});n='右侧画布已切到规则树。'}
