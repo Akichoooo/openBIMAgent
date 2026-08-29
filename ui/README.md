@@ -3,6 +3,10 @@
 日期：2026-08-23 · 状态：**待审核** —— 审核通过前不动 `web_ui.py`。
 （prototype.html 为旧 v2 单稿，已被下面三套取代，仅留档）
 
+## ⭐ 方案 D（最新 · shadcn 设计语言复刻）
+
+`prototype-d-shadcn.html` —— 按 shadcn/ui 官方 zinc-dark 主题的精确 token 复刻（来源：仓库 `apps/v4/public/r/themes.css` 的 HSL 变量 + registry button/badge 官方 variants），纯 CSS 1:1 还原 shadcn 观感（`--radius: 0.5rem`、focus ring、hover 透明度体系），零依赖。业务覆盖与 A/B/C 相同（流式回合/平面纵断 SVG/HITL/数据看板/规则树/模型芯片）。**如果审核目标是 shadcn 观感，直接看这套。**
+
 ## 三套方案（双击打开，零依赖零后端，数据=真实实测值）
 
 | 文件 | 布局哲学 | 参照系 | 适合场景 |
