@@ -122,11 +122,19 @@ body{font:14px/1.6 var(--sans);background:var(--paper);color:var(--ink);display:
 .chint{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px}
 .chp{font:11px var(--mono);color:var(--ink2);border:1px solid var(--line);border-radius:999px;padding:2px 10px;cursor:pointer;background:#fff}
 .chp:hover{background:var(--surface)}
-/* ---- 画布 (可折叠) ---- */
-.cvbar.hid{display:none}
+/* ---- 画布 (折叠为锚点细条) ---- */
+.app.nocv .cvbar{display:none}
+.cvbar.hid{width:14px;min-width:14px;border-left:1px solid var(--line);cursor:pointer;background:var(--surface)}
+.cvbar.hid *{display:none!important}
+.cvbar.hid::after{content:'⟨';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--ink3);font-size:12px}
+.cvbar{position:relative}
 .cvh .mini{display:flex;flex-direction:column;gap:1px;padding:6px;border-radius:8px;cursor:pointer}
 .cvh .mini i{display:block;width:15px;height:1.5px;background:var(--ink2);border-radius:1px}
 .cvh .mini:hover{background:var(--surface)}
+.newrow{display:flex;align-items:center;gap:9px;margin:2px 10px 8px;padding:9px 12px;border:1px solid var(--line2);border-radius:11px;background:#fff;cursor:pointer;font-size:13px;color:var(--ink);transition:background .12s}
+.newrow:hover{background:var(--surface)}
+.newrow svg{width:15px;height:15px;flex:none;stroke:var(--ink2);fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.newrow .arr{margin-left:auto;color:var(--ink3);font-size:13px}
 .cvh{height:50px;flex:none;display:flex;align-items:center;gap:8px;padding:0 12px;background:#fff;border-bottom:1px solid var(--line)}
 .cvh .t{font-size:13px;font-weight:600}
 .cvh .sub{font:11px var(--mono);color:var(--ink3)}
@@ -177,8 +185,8 @@ body{font:14px/1.6 var(--sans);background:var(--paper);color:var(--ink);display:
 
 <aside class="side">
   <div class="st"><div class="lg">B</div><b>openBIMAgent</b></div>
+  <div class="newrow" onclick="newTask()" title="新建任务 Ctrl+N"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>新建任务<span class="arr">›</span></div>
   <div class="quick">
-    <div class="qi" onclick="newTask()" title="新建任务 Ctrl+N"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>新建任务<span class="kb">⌘N</span></div>
     <div class="qi" onclick="openStat()" title="用量统计"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>用量统计</div>
     <div class="qi" onclick="openPop('pop')" title="模型配置"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h0a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55h0a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v0a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z"/></svg>模型配置</div>
     <div class="qi" onclick="openWb('cvr')" title="规则树"><svg viewBox="0 0 24 24"><path d="M12 3v6m0 0c-4 0-7 2-7 6v6m7-12c4 0 7 2 7 6v6"/><circle cx="12" cy="3" r="1.6"/></svg>规则树</div>
@@ -355,7 +363,8 @@ inv.forEach((p,i)=>{d+=`<circle cx="${p[0]}" cy="${p[1]}" r="4" fill="#fff" stro
 document.getElementById('svgProf').innerHTML=d})();
 function toggleSide(){const s=document.querySelector('.side');s.classList.toggle('hid');
 document.getElementById('btnSide').textContent=s.classList.contains('hid')?'\u27e9':'\u27e8'}
-function toggleCv(){document.querySelector('.cvbar').classList.toggle('hid')}
+function toggleCv(){const cv=document.querySelector('.cvbar');cv.classList.toggle('hid');
+if(!cv.classList.contains('hid'))cv.onclick=null;else cv.onclick=()=>cv.classList.remove('hid')}
 const cinEl=document.getElementById('cin');
 cinEl.addEventListener('input',()=>{cinEl.style.height='auto';cinEl.style.height=Math.min(cinEl.scrollHeight,120)+'px'});
 cinEl.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
