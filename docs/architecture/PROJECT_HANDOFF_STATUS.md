@@ -1,7 +1,7 @@
 # openBIMAgent 阶段交接状态
 
-版本：v3.4
-更新时间：2026-08-22（Asia/Shanghai）
+版本：v3.5
+更新时间：2026-09-02（Asia/Shanghai）
 维护状态：**ACTIVE**
 工作区：`D:\devloop\workSpace\app_codex\GenerativeBIM\openBIMAgent`
 远程仓库：`https://github.com/Akichoooo/openBIMAgent.git`
@@ -34,8 +34,8 @@ M3 VW 通路 = PASS（真机验收 2026-08-23:1 passed in 8.22s;m3_registry_e2e.
 
 ```text
 分支：main
-HEAD：以 `git rev-parse HEAD` 实测为准（本会话改动未提交，见 §6）
-全仓测试：1055 passed, 4 skipped, 2 warnings（2026-08-22 实测）
+HEAD：以 `git rev-parse HEAD` 实测为准
+全仓测试：1066 passed, 6 skipped, 2 warnings（2026-09-02 实测；6 skipped 为 opt-in 真机/真 LLM 测试，由 OPENBIMAGENT_RUN_REAL_* 环境变量门控，默认不跑）
 代码规范：Ruff check 100% checks passed
 手动测试：参考根目录下 MANUAL_TESTING_GUIDE.md
 ```
@@ -54,7 +54,7 @@ HEAD：以 `git rev-parse HEAD` 实测为准（本会话改动未提交，见 §
 
 ### M2：产品化服务与 Web 控制台
 
-- **FastAPI / SSE 服务**：`/api/v1/sessions`、`/api/v1/tree`、`/api/v1/export` 等只读与控制端点。
+- **FastAPI / SSE 服务**：只读路由 `/api/v1/sessions|attempts|approvals|lineages|artifacts` + SSE 事件流 + 写控制 `/api/v1/control`（`tree`/`export` 为 CLI 子命令，无对应 HTTP 端点）。
 - **现代化 3 栏数字化工作台 (`web_ui.py`)**：左栏领域包与会话树；中栏执行流卡片与 HITL 审批；右栏 WebGL 3D 视口 + 六标签工作台（标签栏由插件 `declared_slots` 动态组装）。
 
 ### 微内核与 DSH 对标机制（2026-08 本会话）
@@ -79,7 +79,7 @@ HEAD：以 `git rev-parse HEAD` 实测为准（本会话改动未提交，见 §
 ## 4. 最新有效质量证据
 
 ```text
-全仓 pytest：1065 passed, 6 skipped, 2 warnings（含双宿主真机 4 测）
+全仓 pytest：1066 passed, 6 skipped, 2 warnings（2026-09-02 实测；skipped = opt-in 真机/真 LLM 测试）
 规则自检：真实知识源 33/33 样例重放通过（test_rule_self_tests）
 Ruff 静态检查：All checks passed!
 消融电池确定性：test_self_healing_ablation 跨运行逐字节一致
@@ -94,8 +94,10 @@ Ruff 静态检查：All checks passed!
 
 ## 6. 未完成债务与唯一下一动作
 
-- **待提交**：累积 20+ 文件改动（补丁层/自愈核验/benchmark 真实化/外部加载器/LLM 基线/3D 视口/Codex 吸收及全部测试）尚未 commit，建议按机制拆 2–3 个提交。
-- **中栏执行流卡与规则树数值**：仍为静态演示数据（M3 范围；3D 视口与自愈时间线已接真实数据）。
+- **2026-09-02 审查修复（待提交）**：pyproject 补 `lxml>=4.9` 运行时依赖声明（此前靠 dev 传递依赖，`--no-dev` 安装会在 deliver 阶段 ImportError）；清理 dialects/dispatch/events/slots/store/loop 的过期 TODO 与 docstring；web_ui.py VLM 评分区加 DEMO 演示值标注（对齐 benchmark 数据诚信契约）。
+- **仓库卫生（处理中）**：`docs/学术材料/`、`开题报告.*`、`architecture.*`、`outputs/` 曾被 git 跟踪（ignore 规则添加前入库），已决定"停止跟踪 + 重写历史"；已推送历史中仍存在，处理进度见 git 记录。
+- **已知风险（未修）**：`fastapi_app.py` 演示 app 的 `/api/v1/plugins/invoke` 与 export 端点无鉴权（confirm 仅为 body 布尔值）；绑 127.0.0.1 使用风险可控，**勿绑 0.0.0.0 暴露**。生产鉴权待 M2 后续落地（`authentication.py` 目前仅契约类）。
+- **运维备注**：VW runner 侧"未响应"为脚本线程被轮询循环占用的预期形态，实测待命 5.5h 零错误；runner 已具备固定 IPC 根 + 心跳 + 文件日志。
+- **前端状态**：以 §1 为准——中栏执行流/规则树/3D 视口/自愈时间线已接真实数据，唯 VLM 六维评分区为演示值（已加 DEMO 水印）。
 - **论文侧**：B10 LLM 超时 ×3 与 LLM 行多次运行方差待写入 limitations；execpolicy 吸收可作 rule-driven 可验证性论据。
-- **M3 双宿主真机闭环已收官**（Blender 3 测 + VW 1 测全绿；runner 已具备固定 IPC 根 + 心跳 + 文件日志，VW 侧"未响应"为脚本线程被轮询循环占用的预期形态，实测待命 5.5h 零错误）。
-- **唯一下一动作**：① 全部改动推送远程（本地领先远程 16+ 提交）；② 论文正文写作（素材已备齐：docs/学术材料/实验数据与limitations草稿_2026-08-23.md，LLM 行已升级为 n=3 均值±标准差 60.0±0.0 / 7105±330ms / 10447±294 tok）。
+- **唯一下一动作**：① 全部改动推送远程（本地领先 origin/main 7 个提交）；② 论文正文写作（素材已备齐：docs/学术材料/实验数据与limitations草稿_2026-08-23.md，LLM 行已升级为 n=3 均值±标准差 60.0±0.0 / 7105±330ms / 10447±294 tok）。

@@ -135,7 +135,7 @@ def _extract_value(user_input: str, key: str) -> str | None:
 def extract_slots(user_input: str, slots: list[Slot]) -> list[Slot]:
     """规则抽取(正则/别名表,zh/en),回填已命中槽位;默认值关键词出现也视为命中。
 
-    TODO(M1): 规则未命中的槽位走小模型兜底抽取(COMPONENTS §1:规则 + 小模型)。
+    TODO: 规则未命中的槽位走小模型兜底抽取(COMPONENTS §1:规则 + 小模型)。
     """
     for slot in slots:
         if slot.value is not None:
@@ -187,7 +187,7 @@ def run_clarify(
 def may_proceed(state: SlotState) -> bool:
     """completion_score ≥ 85 放行(COMPONENTS §2.2)。
 
-    TODO(M1): 放行前生成确认单等用户点头(ARCH §2 步骤 1)。
+    TODO: 放行前生成确认单等用户点头(ARCH §2 步骤 1)。
     """
     return state.completion_score >= PASS_THRESHOLD
 

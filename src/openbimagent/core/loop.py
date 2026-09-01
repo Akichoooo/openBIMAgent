@@ -314,7 +314,7 @@ class AgentLoop:
     def run(self, user_input: str, *, cancel_event: threading.Event | None = None) -> str:
         """执行一轮任务,返回最终助手文本;全程事件写 session 树。
 
-        TODO(M1): 接入 context 预算与 compaction 子代理(COMPONENTS §5)。
+        TODO: 接入 context 预算与 compaction 子代理(COMPONENTS §5)。
         """
         self.session.append_new(EventType.MESSAGE, {"role": "user", "content": user_input})
         self.messages.append({"role": "user", "content": user_input})

@@ -843,6 +843,7 @@ pre {
       </div>
       <div style="font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase;">
         视觉双闭环评测矩阵 (VLM 6-Score)
+        <span style="font-size: 9px; font-weight: 700; color: #d9a13f; border: 1px solid rgba(217,161,63,.5); border-radius: 4px; padding: 1px 6px; margin-left: 8px; vertical-align: 2px; letter-spacing: .05em;">DEMO 演示值 · 未接 VLM</span>
       </div>
       <div class="grid-kv" style="margin-bottom: 12px;">
         <div class="kv-item"><div class="kv-label">几何拓扑准确度</div><div class="kv-val" style="color:#35b99a;">9.8 / 10</div></div>
@@ -852,6 +853,7 @@ pre {
       </div>
       <div style="font-size: 11px; color: var(--text-muted); line-height: 1.4;">
         SCAD 毫秒级白模快检：PASS · Blender 渲染精检：PASS · Vectorworks 2D/3D 同步：PASS
+        <span style="color:#d9a13f;">（以上均为演示数值，未携带 measured/provenance，不计入证据包）</span>
       </div>
     </div>
 

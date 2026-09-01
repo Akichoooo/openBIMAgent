@@ -129,7 +129,7 @@ def _utc_now_iso() -> str:
 class SessionStore:
     """单个 session JSONL 文件的读写与树操作(append-only,分支落新文件)。
 
-    线程安全靠进程内锁;跨进程文件锁 TODO(M1)。损坏行容错:跳过并告警。
+    线程安全靠进程内锁;跨进程文件锁为待办。损坏行容错:跳过并告警。
     """
 
     def __init__(self, path: Path, *, title: str | None = None, playbook: str | None = None) -> None:

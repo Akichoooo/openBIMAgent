@@ -8,8 +8,8 @@
 子代理返回 = 结构化摘要 + 工件路径 + <200 字核心提示/警告;
 原始过程留 child session,父代理按需深翻(artifact-mediated,不直接传上下文)。
 
-M0 为顺序执行版(run_plan):按 plan 批次顺序逐批驱动,agent_fn 可注入;
-并发(≤4 信号量)、角色 Markdown 加载、child session 挂载留 M1(见 dispatch/judge 的 TODO)。
+M0 顺序执行版(run_plan)与 M1 并发版(asyncio.gather + 信号量 ≤4)均已实现;
+并发调度见本文件并发批次驱动,角色 Markdown 加载与 child session 挂载已落地。
 """
 
 from __future__ import annotations

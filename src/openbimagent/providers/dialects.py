@@ -4,9 +4,8 @@
 - docs/architecture/COMPONENTS.md §4 providers([resilience]:韧性集中,业务代码不重复造)
 - config/models.toml [providers.*] 的 type 字段
 
-方言:openai-completions / openai-responses / anthropic / google-genai。
-M0 只实现 openai-compatible(走 openai-completions 方言,GLM/agentrouter 已够联调);
-anthropic / google-genai / openai-responses 留 TODO(M1)。
+方言:openai-completions / google-genai 已实现;openai-responses / anthropic 保留为扩展点(未实现)。
+重试/熔断集中在 providers 层,业务代码不重复造。
 """
 
 from __future__ import annotations
@@ -74,7 +73,6 @@ def chat(
     返回 OpenAI chat.completion 形态 dict;abort 时正常返回并带 ``aborted=True`` 与部分内容。
     default_headers:provider 级额外请求头(models.toml [providers.*].default_headers),
     与方言注入的 Authorization/Content-Type 合并,后者优先(鉴权不被覆盖)。
-    TODO(M1): anthropic 与 google-genai、openai-responses 方言。
     """
     if dialect is Dialect.OPENAI_COMPLETIONS:
         return _chat_openai_completions(
@@ -100,7 +98,7 @@ def chat(
             cancel_event=cancel_event,
             default_headers=default_headers,
         )
-    raise NotImplementedError(f"TODO(M1): {dialect} 方言未实现")
+    raise NotImplementedError(f"{dialect} 方言未实现(保留扩展点)")
 
 
 def _chat_google_genai(
