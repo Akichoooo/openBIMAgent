@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>openBIMAgent · 方案 I（Codex × 3D 视口）</title>
+<style>
+/* ============ tokens ============ */
+:root{
+  --bg:#0b0d10; --bg1:#101318; --bg2:#151a21; --bg3:#1b212b;
+  --line:rgba(255,255,255,.07); --line2:rgba(255,255,255,.12);
+  --ink:#e8ebf0; --ink2:#9aa4b2; --ink3:#5d6875;
+  --acc:#4f9cf9; --acc-dim:rgba(79,156,249,.14);
+  --grn:#3fb68b; --grn-dim:rgba(63,182,139,.13);
+  --red:#e5636c; --red-dim:rgba(229,99,108,.12);
+  --amb:#d9a13f; --amb-dim:rgba(217,161,63,.13);
+  --mono:ui-monospace,'Cascadia Code','JetBrains Mono',Consolas,monospace;
+  --sans:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+  --r:10px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font:13px/1.55 var(--sans);background:var(--bg);color:var(--ink);display:flex;overflow:hidden}
+::-webkit-scrollbar{width:9px;height:9px}::-webkit-scrollbar-thumb{background:#2a323e;border-radius:5px;border:2px solid var(--bg)}::-webkit-scrollbar-track{background:transparent}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+.dot{width:7px;height:7px;border-radius:50%;flex:none}
+.dot.g{background:var(--grn)}.dot.y{background:var(--amb)}.dot.r{background:var(--red)}.dot.b{background:var(--acc)}
+.mono{font-family:var(--mono)}
+
+/* ============ 1. icon rail ============ */
+.rail{width:52px;flex:none;background:var(--bg1);border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:4px;z-index:30}
+.rail .logo{width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,#4f9cf9,#3fb68b);color:#04121f;font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:center;margin-bottom:10px}
+.rb{width:36px;height:36px;border-radius:9px;color:var(--ink3);display:flex;align-items:center;justify-content:center;position:relative}
+.rb:hover{background:var(--bg3);color:var(--ink)}
+.rb.on{background:var(--bg3);color:var(--ink)}
+.rb.on::before{content:'';position:absolute;left:-8px;top:9px;bottom:9px;width:3px;border-radius:2px;background:var(--acc)}
+.rb svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.rail .sp{flex:1}
+
+/* ============ 2. sidebar ============ */
+.sidebar{width:248px;flex:none;background:var(--bg1);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.sb-h{padding:14px 14px 10px;display:flex;align-items:center;gap:8px}
+.sb-h .t{font-weight:650;font-size:13.5px}
+.sb-h .v{font:10px var(--mono);color:var(--ink3);border:1px solid var(--line);border-radius:5px;padding:1px 5px}
+.newtask{margin:2px 12px 10px;display:flex;align-items:center;gap:8px;padding:8px 11px;border:1px solid var(--line2);border-radius:9px;color:var(--ink);font-size:12.5px;transition:background .12s}
+.newtask:hover{background:var(--bg3)}
+.newtask kbd{margin-left:auto;font:10px var(--mono);color:var(--ink3);border:1px solid var(--line);border-radius:4px;padding:1px 5px}
+.sb-sec{padding:4px 16px 6px;font:10.5px var(--mono);letter-spacing:.08em;color:var(--ink3);text-transform:uppercase}
+.sb-list{flex:1;overflow-y:auto;padding:0 8px 8px}
+.sess{display:flex;gap:9px;padding:8px 10px;border-radius:8px;cursor:pointer;align-items:flex-start}
+.sess:hover{background:var(--bg2)}
+.sess.on{background:var(--bg3)}
+.sess .dot{margin-top:6px}
+.sess .tt{font-size:12.5px;line-height:1.35}
+.sess .meta{font:10.5px var(--mono);color:var(--ink3);margin-top:2px}
+.sb-foot{border-top:1px solid var(--line);padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.hosts{display:flex;gap:6px}
+.host{flex:1;display:flex;align-items:center;gap:6px;font:10.5px var(--mono);color:var(--ink2);border:1px solid var(--line);border-radius:7px;padding:5px 8px}
+.mchip{display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--line2);border-radius:9px;background:var(--bg2);font:12px var(--mono);cursor:pointer;width:100%}
+.mchip:hover{background:var(--bg3)}
+.mchip .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mchip .car{margin-left:auto;color:var(--ink3)}
+
+/* ============ 3. stage (3D hero) ============ */
+.stage{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--bg)}
+.st-top{height:48px;flex:none;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--line);background:var(--bg1)}
+.crumb{font-size:13px;color:var(--ink2);display:flex;align-items:center;gap:7px;min-width:0}
+.crumb b{color:var(--ink);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pill{display:inline-flex;align-items:center;gap:6px;font:10.5px var(--mono);padding:3px 9px;border-radius:999px;border:1px solid var(--line2);color:var(--ink2)}
+.pill.g{border-color:rgba(63,182,139,.4);color:var(--grn);background:var(--grn-dim)}
+.st-top .sp{flex:1}
+.seg{display:flex;background:var(--bg3);border-radius:8px;padding:2px;gap:1px}
+.seg button{padding:5px 12px;border-radius:6px;font-size:12px;color:var(--ink2)}
+.seg button.on{background:var(--bg1);color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.35)}
+.ghostbtn{display:inline-flex;align-items:center;gap:6px;padding:6px 11px;border:1px solid var(--line2);border-radius:8px;font-size:12px;color:var(--ink2)}
+.ghostbtn:hover{background:var(--bg3);color:var(--ink)}
+
+.viewport{flex:1;position:relative;min-height:0;background:radial-gradient(1200px 600px at 60% 20%,#12161d 0%,var(--bg) 70%)}
+#gl{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:grab}
+#gl.drag{cursor:grabbing}
+.vp-hud{position:absolute;top:12px;left:14px;display:flex;gap:8px;align-items:center;pointer-events:none}
+.hud-chip{pointer-events:auto;display:flex;align-items:center;gap:6px;background:rgba(13,16,20,.72);backdrop-filter:blur(8px);border:1px solid var(--line);border-radius:8px;padding:5px 10px;font:10.5px var(--mono);color:var(--ink2)}
+.vp-tools{position:absolute;top:12px;right:14px;display:flex;flex-direction:column;gap:6px}
+.vt{width:32px;height:32px;border-radius:8px;background:rgba(13,16,20,.72);backdrop-filter:blur(8px);border:1px solid var(--line);color:var(--ink2);display:flex;align-items:center;justify-content:center}
+.vt:hover{color:var(--ink);border-color:var(--line2)}
+.vt.on{color:var(--acc);border-color:rgba(79,156,249,.45);background:var(--acc-dim)}
+.vt svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.vp-scale{position:absolute;left:14px;bottom:64px;font:10px var(--mono);color:var(--ink3);display:flex;flex-direction:column;gap:3px}
+.vp-scale .bar{width:80px;height:4px;border-left:1.5px solid var(--ink3);border-right:1.5px solid var(--ink3);border-bottom:1.5px solid var(--ink3)}
+
+/* self-healing timeline scrubber */
+.vp-tl{position:absolute;left:50%;transform:translateX(-50%);bottom:12px;display:flex;align-items:center;gap:10px;background:rgba(13,16,20,.8);backdrop-filter:blur(10px);border:1px solid var(--line2);border-radius:12px;padding:8px 12px;min-width:480px}
+.play{width:28px;height:28px;border-radius:50%;background:var(--acc);color:#04121f;display:flex;align-items:center;justify-content:center;flex:none}
+.play:hover{filter:brightness(1.12)}
+.play svg{width:13px;height:13px;fill:currentColor}
+.tl-steps{display:flex;align-items:center;gap:0;flex:1}
+.tl-s{display:flex;align-items:center;gap:7px;flex:none;cursor:pointer;padding:3px 2px}
+.tl-s .n{width:19px;height:19px;border-radius:50%;border:1.5px solid var(--ink3);color:var(--ink3);display:flex;align-items:center;justify-content:center;font:9.5px var(--mono);flex:none}
+.tl-s .lb{font-size:11px;color:var(--ink2);white-space:nowrap}
+.tl-s .sub{font:9.5px var(--mono);color:var(--ink3);white-space:nowrap}
+.tl-s.on .n{border-color:var(--acc);color:var(--acc);background:var(--acc-dim)}
+.tl-s.on .lb{color:var(--ink)}
+.tl-s.ok .n{border-color:var(--grn);color:var(--grn)}
+.tl-s.bad .n{border-color:var(--red);color:var(--red)}
+.tl-link{flex:1;height:1.5px;background:var(--line2);min-width:22px}
+.tl-note{font:10px var(--mono);color:var(--ink3);max-width:170px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ============ 4. thread panel (Codex style) ============ */
+.thread{width:408px;flex:none;border-left:1px solid var(--line);background:var(--bg1);display:flex;flex-direction:column;min-height:0;transition:width .18s}
+.th-tabs{height:44px;flex:none;display:flex;align-items:center;gap:2px;padding:0 10px;border-bottom:1px solid var(--line)}
+.th-tab{padding:6px 12px;border-radius:8px;font-size:12.5px;color:var(--ink2)}
+.th-tab:hover{background:var(--bg3)}
+.th-tab.on{color:var(--ink);background:var(--bg3)}
+.th-tab .bdg{font:9.5px var(--mono);background:var(--acc-dim);color:var(--acc);border-radius:8px;padding:1px 6px;margin-left:5px}
+.th-tabs .sp{flex:1}
+.collapse-th{color:var(--ink3);padding:6px;border-radius:7px}
+.collapse-th:hover{background:var(--bg3);color:var(--ink)}
+.th-scroll{flex:1;overflow-y:auto;padding:16px 14px 10px;display:flex;flex-direction:column;gap:14px}
+
+.msg-you{align-self:flex-end;max-width:88%;background:var(--bg3);border:1px solid var(--line);border-radius:14px 14px 4px 14px;padding:9px 13px;font-size:13px}
+.agentline{font-size:13px;color:var(--ink);line-height:1.65}
+.agentline .dim{color:var(--ink2)}
+
+/* tool block */
+.tool{border:1px solid var(--line);border-radius:var(--r);background:var(--bg2);overflow:hidden}
+.tool-h{display:flex;align-items:center;gap:9px;padding:8px 11px;cursor:pointer;user-select:none}
+.tool-h:hover{background:var(--bg3)}
+.tool-h .ic{width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;flex:none;font:10px var(--mono)}
+.ic.solver{background:var(--acc-dim);color:var(--acc)}
+.ic.rules{background:var(--grn-dim);color:var(--grn)}
+.ic.host{background:var(--amb-dim);color:var(--amb)}
+.tool-h .nm{font:11.5px var(--mono);color:var(--ink)}
+.tool-h .st{margin-left:auto;font:10.5px var(--mono);color:var(--ink3);display:flex;align-items:center;gap:6px}
+.st.ok{color:var(--grn)}.st.run{color:var(--acc)}.st.bad{color:var(--red)}
+.tool-h .car{color:var(--ink3);font-size:10px;transition:transform .15s}
+.tool.closed .car{transform:rotate(-90deg)}
+.tool-b{border-top:1px solid var(--line);padding:9px 12px;font:11px var(--mono);color:var(--ink2);line-height:1.7}
+.tool.closed .tool-b{display:none}
+.tool-b .k{color:var(--ink3)}
+.tool-b .ok{color:var(--grn)}.tool-b .bad{color:var(--red)}.tool-b .hl{color:var(--acc)}
+.spin{width:11px;height:11px;border:1.5px solid var(--acc);border-top-color:transparent;border-radius:50%;animation:sp .7s linear infinite;display:inline-block}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+/* artifact card */
+.art{border:1px solid var(--line);border-radius:var(--r);background:var(--bg2);padding:11px 12px;display:flex;flex-direction:column;gap:8px}
+.art-t{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600}
+.art-t .tag{font:9.5px var(--mono);padding:2px 7px;border-radius:6px;background:var(--acc-dim);color:var(--acc)}
+.art .hash{font:10.5px var(--mono);color:var(--ink3)}
+.art .row{display:flex;gap:8px}
+.abtn{flex:1;text-align:center;padding:6px 10px;border:1px solid var(--line2);border-radius:8px;font-size:11.5px;color:var(--ink2)}
+.abtn:hover{background:var(--bg3);color:var(--ink)}
+.abtn.pri{background:var(--acc);border-color:var(--acc);color:#04121f;font-weight:600}
+.abtn.pri:hover{filter:brightness(1.1)}
+.mini-stat{display:flex;gap:12px;font:10.5px var(--mono);color:var(--ink2)}
+.mini-stat b{color:var(--ink);font-weight:600}
+
+/* HITL card */
+.hitl{border:1px solid rgba(217,161,63,.4);background:linear-gradient(180deg,rgba(217,161,63,.07),rgba(217,161,63,.02));border-radius:var(--r);padding:12px}
+.hitl .hd{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:650}
+.hitl .hd .tag{font:9.5px var(--mono);padding:2px 7px;border-radius:6px;background:var(--amb-dim);color:var(--amb)}
+.hitl .ds{font-size:12px;color:var(--ink2);margin:7px 0 10px;line-height:1.6}
+.hitl .ds code{font:10.5px var(--mono);color:var(--amb)}
+.hitl .row{display:flex;gap:8px}
+.approve{flex:1;background:var(--grn);color:#04140d;font-weight:650;padding:7px;border-radius:8px}
+.approve:hover{filter:brightness(1.1)}
+.approve:disabled{background:var(--bg3);color:var(--ink3);cursor:default;filter:none}
+.reject{padding:7px 14px;border:1px solid var(--line2);border-radius:8px;color:var(--ink2)}
+.reject:hover{background:var(--red-dim);color:var(--red);border-color:rgba(229,99,108,.4)}
+
+/* receipt card */
+.rcpt{border:1px solid rgba(63,182,139,.4);background:var(--grn-dim);border-radius:var(--r);padding:11px 12px;font:11px var(--mono);color:var(--ink2);line-height:1.8}
+.rcpt .hd{color:var(--grn);font-weight:700;font-size:12px;display:flex;gap:7px;align-items:center}
+.rcpt .k{color:var(--ink3)}
+
+/* inspector */
+.insp{display:none;flex:1;overflow-y:auto;padding:14px;flex-direction:column;gap:12px}
+.thread.ins-mode .th-scroll{display:none}
+.thread.ins-mode .insp{display:flex}
+.insp-sec-t{font:10.5px var(--mono);letter-spacing:.08em;color:var(--ink3);text-transform:uppercase;margin-bottom:6px}
+.rule{border:1px solid var(--line);border-radius:8px;background:var(--bg2);padding:8px 10px;margin-bottom:6px}
+.rule .rh{display:flex;align-items:center;gap:8px}
+.rule .rid{font:11px var(--mono);color:var(--ink)}
+.rule .rst{margin-left:auto;font:9.5px var(--mono);color:var(--grn)}
+.rule .rd{font-size:11px;color:var(--ink2);margin-top:3px}
+.irpre{font:10.5px var(--mono);color:var(--ink2);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;line-height:1.6;overflow-x:auto;white-space:pre}
+.plg{border:1px solid var(--line);border-radius:8px;background:var(--bg2);padding:8px 10px;margin-bottom:6px}
+.plg .pid{font:11px var(--mono)}
+.plg .pds{font-size:11px;color:var(--ink2);margin-top:2px}
+.cons{display:flex;flex-direction:column;gap:7px}
+.cons select,.cons textarea{background:var(--bg);border:1px solid var(--line2);border-radius:8px;color:var(--ink);font:11px var(--mono);padding:7px 9px;outline:none}
+.cons textarea{min-height:52px;resize:vertical}
+.cons-out{font:10.5px var(--mono);color:var(--grn);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px;white-space:pre-wrap;line-height:1.6}
+
+/* composer */
+.composer{flex:none;padding:10px 12px 12px;border-top:1px solid var(--line)}
+.cmp{border:1px solid var(--line2);border-radius:14px;background:var(--bg2);padding:9px 11px 7px;position:relative}
+.cmp:focus-within{border-color:rgba(79,156,249,.5)}
+.cmp textarea{width:100%;background:none;border:none;outline:none;resize:none;color:var(--ink);font:13px/1.5 var(--sans);max-height:110px;display:block}
+.cmp textarea::placeholder{color:var(--ink3)}
+.cmp-row{display:flex;align-items:center;gap:4px;margin-top:5px}
+.cbtn{width:27px;height:27px;border-radius:7px;color:var(--ink3);display:flex;align-items:center;justify-content:center}
+.cbtn:hover{background:var(--bg3);color:var(--ink)}
+.cbtn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.mdl{font:10.5px var(--mono);color:var(--ink3);padding:4px 7px;border-radius:7px}
+.mdl:hover{background:var(--bg3);color:var(--ink2)}
+.send{margin-left:auto;width:28px;height:28px;border-radius:50%;background:var(--acc);color:#04121f;display:flex;align-items:center;justify-content:center}
+.send:hover{filter:brightness(1.12)}
+.send svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.chips{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.chip{font:10.5px var(--mono);color:var(--ink2);border:1px solid var(--line);border-radius:999px;padding:3px 10px}
+.chip:hover{background:var(--bg3);color:var(--ink)}
+.slash{position:absolute;left:10px;right:10px;bottom:calc(100% + 6px);background:var(--bg3);border:1px solid var(--line2);border-radius:10px;box-shadow:0 14px 44px rgba(0,0,0,.5);display:none;overflow:hidden;z-index:40}
+.slash.show{display:block}
+.sl{display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer}
+.sl:hover,.sl.on{background:var(--bg2)}
+.sl .c{font:11px var(--mono);color:var(--acc);width:92px;flex:none}
+.sl .d{font-size:11.5px;color:var(--ink2)}
+
+/* settings popover */
+.setpop{display:none;position:absolute;left:64px;bottom:14px;width:300px;background:var(--bg2);border:1px solid var(--line2);border-radius:14px;box-shadow:0 18px 60px rgba(0,0,0,.55);z-index:60;overflow:hidden}
+.setpop.show{display:block}
+.sp-sec{padding:11px 14px;border-bottom:1px solid var(--line)}
+.sp-sec:last-child{border-bottom:none}
+.sp-t{font:10px var(--mono);letter-spacing:.08em;color:var(--ink3);text-transform:uppercase;margin-bottom:8px}
+.sp-row{display:flex;align-items:center;gap:8px;font-size:12px;padding:4px 0;color:var(--ink2)}
+.sp-row .v{margin-left:auto;font:11px var(--mono);color:var(--ink)}
+.opt{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:7px;cursor:pointer;font:12px var(--mono)}
+.opt:hover{background:var(--bg3)}
+.opt.on{color:var(--acc)}
+
+/* HITL confirm modal */
+.modal-mask{display:none;position:fixed;inset:0;background:rgba(4,6,9,.6);backdrop-filter:blur(3px);z-index:80;align-items:center;justify-content:center}
+.modal-mask.show{display:flex}
+.modal{width:420px;background:var(--bg2);border:1px solid var(--line2);border-radius:16px;padding:18px;box-shadow:0 24px 80px rgba(0,0,0,.6)}
+.modal h3{font-size:14px;margin-bottom:8px}
+.modal p{font-size:12.5px;color:var(--ink2);line-height:1.65}
+.modal pre{font:10.5px var(--mono);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px;margin:10px 0;color:var(--amb);white-space:pre-wrap}
+.modal .row{display:flex;gap:8px;margin-top:14px}
+.modal .row button{flex:1;padding:8px;border-radius:9px;font-weight:600}
+.m-ok{background:var(--grn);color:#04140d}.m-ok:hover{filter:brightness(1.1)}
+.m-no{border:1px solid var(--line2);color:var(--ink2)}.m-no:hover{background:var(--bg3)}
+
+/* toast */
+.toast{position:fixed;top:16px;left:50%;transform:translateX(-50%) translateY(-8px);background:var(--bg3);border:1px solid var(--line2);border-radius:10px;padding:8px 14px;font-size:12px;color:var(--ink);opacity:0;pointer-events:none;transition:all .25s;z-index:99}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+@media (max-width:1180px){.sidebar{display:none}}
+</style>
+</head>
+<body>
+
+<!-- ================= 1. icon rail ================= -->
+<nav class="rail">
+  <div class="logo">OB</div>
+  <button class="rb on" title="任务"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg></button>
+  <button class="rb" title="场景视口" onclick="focusViewport()"><svg viewBox="0 0 24 24"><path d="M12 2l8 4.5v9L12 20l-8-4.5v-9L12 2z"/><path d="M12 11L4 6.5M12 11l8-4.5M12 11v9"/></svg></button>
+  <button class="rb" title="规则树" onclick="openInspector('rules')"><svg viewBox="0 0 24 24"><path d="M12 3v5M12 8l-6 4M12 8l6 4M6 12v5M18 12v5"/><circle cx="12" cy="3" r="1.6"/><circle cx="6" cy="19" r="1.6"/><circle cx="18" cy="19" r="1.6"/></svg></button>
+  <button class="rb" title="插件" onclick="openInspector('plugins')"><svg viewBox="0 0 24 24"><path d="M9 3v4M15 3v4M7 7h10v4a5 5 0 01-10 0V7zM12 16v5"/></svg></button>
+  <div class="sp"></div>
+  <button class="rb" title="设置" onclick="toggleSettings(event)"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 00-.14-1.4l2.1-1.63-2-3.46-2.48 1a7 7 0 00-2.42-1.4L13.7 2h-3.4l-.36 2.6a7 7 0 00-2.42 1.4l-2.48-1-2 3.46L5.14 10.6A7 7 0 005 12c0 .48.05.94.14 1.4l-2.1 1.63 2 3.46 2.48-1a7 7 0 002.42 1.4l.36 2.6h3.4l.36-2.6a7 7 0 002.42-1.4l2.48 1 2-3.46-2.1-1.63c.09-.46.14-.92.14-1.4z"/></svg></button>
+</nav>
+
+<!-- ================= 2. sidebar ================= -->
+<aside class="sidebar">
+  <div class="sb-h"><span class="t">任务</span><span class="v">v3.4</span></div>
+  <button class="newtask" onclick="toast('新建任务（原型占位）')"><svg width="13" height="13" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>新任务<kbd>⌘K</kbd></button>
+  <div class="sb-sec">进行中</div>
+  <div class="sb-list" id="sessList"></div>
+  <div class="sb-foot">
+    <div class="hosts">
+      <div class="host"><span class="dot g"></span>Blender 5.2</div>
+      <div class="host"><span class="dot g"></span>VW 2024</div>
+    </div>
+    <button class="mchip" onclick="toggleSettings(event)"><span class="dot g"></span><span class="nm">gpt-5.6-terra</span><span class="car">▾</span></button>
+  </div>
+</aside>
+
+<!-- ================= 3. stage ================= -->
+<main class="stage">
+  <div class="st-top">
+    <div class="crumb">市政管网<span style="color:var(--ink3)">/</span><b>DN400 污水重力管 · 6 井 5 段</b></div>
+    <span class="pill g"><span class="dot g"></span>已收敛 · 2 轮迭代</span>
+    <div class="sp"></div>
+    <div class="seg" id="viewSeg">
+      <button class="on" data-v="3d" onclick="setView('3d',this)">3D</button>
+      <button data-v="plan" onclick="setView('plan',this)">平面</button>
+      <button data-v="prof" onclick="setView('prof',this)">纵断面</button>
+    </div>
+    <button class="ghostbtn" onclick="toggleThread()" id="thToggle"><svg width="13" height="13" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="1.8" stroke-linecap="round"><path d="M21 12a8 8 0 01-8 8H4l2-3a8 8 0 1115-5z"/></svg>对话</button>
+  </div>
+
+  <div class="viewport">
+    <canvas id="gl"></canvas>
+
+    <div class="vp-hud">
+      <div class="hud-chip"><span class="dot b"></span>CompiledUtilityIR v1</div>
+      <div class="hud-chip mono" id="hudStat">6 井 · 5 段 · DN400</div>
+      <div class="hud-chip mono" id="hudCam"></div>
+    </div>
+
+    <div class="vp-tools">
+      <button class="vt on" id="tgGrid" title="网格" onclick="toggleOpt('grid',this)"><svg viewBox="0 0 24 24"><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg></button>
+      <button class="vt on" id="tgEx" title="垂直夸大 ×3" onclick="toggleOpt('exag',this)"><svg viewBox="0 0 24 24"><path d="M12 3v18M8 7l4-4 4 4M8 17l4 4 4-4"/></svg></button>
+      <button class="vt" title="自动旋转" id="tgSpin" onclick="toggleOpt('spin',this)"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 11-3-6.7"/><path d="M21 3v6h-6"/></svg></button>
+      <button class="vt" title="复位视角" onclick="resetCam()"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></button>
+    </div>
+
+    <div class="vp-scale"><div class="bar"></div><span id="scaleLbl">20 m</span></div>
+
+    <div class="vp-tl">
+      <button class="play" id="playBtn" onclick="playTimeline()"><svg viewBox="0 0 24 24" id="playIco"><path d="M7 4l13 8-13 8z"/></svg></button>
+      <div class="tl-steps" id="tlSteps"></div>
+      <div class="tl-note" id="tlNote">初始 A* 路径 · 碰撞检测中</div>
+    </div>
+  </div>
+</main>
+
+<!-- ================= 4. thread ================= -->
+<section class="thread" id="thread">
+  <div class="th-tabs">
+    <button class="th-tab on" id="tabConv" onclick="threadMode('conv')">对话<span class="bdg">流式</span></button>
+    <button class="th-tab" id="tabInsp" onclick="threadMode('insp')">检查器</button>
+    <div class="sp"></div>
+    <button class="collapse-th" onclick="toggleThread()" title="收起面板">⟨</button>
+  </div>
+
+  <!-- conversation -->
+  <div class="th-scroll" id="thScroll">
+    <div class="msg-you">沿走廊生成 DN400 污水重力管，6 座检查井，避让东侧建筑物，GB 50289 核验后交付 Blender。</div>
+
+    <div class="agentline">收到。调度 <span class="dim mono">solver:self_healing</span> 生成确定性几何，再由规则集核验。<span class="dim">全程经微内核策略门，写盘前会请求确认。</span></div>
+
+    <div class="tool" id="tool1">
+      <div class="tool-h" onclick="this.parentElement.classList.toggle('closed')">
+        <span class="ic solver">Σ</span>
+        <span class="nm">solver:self_healing</span>
+        <span class="st run" id="tool1St"><span class="spin"></span>running…</span>
+        <span class="car">▾</span>
+      </div>
+      <div class="tool-b" id="tool1Body">
+        <div><span class="k">capability&nbsp;&nbsp;</span>solver:self_healing <span class="hl">(承重调度)</span></div>
+        <div><span class="k">input&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>6 manholes · corridor 132m · DN400 · slope≥0.003</div>
+        <div id="tool1Live"><span class="k">status&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>A* 网格寻路中…</div>
+      </div>
+    </div>
+
+    <div class="tool closed" id="tool2" style="display:none">
+      <div class="tool-h" onclick="this.parentElement.classList.toggle('closed')">
+        <span class="ic rules">✓</span>
+        <span class="nm">rules:gb50289.verify</span>
+        <span class="st" id="tool2St"></span>
+        <span class="car">▾</span>
+      </div>
+      <div class="tool-b">
+        <div><span class="k">ruleset&nbsp;&nbsp;&nbsp;</span>MunicipalRuleSet v1.2 · 12 条 · enforcement=production</div>
+        <div><span class="k">self_test&nbsp;</span><span class="ok">33/33 样例重放通过（编译期门）</span></div>
+        <div><span class="k">verdict&nbsp;&nbsp;&nbsp;</span><span class="ok">全部合规</span> · 净距 3.1m ≥ 2.5m · 覆土 1.42m ✓</div>
+        <div><span class="k">evidence&nbsp;</span>canonical_sha256 <span class="hl">e9296294…c7</span></div>
+      </div>
+    </div>
+
+    <div class="art" id="artIR" style="display:none">
+      <div class="art-t"><span class="tag">工件</span>CompiledUtilityIR v1</div>
+      <div class="mini-stat"><span><b>6</b> 检查井</span><span><b>5</b> 管段</span><span><b>DN400</b></span><span><b>0.003</b> 坡度</span></div>
+      <div class="hash">canonical e9296294eb35eb22ecca11a7d3322e94a90588c7</div>
+      <div class="row">
+        <button class="abtn" onclick="toast('已下载 IR JSON（原型）')">下载 JSON</button>
+        <button class="abtn" onclick="openInspector('ir')">在检查器查看</button>
+      </div>
+    </div>
+
+    <div class="hitl" id="hitl" style="display:none">
+      <div class="hd"><span class="tag">HITL · prompt 策略门</span>等待人工确认</div>
+      <div class="ds">能力 <code>cad_host:blender.execute</code> 被策略表标记为 <b>prompt</b>：将向授权根目录写入真实 <code>.blend</code> 产物（typed plan，22 对象）。确认后执行。</div>
+      <div class="row">
+        <button class="approve" id="approveBtn" onclick="askConfirm()">批准导出</button>
+        <button class="reject" onclick="rejectExport()">拒绝</button>
+      </div>
+    </div>
+
+    <div class="tool closed" id="tool3" style="display:none">
+      <div class="tool-h" onclick="this.parentElement.classList.toggle('closed')">
+        <span class="ic host">⬡</span>
+        <span class="nm">cad_host:blender.execute</span>
+        <span class="st" id="tool3St"></span>
+        <span class="car">▾</span>
+      </div>
+      <div class="tool-b">
+        <div><span class="k">plan&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>BlenderExecutionPlan v1 · plan_sha256 <span class="hl">7ac1…9f</span></div>
+        <div><span class="k">host&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>Blender 5.2.0 LTS (headless) · addon fork execute_plan</div>
+        <div><span class="k">scope&nbsp;&nbsp;&nbsp;&nbsp;</span>__OBMCP_ 受控作用域 · 授权根写盘</div>
+        <div><span class="k">snapshot</span>语义快照 ↔ IR 哈希绑定 <span class="ok">一致</span></div>
+      </div>
+    </div>
+
+    <div class="rcpt" id="rcpt" style="display:none">
+      <div class="hd">✓ 交付回执 · receipt=completed</div>
+      <div><span class="k">objects&nbsp;&nbsp;&nbsp;&nbsp;</span>22&nbsp;&nbsp;<span class="k">output_bytes&nbsp;</span>120,031&nbsp;&nbsp;<span class="k">elapsed&nbsp;</span>2,187 ms</div>
+      <div><span class="k">output&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>D:/G6_Test/m3_invoke_e2e.blend + sidecar</div>
+      <div><span class="k">manifest&nbsp;&nbsp;&nbsp;</span>ArtifactManifest v1.1 已提交（C5 交付门通过）</div>
+    </div>
+
+    <div class="agentline" id="doneLine" style="display:none">已交付。<span class="dim">右侧视口为本次 IR 的真实几何回放：红色为初始碰撞路径，绿色为自愈绕行。VLM 六维评分为 <b style="color:var(--amb)">演示值</b>，未计入证据包。</span></div>
+  </div>
+
+  <!-- inspector -->
+  <div class="insp" id="insp">
+    <div data-pane="rules">
+      <div class="insp-sec-t">规则树 · GB 50289-2016（12 条 · 自检 33/33）</div>
+      <div id="ruleList"></div>
+    </div>
+    <div data-pane="ir" style="display:none">
+      <div class="insp-sec-t">CompiledUtilityIR v1（不可变 · 哈希寻址）</div>
+      <pre class="irpre" id="irPre"></pre>
+    </div>
+    <div data-pane="plugins" style="display:none">
+      <div class="insp-sec-t">微内核插件 · 7 个 ACTIVE / 16 能力 / 2 策略</div>
+      <div id="plgList"></div>
+      <div class="insp-sec-t" style="margin-top:12px">能力调度控制台</div>
+      <div class="cons">
+        <select id="capSel">
+          <option>solver:self_healing</option><option>solver:grid_route</option><option>solver:hydraulic</option>
+          <option>rules:gb50289.verify</option><option>cad_host:blender.execute</option><option>cad_host:vectorworks.execute</option>
+        </select>
+        <textarea placeholder='payload JSON（可选）'>{}</textarea>
+        <button class="abtn pri" onclick="toast('原型：invoke 结果将渲染于此')">运行（经 registry.invoke）</button>
+        <div class="cons-out">prompt 策略能力需勾选「确认执行」· 满载 503 + -32001 背压</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- composer -->
+  <div class="composer">
+    <div class="cmp">
+      <textarea id="cmpTa" rows="1" placeholder="下达工程指令，或输入 / 调用命令…"></textarea>
+      <div class="slash" id="slash">
+        <div class="sl" onclick="pickCmd('/solve')"><span class="c">/solve</span><span class="d">重新调度自愈求解器</span></div>
+        <div class="sl" onclick="pickCmd('/rules')"><span class="c">/rules</span><span class="d">打开 GB 50289 规则树</span></div>
+        <div class="sl" onclick="pickCmd('/ir')"><span class="c">/ir</span><span class="d">查看 Compiled IR</span></div>
+        <div class="sl" onclick="pickCmd('/export')"><span class="c">/export</span><span class="d">导出至 CAD 宿主（HITL）</span></div>
+      </div>
+      <div class="cmp-row">
+        <button class="cbtn" title="附件"><svg viewBox="0 0 24 24"><path d="M21 12l-8.5 8.5a5.5 5.5 0 01-7.8-7.8L13 4.4a3.7 3.7 0 015.2 5.2l-8.2 8.2a1.85 1.85 0 01-2.6-2.6L15 7.6"/></svg></button>
+        <button class="mdl" onclick="toggleSettings(event)">gpt-5.6-terra ▾</button>
+        <button class="send" onclick="sendMsg()" title="发送"><svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+      </div>
+    </div>
+    <div class="chips">
+      <button class="chip" onclick="replayAll()">↻ 重放本回合</button>
+      <button class="chip" onclick="askConfirm()">导出 Blender</button>
+      <button class="chip" onclick="openInspector('rules')">规则树</button>
+      <button class="chip" onclick="playTimeline()">▶ 自愈回放</button>
+    </div>
+  </div>
+</section>
+
+<!-- settings popover -->
+<div class="setpop" id="setPop">
+  <div class="sp-sec">
+    <div class="sp-t">模型</div>
+    <div class="opt on"><span class="dot g"></span>gpt-5.6-terra<span style="margin-left:auto;font-size:10px;color:var(--ink3)">当前</span></div>
+    <div class="opt" onclick="toast('原型：切换模型')"><span class="dot b"></span>glm-4.6</div>
+    <div class="opt" onclick="toast('原型：切换模型')"><span class="dot b"></span>gemini-3-pro</div>
+  </div>
+  <div class="sp-sec">
+    <div class="sp-t">连接</div>
+    <div class="sp-row"><span class="dot g"></span>API 服务<span class="v">127.0.0.1:8000 · readyz ✓</span></div>
+    <div class="sp-row"><span class="dot g"></span>Blender MCP<span class="v">5.2.0 LTS</span></div>
+    <div class="sp-row"><span class="dot g"></span>Vectorworks IPC<span class="v">2024 · 心跳正常</span></div>
+  </div>
+  <div class="sp-sec">
+    <div class="sp-t">运行时</div>
+    <div class="sp-row">插件 / 能力 / 策略<span class="v">7 / 16 / 2</span></div>
+    <div class="sp-row">规则集<span class="v">v1.2 · 33 自检 ✓</span></div>
+  </div>
+</div>
+
+<!-- HITL confirm modal -->
+<div class="modal-mask" id="modalMask">
+  <div class="modal">
+    <h3>确认执行 cad_host:blender.execute？</h3>
+    <p>该能力被策略表标记为 <b>prompt</b>。执行将向授权根目录写入真实产物，动作不可自动撤销。</p>
+    <pre>POST /api/v1/demo/export-blender
+{ "confirm": true }
+plan_sha256: 7ac1…9f · objects: 22</pre>
+    <div class="row">
+      <button class="m-no" onclick="closeModal()">取消</button>
+      <button class="m-ok" onclick="doExport()">确认执行</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toastEl"></div>
+
+<script>
+/* ================================================================
+   数据（取自 /api/v1/demo/municipal-pipeline 真实口径的实测值）
+   ================================================================ */
+const NODES=[
+  {id:'MH-01',x:0,  y:0, ground:11.2,invert:9.10},
+  {id:'MH-02',x:28, y:2, ground:11.1,invert:9.02},
+  {id:'MH-03',x:55, y:6, ground:10.9,invert:8.94},
+  {id:'MH-04',x:82, y:14,ground:10.7,invert:8.86},
+  {id:'MH-05',x:108,y:20,ground:10.5,invert:8.78},
+  {id:'MH-06',x:132,y:26,ground:10.3,invert:8.70},
+];
+const SEGS=[
+  {a:'MH-01',b:'MH-02',dn:400,slope:.0030,len:28.1},
+  {a:'MH-02',b:'MH-03',dn:400,slope:.0030,len:27.3},
+  {a:'MH-03',b:'MH-04',dn:400,slope:.0030,len:28.2},
+  {a:'MH-04',b:'MH-05',dn:400,slope:.0030,len:26.7},
+  {a:'MH-05',b:'MH-06',dn:400,slope:.0030,len:24.7},
+];
+/* 障碍物：东侧建筑物（MU-CLEAR-001 要求 2.5m 净距）+ 燃气管 */
+const OBST=[
+  {id:'BLDG-A',kind:'建筑物',x:40,y:-9,w:26,d:15,h:8.5,clear:2.5,rule:'MU-CLEAR-001'},
+  {id:'GAS-01',kind:'燃气管线',x:95,y:6,w:4,d:30,h:0,clear:1.5,rule:'MU-CLEAR-006'},
+];
+/* 初始 A* 路径（MH-02→MH-03 直线穿越建筑净距圈 = 违规）vs 自愈绕行（带弯点） */
+const HEALED_BEND={from:'MH-02',to:'MH-03',pts:[[28,2],[36,10.5],[48,12.5],[55,6]]};
+const TIMELINE=[
+  {st:'bad', lb:'初始路径', sub:'iter 0', note:'MU-CLEAR-001：净距 1.6m < 2.5m · SEG-02 碰撞'},
+  {st:'on',  lb:'膨胀半径·重路由', sub:'iter 1', note:'膨胀障碍半径 ceil(2.5/分辨率) → A* 重寻路'},
+  {st:'ok',  lb:'收敛', sub:'iter 2', note:'净距 3.1m ✓ · 覆土 1.42m ✓ · 12 条规则全过'},
+];
+const RULES=[
+  ['MU-CLEAR-001','建(构)筑物水平净距 ≥ 2.5m','2.5m'],['MU-CLEAR-002','给水管与污水管水平净距','1.5m'],
+  ['MU-CLEAR-003','再生水管净距','0.5m'],['MU-CLEAR-004','排水管净距','0.8m'],
+  ['MU-CLEAR-005','给水 d≤200 / d>200 分级净距','1.0/1.5m'],['MU-CLEAR-006','燃气管五档压力净距','1.0–2.0m'],
+  ['MU-CLEAR-007','直埋电力电缆净距','0.5m'],['MU-CLEAR-008','通信管线净距','1.0m'],
+  ['MU-COVER-001','最小覆土深度（车行道下）','0.7m'],['MU-COVER-002','冰冻线以下覆土','按地区'],
+  ['MU-SLOPE-001','DN400 最小坡度','0.003'],['MU-SLOPE-002','最大流速约束','5 m/s'],
+];
+const PLUGINS=[
+  ['plugin.core.municipal_utility','四大确定性求解器 + 自愈算法','solver:*'],
+  ['plugin.core.rule_compliance','GB 50289-2016 规则核验与证据','rules:*'],
+  ['plugin.host.blender_mcp','Blender 5.2 几何构建 / 渲染','cad_host:blender'],
+  ['plugin.host.vectorworks_mcp','Vectorworks 2024 施工图 VWX','cad_host:vw'],
+  ['plugin.engine.spatial_graph','3D 空间图谱与 DAG 核验','spatial:*'],
+  ['plugin.core.session_store','JSONL 会话树与检查点','session:*'],
+  ['plugin.example.echo','外部插件发现（manifest 约定）','echo:*'],
+];
+const IR_JSON=`{
+  "schema_version": "v1.0", "system": "wastewater",
+  "nodes": [ MH-01…MH-06 (x, y, rim_z, invert_z) × 6 ],
+  "segments": [
+    { "id": "SEG-02", "from": "MH-02", "to": "MH-03",
+      "dn": 400, "slope": 0.003,
+      "centerline": [[28,2],[36,10.5],[48,12.5],[55,6]],
+      "note": "self-healed reroute: clearance 3.1m ≥ 2.5m" }
+  ],
+  "canonical_hash": "e9296294eb35eb22…a90588c7"
+}`;
+
+/* ================================================================
+   视口渲染器（零依赖 canvas 3D：轨道相机 + 垂直夸大）
+   ================================================================ */
+const cv=document.getElementById('gl'),cx=cv.getContext('2d');
+let W=0,H=0,DPR=1;
+const cam={yaw:-0.9,pitch:0.62,dist:120,tx:66,ty:8,tz:9.6};
+const opt={grid:true,exag:true,spin:false};
+let view='3d', tlStep=0, bendT=1; /* bendT: 0=初始直线 1=完全绕行 */
+const VSCALE=()=>opt.exag?3:1;
+const z0=10.3; /* 高程基准偏移 */
+const nz=z=>(z-z0)*VSCALE(); /* 归一化+夸大后的显示高程 */
+
+function resize(){DPR=Math.min(devicePixelRatio||1,2);const r=cv.getBoundingClientRect();W=r.width;H=r.height;cv.width=W*DPR;cv.height=H*DPR;cx.setTransform(DPR,0,0,DPR,0,0);draw();}
+addEventListener('resize',resize);
+
+function project(p){
+  /* 轨道相机：位置 = target - dist*dir */
+  const cp=Math.cos(cam.pitch),sp=Math.sin(cam.pitch),cy=Math.cos(cam.yaw),sy=Math.sin(cam.yaw);
+  const px=cam.tx+cam.dist*cp*sy, py=cam.ty+cam.dist*cp*cy, pz=cam.tz+cam.dist*sp;
+  const dx=p[0]-px,dy=p[1]-py,dz=p[2]-pz;
+  const fx=-cp*sy,fy=-cp*cy,fz=-sp;
+  const rx=cy,ry=-sy,rz=0;
+  const ux=-sp*sy,uy=-sp*cy,uz=cp;
+  const vx=dx*rx+dy*ry+dz*rz, vy=dx*ux+dy*uy+dz*uz, vz=dx*fx+dy*fy+dz*fz;
+  if(vz<1) return null;
+  const f=H*0.9;
+  return [W/2+vx*f/vz, H/2-vy*f/vz, vz];
+}
+function segColor(t,healed){ /* 路径着色：违规红 → 自愈绿 */
+  if(t<0.5) return '#e5636c';
+  return healed?'#3fb68b':'#e5636c';
+}
+
+function draw(){
+  cx.clearRect(0,0,W,H);
+  if(view==='plan') return drawPlan();
+  if(view==='prof') return drawProf();
+  draw3D();
+}
+/* ---------- 3D ---------- */
+function draw3D(){
+  const prims=[];
+  const P=p=>project(p);
+  /* 地面网格 */
+  if(opt.grid){
+    const gz=0;
+    for(let x=-20;x<=160;x+=10){const a=P([x,-24,gz]),b=P([x,44,gz]);if(a&&b)prims.push({d:(a[2]+b[2])/2,k:'l',p:[a,b],c:'rgba(255,255,255,.05)',w:1});}
+    for(let y=-20;y<=40;y+=10){const a=P([-20,y,gz]),b=P([160,y,gz]);if(a&&b)prims.push({d:(a[2]+b[2])/2,k:'l',p:[a,b],c:'rgba(255,255,255,.05)',w:1});}
+  }
+  /* 地面参考面（井位地面线：用各井 ground 连成台地面片，简化为网格基面） */
+  /* 障碍物体块 + 净距圈 */
+  OBST.forEach(o=>{
+    const bx=o.x-o.w/2,by=o.y-o.d/2;
+    const g0=nz(10.9);
+    const c=[[bx,by],[bx+o.w,by],[bx+o.w,by+o.d],[bx,by+o.d]];
+    const bot=c.map(q=>P([q[0],q[1],g0])), top=c.map(q=>P([q[0],q[1],g0+(o.h||1.2)]));
+    if(bot.every(Boolean)&&top.every(Boolean)){
+      prims.push({d:avg([...bot,...top]),k:'poly',p:top,c:'rgba(120,140,165,.28)',stroke:'rgba(160,180,205,.5)'});
+      for(let i=0;i<4;i++)prims.push({d:(bot[i][2]+top[i][2])/2,k:'l',p:[bot[i],top[i]],c:'rgba(160,180,205,.4)',w:1});
+      for(let i=0;i<4;i++){const a=bot[i],b=bot[(i+1)%4];prims.push({d:(a[2]+b[2])/2,k:'l',p:[a,b],c:'rgba(160,180,205,.35)',w:1});}
+    }
+    /* 净距圈（地面投影） */
+    const ring=[],R=Math.max(o.w,o.d)/2+o.clear,cxp=o.x,cyp=o.y;
+    for(let a=0;a<=Math.PI*2+0.01;a+=Math.PI/20){const q=P([cxp+Math.cos(a)*R,cyp+Math.sin(a)*R,g0+0.05]);if(q)ring.push(q);}
+    if(ring.length>2)prims.push({d:avg(ring)+0.1,k:'path',p:ring,c:o.id==='BLDG-A'&&tlStep<2?'rgba(229,99,108,.55)':'rgba(217,161,63,.45)',w:1.2,dash:[5,4]});
+  });
+  /* 管段（初始直线 vs 自愈弯线） */
+  const byId={};NODES.forEach(n=>byId[n.id]=n);
+  SEGS.forEach((s,si)=>{
+    const A=byId[s.a],B=byId[s.b];
+    let pts;
+    const isHealed=(s.a===HEALED_BEND.from&&s.b===HEALED_BEND.to);
+    if(isHealed){
+      const bp=HEALED_BEND.pts;
+      const lerp=(a,b,t)=>a+(b-a)*t;
+      /* bendT 0→1：直线逐步过渡为绕行折线 */
+      pts=bp.map((q,i)=>{
+        const t=i/(bp.length-1);
+        const lx=lerp(A.x,B.x,t),ly=lerp(A.y,B.y,t);
+        return [lerp(lx,q[0],bendT),lerp(ly,q[1],bendT)];
+      });
+    } else pts=[[A.x,A.y],[B.x,B.y]];
+    /* 深度插值（沿程 invert 线性） */
+    const n=pts.length;
+    const path=pts.map((q,i)=>{
+      const t=n===1?0:i/(n-1);
+      const z=A.invert+(B.invert-A.invert)*t;
+      return P([q[0],q[1],nz(z)]);
+    }).filter(Boolean);
+    if(path.length<2)return;
+    const violated=isHealed&&tlStep===0;
+    const col=isHealed?(tlStep===0?'#e5636c':tlStep===1?'#d9a13f':'#3fb68b'):'#8fb7e8';
+    prims.push({d:avg(path),k:'path',p:path,c:col,w:isHealed?3:2.4,glow:isHealed});
+    /* 管道地面投影（虚线，帮助读平面关系） */
+    const proj=pts.map((q,i)=>P([q[0],q[1],0.03])).filter(Boolean);
+    if(proj.length>1)prims.push({d:avg(proj)-0.05,k:'path',p:proj,c:isHealed&&tlStep===0?'rgba(229,99,108,.35)':'rgba(143,183,232,.25)',w:1,dash:[3,4]});
+  });
+  /* 检查井：地面 rim → invert 竖井 */
+  NODES.forEach(n=>{
+    const g=P([n.x,n.y,nz(n.ground)]),iv=P([n.x,n.y,nz(n.invert)]);
+    if(!g||!iv)return;
+    prims.push({d:(g[2]+iv[2])/2,k:'l',p:[g,iv],c:'rgba(232,235,240,.55)',w:2});
+    prims.push({d:g[2],k:'node',p:g,r:4.5,c:'#e8ebf0',ring:true});
+    prims.push({d:iv[2],k:'node',p:iv,r:3,c:'#8fb7e8'});
+    prims.push({d:g[2]-0.01,k:'label',p:[g[0]+8,g[1]-8],t:n.id,c:'rgba(232,235,240,.75)'});
+  });
+  /* 违规标注 */
+  if(tlStep===0){
+    const m=P([40,4,nz(9.0)]);
+    if(m)prims.push({d:m[2]-1,k:'label',p:[m[0]-40,m[1]-18],t:'✕ MU-CLEAR-001 净距 1.6m < 2.5m',c:'#e5636c',bold:true});
+  }
+  /* 排序绘制 */
+  prims.sort((a,b)=>b.d-a.d);
+  prims.forEach(r=>{
+    cx.save();
+    if(r.k==='l'){cx.strokeStyle=r.c;cx.lineWidth=r.w;cx.beginPath();cx.moveTo(r.p[0][0],r.p[0][1]);cx.lineTo(r.p[1][0],r.p[1][1]);cx.stroke();}
+    else if(r.k==='path'){cx.strokeStyle=r.c;cx.lineWidth=r.w;if(r.dash)cx.setLineDash(r.dash);if(r.glow){cx.shadowColor=r.c;cx.shadowBlur=10;}cx.beginPath();cx.moveTo(r.p[0][0],r.p[0][1]);for(let i=1;i<r.p.length;i++)cx.lineTo(r.p[i][0],r.p[i][1]);cx.stroke();}
+    else if(r.k==='poly'){cx.fillStyle=r.c;cx.strokeStyle=r.stroke;cx.beginPath();cx.moveTo(r.p[0][0],r.p[0][1]);for(let i=1;i<r.p.length;i++)cx.lineTo(r.p[i][0],r.p[i][1]);cx.closePath();cx.fill();cx.stroke();}
+    else if(r.k==='node'){cx.fillStyle=r.c;cx.beginPath();cx.arc(r.p[0],r.p[1],r.r,0,7);cx.fill();if(r.ring){cx.strokeStyle='rgba(232,235,240,.4)';cx.lineWidth=1;cx.beginPath();cx.arc(r.p[0],r.p[1],r.r+3,0,7);cx.stroke();}}
+    else if(r.k==='label'){cx.fillStyle=r.c;cx.font=(r.bold?'700 11px':'11px')+' '+getFontMono();cx.fillText(r.t,r.p[0],r.p[1]);}
+    cx.restore();
+  });
+  hudCam.textContent=`yaw ${(cam.yaw*57.3).toFixed(0)}° · pitch ${(cam.pitch*57.3).toFixed(0)}° · d ${cam.dist.toFixed(0)}m`;
+}
+const avg=a=>a.reduce((s,q)=>s+q[2],0)/a.length;
+const getFontMono=()=>"ui-monospace,Consolas,monospace";
+
+/* ---------- 平面 ---------- */
+function drawPlan(){
+  const pad=56,x0=-15,x1=150,y0=-22,y1=42;
+  const sx=(W-2*pad)/(x1-x0), sy=(H-2*pad)/(y1-y0), s=Math.min(sx,sy);
+  const X=x=>pad+(x-x0)*s, Y=y=>H-pad-(y-y0)*s;
+  cx.strokeStyle='rgba(255,255,255,.05)';cx.lineWidth=1;
+  if(opt.grid){for(let x=0;x<=150;x+=10){cx.beginPath();cx.moveTo(X(x),Y(y0));cx.lineTo(X(x),Y(y1));cx.stroke();}for(let y=-20;y<=40;y+=10){cx.beginPath();cx.moveTo(X(x0),Y(y));cx.lineTo(X(x1),Y(y));cx.stroke();}}
+  OBST.forEach(o=>{
+    cx.fillStyle='rgba(120,140,165,.2)';cx.strokeStyle='rgba(160,180,205,.55)';
+    cx.fillRect(X(o.x-o.w/2),Y(o.y+o.d/2),o.w*s,o.d*s);cx.strokeRect(X(o.x-o.w/2),Y(o.y+o.d/2),o.w*s,o.d*s);
+    cx.strokeStyle=o.id==='BLDG-A'&&tlStep<2?'rgba(229,99,108,.6)':'rgba(217,161,63,.5)';cx.setLineDash([5,4]);
+    const R=(Math.max(o.w,o.d)/2+o.clear)*s;
+    cx.beginPath();cx.arc(X(o.x),Y(o.y),R,0,7);cx.stroke();cx.setLineDash([]);
+    cx.fillStyle='rgba(160,180,205,.8)';cx.font='10px '+getFontMono();cx.fillText(o.id+' · '+o.kind,X(o.x-o.w/2),Y(o.y+o.d/2)-6);
+  });
+  const byId={};NODES.forEach(n=>byId[n.id]=n);
+  SEGS.forEach(s=>{
+    const A=byId[s.a],B=byId[s.b];
+    const isH=(s.a===HEALED_BEND.from&&s.b===HEALED_BEND.to);
+    cx.lineWidth=isH?3:2.2;
+    cx.strokeStyle=isH?(tlStep===0?'#e5636c':tlStep===1?'#d9a13f':'#3fb68b'):'#8fb7e8';
+    if(isH&&tlStep===0)cx.shadowColor='#e5636c',cx.shadowBlur=8;
+    cx.beginPath();
+    if(isH){HEALED_BEND.pts.forEach((q,i)=>{const t=i/(HEALED_BEND.pts.length-1);const lx=A.x+(B.x-A.x)*t,ly=A.y+(B.y-A.y)*t;const px=lx+(q[0]-lx)*bendT,py=ly+(q[1]-ly)*bendT;i?cx.lineTo(X(px),Y(py)):cx.moveTo(X(px),Y(py));});}
+    else{cx.moveTo(X(A.x),Y(A.y));cx.lineTo(X(B.x),Y(B.y));}
+    cx.stroke();cx.shadowBlur=0;
+  });
+  NODES.forEach(n=>{
+    cx.fillStyle='#e8ebf0';cx.beginPath();cx.arc(X(n.x),Y(n.y),5,0,7);cx.fill();
+    cx.strokeStyle='rgba(232,235,240,.4)';cx.beginPath();cx.arc(X(n.x),Y(n.y),8,0,7);cx.stroke();
+    cx.fillStyle='rgba(232,235,240,.8)';cx.font='10.5px '+getFontMono();cx.fillText(n.id,X(n.x)+10,Y(n.y)-8);
+  });
+  if(tlStep===0){cx.fillStyle='#e5636c';cx.font='700 11px '+getFontMono();cx.fillText('✕ MU-CLEAR-001：净距 1.6m < 2.5m',X(24),Y(16));}
+  cx.fillStyle='rgba(154,164,178,.6)';cx.font='10px '+getFontMono();
+  cx.fillText('平面布置图 · 数据=/api/v1/demo/municipal-pipeline · 红=初始碰撞路径 绿=自愈绕行',pad,20);
+}
+/* ---------- 纵断面 ---------- */
+function drawProf(){
+  const padL=64,padR=40,padT=44,padB=52;
+  /* 链age */
+  let chain=[0];SEGS.forEach(s=>chain.push(chain[chain.length-1]+s.len));
+  const x0=0,x1=chain[chain.length-1];
+  const zs=NODES.map(n=>n.ground).concat(NODES.map(n=>n.invert));
+  const zMin=Math.min(...zs)-0.6,zMax=Math.max(...zs)+0.6;
+  const X=x=>padL+(x-x0)/(x1-x0)*(W-padL-padR);
+  const Y=z=>padT+(zMax-z)/(zMax-zMin)*(H-padT-padB);
+  /* 网格与标尺 */
+  cx.strokeStyle='rgba(255,255,255,.06)';cx.fillStyle='rgba(154,164,178,.7)';cx.font='10px '+getFontMono();cx.lineWidth=1;
+  for(let z=Math.ceil(zMin*2)/2;z<=zMax;z+=0.5){cx.beginPath();cx.moveTo(padL,Y(z));cx.lineTo(W-padR,Y(z));cx.stroke();cx.fillText(z.toFixed(1)+'m',18,Y(z)+3);}
+  /* 覆土填充 */
+  cx.beginPath();cx.moveTo(X(chain[0]),Y(NODES[0].ground));
+  NODES.forEach((n,i)=>cx.lineTo(X(chain[i]),Y(n.ground)));
+  for(let i=NODES.length-1;i>=0;i--)cx.lineTo(X(chain[i]),Y(NODES[i].invert));
+  cx.closePath();cx.fillStyle='rgba(79,156,249,.08)';cx.fill();
+  /* 地面线 / 管中线 */
+  cx.strokeStyle='#9aa4b2';cx.lineWidth=1.6;cx.beginPath();
+  NODES.forEach((n,i)=>i?cx.lineTo(X(chain[i]),Y(n.ground)):cx.moveTo(X(chain[i]),Y(n.ground)));cx.stroke();
+  cx.strokeStyle='#8fb7e8';cx.lineWidth=2.6;cx.beginPath();
+  NODES.forEach((n,i)=>i?cx.lineTo(X(chain[i]),Y(n.invert)):cx.moveTo(X(chain[i]),Y(n.invert)));cx.stroke();
+  /* 井 + 标注 */
+  NODES.forEach((n,i)=>{
+    cx.strokeStyle='rgba(232,235,240,.5)';cx.lineWidth=1.4;
+    cx.beginPath();cx.moveTo(X(chain[i]),Y(n.ground));cx.lineTo(X(chain[i]),Y(n.invert));cx.stroke();
+    cx.fillStyle='#e8ebf0';cx.beginPath();cx.arc(X(chain[i]),Y(n.invert),3.5,0,7);cx.fill();
+    cx.fillStyle='rgba(232,235,240,.8)';cx.font='10.5px '+getFontMono();
+    cx.fillText(n.id,X(chain[i])-14,Y(n.ground)-8);
+    cx.fillStyle='rgba(154,164,178,.8)';
+    cx.fillText('inv '+n.invert.toFixed(2),X(chain[i])+8,Y(n.invert)+4);
+    if(i<SEGS.length){
+      const mx=(X(chain[i])+X(chain[i+1]))/2,my=(Y(NODES[i].invert)+Y(NODES[i+1].invert))/2;
+      cx.fillStyle='rgba(79,156,249,.9)';cx.fillText('DN400 i=0.003 L='+SEGS[i].len+'m',mx-64,my-10);
+    }
+  });
+  /* 覆土标注 */
+  cx.fillStyle='rgba(63,182,139,.9)';cx.font='10.5px '+getFontMono();
+  cx.fillText('覆土 1.42m ≥ 0.7m (MU-COVER-001 ✓)',X(chain[2])+6,(Y(NODES[2].ground)+Y(NODES[2].invert))/2);
+  cx.fillStyle='rgba(154,164,178,.6)';cx.font='10px '+getFontMono();
+  cx.fillText('纵断面 · 链age 0–135m · 垂直比例 1:1（原型；集成态接 IR 直接绘制）',padL,20);
+}
+
+/* ================================================================
+   相机交互
+   ================================================================ */
+let dragging=false,lx=0,ly=0,panMode=false;
+cv.addEventListener('pointerdown',e=>{dragging=true;lx=e.clientX;ly=e.clientY;panMode=e.shiftKey||e.button===2;cv.classList.add('drag');cv.setPointerCapture(e.pointerId);});
+cv.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  const dx=e.clientX-lx,dy=e.clientY-ly;lx=e.clientX;ly=e.clientY;
+  if(panMode){const k=cam.dist/700;cam.tx-=dx*k*Math.cos(cam.yaw);cam.ty+=dx*k*Math.sin(cam.yaw);}
+  else{cam.yaw+=dx*0.005;cam.pitch=Math.max(0.08,Math.min(1.5,cam.pitch+dy*0.004));}
+  draw();
+});
+cv.addEventListener('pointerup',()=>{dragging=false;cv.classList.remove('drag');});
+cv.addEventListener('wheel',e=>{e.preventDefault();cam.dist=Math.max(30,Math.min(320,cam.dist*(1+Math.sign(e.deltaY)*0.09)));draw();},{passive:false});
+cv.addEventListener('contextmenu',e=>e.preventDefault());
+function resetCam(){Object.assign(cam,{yaw:-0.9,pitch:0.62,dist:120,tx:66,ty:8,tz:9.6});draw();}
+function toggleOpt(k,el){opt[k]=!opt[k];el.classList.toggle('on',opt[k]);draw();}
+function setView(v,el){view=v;document.querySelectorAll('#viewSeg button').forEach(b=>b.classList.toggle('on',b===el));document.getElementById('scaleLbl').textContent=v==='prof'?'链age 135m':'20 m';draw();}
+(function spinLoop(){if(opt.spin&&!dragging&&view==='3d'){cam.yaw+=0.0035;draw();}requestAnimationFrame(spinLoop);})();
+
+/* ================================================================
+   自愈时间线
+   ================================================================ */
+const tlSteps=document.getElementById('tlSteps'),tlNote=document.getElementById('tlNote');
+function renderTL(){
+  tlSteps.innerHTML='';
+  TIMELINE.forEach((s,i)=>{
+    if(i){const l=document.createElement('div');l.className='tl-link';tlSteps.appendChild(l);}
+    const d=document.createElement('div');
+    d.className='tl-s '+(i===tlStep?'on':i<tlStep?s.st==='bad'?'bad':'ok':(s.st==='bad'?'bad':''));
+    d.innerHTML=`<span class="n">${i===tlStep?'●':i<tlStep?(s.st==='bad'?'✕':'✓'):i}</span><span><span class="lb">${s.lb}</span><br><span class="sub">${s.sub}</span></span>`;
+    d.onclick=()=>{tlStep=i;bendT=i===0?0:i===1?0.5:1;tlNote.textContent=TIMELINE[tlStep].note;renderTL();draw();};
+    tlSteps.appendChild(d);
+  });
+  tlNote.textContent=TIMELINE[tlStep].note;
+}
+let playing=false;
+function playTimeline(){
+  if(playing)return;playing=true;
+  document.getElementById('playIco').innerHTML='<rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/>';
+  tlStep=0;bendT=0;renderTL();draw();
+  const t0=performance.now();
+  (function anim(now){
+    const t=(now-t0)/4200; /* 4.2s 全程 */
+    if(t<0.3){tlStep=0;bendT=0;}
+    else if(t<0.75){tlStep=1;bendT=(t-0.3)/0.45;bendT=bendT<0?0:bendT>1?1:bendT;}
+    else{tlStep=2;bendT=1;}
+    renderTL();draw();
+    if(t<1)requestAnimationFrame(anim);
+    else{playing=false;document.getElementById('playIco').innerHTML='<path d="M7 4l13 8-13 8z"/>';tlNote.textContent=TIMELINE[2].note;}
+  })(t0);
+}
+
+/* ================================================================
+   线程交互（演示流式回合）
+   ================================================================ */
+const $=id=>document.getElementById(id);
+function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
+async function runTurn(){
+  /* tool1 running → done */
+  await sleep(900);
+  $('tool1Live').innerHTML='<span class="k">status&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>iter 0：MU-CLEAR-001 碰撞（净距 1.6m）→ 膨胀半径重路由…';
+  playTimeline();
+  await sleep(1800);
+  $('tool1Live').innerHTML='<span class="k">status&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>iter 2：<span class="ok">converged</span> · 净距 3.1m ✓';
+  await sleep(700);
+  $('tool1St').className='st ok';$('tool1St').textContent='✓ 2.9s · converged';
+  $('tool1').classList.add('closed');
+  $('tool1Body').insertAdjacentHTML('beforeend',
+    `<div><span class="k">result&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>converged=<span class="ok">true</span> · iterations=2 · nodes=6 · segments=5</div>
+     <div><span class="k">resolved&nbsp;&nbsp;&nbsp;</span><span class="bad">MU-CLEAR-001</span> 2.5m 净距违规 → <span class="ok">3.1m 合规</span>（A* 绕行）</div>`);
+  /* tool2 */
+  $('tool2').style.display='';$('tool2St').className='st run';$('tool2St').innerHTML='<span class="spin"></span>running…';
+  await sleep(1100);
+  $('tool2St').className='st ok';$('tool2St').textContent='✓ 0.8s · 12/12 pass';
+  $('artIR').style.display='';
+  await sleep(600);
+  /* HITL */
+  $('hitl').style.display='';$('hitl').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+function replayAll(){
+  ['tool2','artIR','hitl','tool3','rcpt','doneLine'].forEach(i=>$(i).style.display='none');
+  const t1=$('tool1');t1.classList.remove('closed');
+  $('tool1St').className='st run';$('tool1St').innerHTML='<span class="spin"></span>running…';
+  $('tool1Live').innerHTML='<span class="k">status&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>A* 网格寻路中…';
+  const extra=$('tool1Body').querySelectorAll('div:nth-child(n+4)');extra.forEach(e=>e.remove());
+  $('approveBtn').disabled=false;$('approveBtn').textContent='批准导出';
+  runTurn();
+}
+function askConfirm(){$('modalMask').classList.add('show');}
+function closeModal(){$('modalMask').classList.remove('show');}
+async function doExport(){
+  closeModal();
+  const b=$('approveBtn');b.disabled=true;b.textContent='执行中…';
+  $('tool3').style.display='';$('tool3').classList.remove('closed');
+  $('tool3St').className='st run';$('tool3St').innerHTML='<span class="spin"></span>executing…';
+  await sleep(1500);
+  $('tool3St').className='st ok';$('tool3St').textContent='✓ 2,187 ms · completed';
+  $('tool3').classList.add('closed');
+  $('rcpt').style.display='';$('doneLine').style.display='';
+  $('rcpt').scrollIntoView({behavior:'smooth',block:'nearest'});
+  toast('交付完成：m3_invoke_e2e.blend（22 对象 · 120KB）');
+}
+function rejectExport(){
+  $('hitl').innerHTML='<div class="hd"><span class="tag">HITL</span><span style="color:var(--red)">已拒绝 · 策略门拦截，未执行任何写盘</span></div>';
+  toast('已拒绝导出（决策回执已记入会话树）');
+}
+/* composer */
+const ta=$('cmpTa'),slash=$('slash');
+ta.addEventListener('input',()=>{slash.classList.toggle('show',ta.value==='/');});
+ta.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg();}});
+function pickCmd(c){slash.classList.remove('show');ta.value='';
+  if(c==='/rules')openInspector('rules');
+  else if(c==='/ir')openInspector('ir');
+  else if(c==='/export')askConfirm();
+  else if(c==='/solve'){replayAll();toast('重新调度 solver:self_healing');}
+}
+function sendMsg(){
+  const v=ta.value.trim();if(!v)return;ta.value='';slash.classList.remove('show');
+  const sc=$('thScroll');
+  sc.insertAdjacentHTML('beforeend',`<div class="msg-you"></div><div class="agentline">收到「${v.replace(/</g,'&lt;')}」。<span class="dim">原型态：真实集成时此处走 registry.invoke 调度并追加工具块。</span></div>`);
+  sc.querySelectorAll('.msg-you')[sc.querySelectorAll('.msg-you').length-1].textContent=v;
+  sc.scrollTop=sc.scrollHeight;
+}
+/* panel & tabs */
+function threadMode(m){$('thread').classList.toggle('ins-mode',m==='insp');$('tabConv').classList.toggle('on',m==='conv');$('tabInsp').classList.toggle('on',m==='insp');}
+function toggleThread(){const t=$('thread');t.style.width=t.style.width==='0px'?'':'0px';setTimeout(resize,200);}
+function openInspector(p){
+  $('thread').style.width='';threadMode('insp');
+  document.querySelectorAll('.insp [data-pane]').forEach(e=>e.style.display=e.dataset.pane===p?'':'none');
+}
+function focusViewport(){toast('视口：拖拽旋转 · 滚轮缩放 · Shift+拖拽平移');}
+/* settings */
+function toggleSettings(e){e.stopPropagation();$('setPop').classList.toggle('show');}
+document.addEventListener('click',e=>{if(!$('setPop').contains(e.target))$('setPop').classList.remove('show');});
+/* toast */
+let toastTm;
+function toast(m){const t=$('toastEl');t.textContent=m;t.classList.add('show');clearTimeout(toastTm);toastTm=setTimeout(()=>t.classList.remove('show'),2200);}
+/* sessions list */
+const SESS=[
+  ['g','DN400 污水重力管 · 6 井 5 段','现在 · converged',1],
+  ['g','高程冲突场景 T4 核验','2h 前 · 12/12 pass',0],
+  ['y','B10 · 102 节点复杂管网','昨天 · LLM 行超时 ×3',0],
+  ['g','Edo 赛博街区 · 资产装配','3 天前 · 已交付',0],
+  ['b','单体资产 Hero · G6 双宿主','3 天前 · blend+vwx',0],
+];
+$('sessList').innerHTML=SESS.map(s=>`<div class="sess${s[3]?' on':''}"><span class="dot ${s[0]}"></span><div><div class="tt">${s[1]}</div><div class="meta">${s[2]}</div></div></div>`).join('');
+/* rules & plugins */
+$('ruleList').innerHTML=RULES.map(r=>`<div class="rule"><div class="rh"><span class="rid">${r[0]}</span><span class="rst">✓ pass</span></div><div class="rd">${r[1]} · 阈值 <b class="mono">${r[2]}</b></div></div>`).join('');
+$('plgList').innerHTML=PLUGINS.map(p=>`<div class="plg"><div class="pid">${p[0]} <span style="color:var(--grn);font-size:9.5px">ACTIVE</span></div><div class="pds">${p[1]} · 能力前缀 <span class="mono" style="color:var(--acc)">${p[2]}</span></div></div>`).join('');
+$('irPre').textContent=IR_JSON;
+/* init（支持 #plan / #prof / #step2 直达深链，便于审核截图） */
+const h=location.hash;
+if(h.includes('plan'))setView('plan',document.querySelector('#viewSeg [data-v=plan]'));
+else if(h.includes('prof'))setView('prof',document.querySelector('#viewSeg [data-v=prof]'));
+const hm=h.match(/step(\d)/);if(hm){tlStep=+hm[1];bendT=[0,0.5,1][tlStep];}
+renderTL();resize();runTurn();
+</script>
+</body>
+</html>

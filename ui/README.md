@@ -3,6 +3,21 @@
 日期：2026-08-23 · 状态：**待审核** —— 审核通过前不动 `web_ui.py`。
 （prototype.html 为旧 v2 单稿，已被下面三套取代，仅留档）
 
+## ⭐⭐ 方案 I（2026-09-01 · Codex 风格 × 3D 视口完全重构）
+
+`prototype-i-codex3d.html` —— **与 A–H 布局无关的完全重构**，设计取向：Codex 的极简任务/线程语言 + 3D 建模工具必需的常驻视口。
+
+- **布局四区**：左图标轨（任务/视口/规则/插件/设置）→ 任务列表栏（Codex 式会话项 + 状态点 + 宿主连接 + 模型芯片）→ **中央 3D 视口为英雄区** → 右侧 408px Codex 式线程（对话/检查器双模式，可收起）
+- **3D 视口 = 核心增量**：零依赖自绘 canvas 3D 渲染器（轨道相机：拖拽旋转 / 滚轮缩放 / Shift 平移；垂直夸大 ×3 开关；自动旋转），真实渲染 6 井 5 段 IR 几何 + 建筑物/燃气管障碍 + 净距圈；**三视图切换**：3D / 平面布置 / 纵断面（链age-高程，含坡度与覆土标注）
+- **自愈时间线回放**：视口底部 scrubber，▶ 播放 4.2s 动画——初始红色碰撞路径（净距 1.6m<2.5m 标注）→ 膨胀半径重路由 → 绿色收敛路径，三节点可点击跳步
+- **线程 = Codex 语言**：用户气泡 → 可折叠工具块（等宽 capability 名 + running/✓ 三态）→ IR 工件卡 → HITL 琥珀卡（prompt 策略门语义）→ 确认弹层 → 绿色交付回执卡
+- **检查器**：规则树 12 条 / Compiled IR / 插件清单 + 能力调度控制台，右栏内切换不占新空间
+- **数据诚信**：VLM 评分等演示值显式标注「演示值」，与 benchmark 的 measured/provenance 契约对齐
+- 深链：`#plan` / `#prof` / `#step2` 可直达指定视图与时间线步骤（审核截图用）
+- 审核截图：`scratch/ui-review/shot1.png`（3D+线程）、`shot_plan.png`（平面）、`shot_prof.png`（纵断面）
+
+**审核建议**：打开后等首轮流式回合跑完（约 5s，自动播放自愈动画），然后 ① 拖转 3D 视口 ② 点「批准导出」走 HITL 全链路 ③ 切平面/纵断面 ④ 右栏切「检查器」看规则树。
+
 ## ⭐ 方案 D（最新 · shadcn 设计语言复刻）
 
 `prototype-d-shadcn.html` —— 按 shadcn/ui 官方 zinc-dark 主题的精确 token 复刻（来源：仓库 `apps/v4/public/r/themes.css` 的 HSL 变量 + registry button/badge 官方 variants），纯 CSS 1:1 还原 shadcn 观感（`--radius: 0.5rem`、focus ring、hover 透明度体系），零依赖。业务覆盖与 A/B/C 相同（流式回合/平面纵断 SVG/HITL/数据看板/规则树/模型芯片）。**如果审核目标是 shadcn 观感，直接看这套。**
