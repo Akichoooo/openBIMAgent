@@ -236,6 +236,10 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .m-no{border:1px solid var(--line2);color:var(--ink2)}.m-no:hover{background:var(--bg3)}
 .toast{position:fixed;top:16px;left:50%;transform:translateX(-50%) translateY(-8px);background:var(--bg3);border:1px solid var(--line2);border-radius:10px;padding:8px 14px;font-size:12px;color:var(--ink);opacity:0;pointer-events:none;transition:all .25s;z-index:99}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.fl{display:block;font-size:11.5px;color:var(--ink2);margin:7px 0}
+.fin{display:block;width:100%;margin-top:3px;background:var(--bg);border:1px solid var(--line2);border-radius:8px;color:var(--ink);font:11.5px var(--mono);padding:7px 9px;outline:none}
+.fin:focus{border-color:hsl(var(--primary) / .5)}
+.fk{font:9.5px var(--mono);color:var(--grn);margin-left:6px}
 #approveBtn:disabled{opacity:.5;cursor:default;pointer-events:none}
 @media (max-width:1180px){.sidebar{display:none}}
 </style>
@@ -416,9 +420,13 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
           <option>rules:gb50289.verify</option><option>cad_host:blender.execute</option><option>cad_host:vectorworks.execute</option>
         </select>
         <textarea placeholder='payload JSON（可选）'>{}</textarea>
-        <button onclick="toast('原型：invoke 结果将渲染于此')" class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground">运行（经 registry.invoke）</button>
+        <button onclick="invokeCap()" class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground">运行（经 registry.invoke）</button>
         <div class="cons-out">prompt 策略能力需勾选「确认执行」· 满载 503 + -32001 背压</div>
       </div>
+    </div>
+    <div data-pane="uploads" style="display:none">
+      <div class="insp-sec-t">上传附件（真实落盘 out/uploads/ · sha256 manifest）</div>
+      <div id="uplList"><div class="rd" style="color:var(--ink3);font-size:11px">加载中…</div></div>
     </div>
   </div>
 
@@ -433,7 +441,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
         <div class="sl" onclick="pickCmd('/export')"><span class="c">/export</span><span class="d">导出至 CAD 宿主（HITL）</span></div>
       </div>
       <div class="cmp-row">
-        <button class="cbtn" title="附件"><svg viewBox="0 0 24 24"><path d="M21 12l-8.5 8.5a5.5 5.5 0 01-7.8-7.8L13 4.4a3.7 3.7 0 015.2 5.2l-8.2 8.2a1.85 1.85 0 01-2.6-2.6L15 7.6"/></svg></button>
+        <button class="cbtn" title="上传附件（真实落盘）" onclick="$('fileInput').click()"><svg viewBox="0 0 24 24"><path d="M21 12l-8.5 8.5a5.5 5.5 0 01-7.8-7.8L13 4.4a3.7 3.7 0 015.2 5.2l-8.2 8.2a1.85 1.85 0 01-2.6-2.6L15 7.6"/></svg></button>
         <button class="mdl" onclick="toggleSettings(event)">gpt-5.6-terra ▾</button>
         <button class="send" onclick="sendMsg()" title="发送"><svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
       </div>
@@ -484,6 +492,25 @@ plan_sha256: 7ac1…9f · objects: 22</pre>
 </div>
 
 <div class="toast" id="toastEl"></div>
+
+<!-- 设置弹层（真实读写 /api/v1/settings/llm） -->
+<div class="modal-mask" id="setMask">
+  <div class="modal" style="width:460px">
+    <h3>设置 · 模型与 API</h3>
+    <p>基线写入 <code style="font:10px var(--mono);color:var(--amb)">config/llm_baseline.local.toml</code>；provider key 写入进程环境并持久化 <code style="font:10px var(--mono);color:var(--amb)">.env</code>（均 gitignored，key 只写不回显）。</p>
+    <div class="sp-t" style="margin-top:10px">LLM 基线</div>
+    <label class="fl">模型<input id="setModel" class="fin" placeholder="gpt-5.6-terra"></label>
+    <label class="fl">Base URL<input id="setBase" class="fin" placeholder="https://…/v1"></label>
+    <label class="fl">API Key <span class="fk" id="setKeyState"></span><input id="setKey" type="password" class="fin" placeholder="（留空则不修改）" autocomplete="off"></label>
+    <div class="sp-t" style="margin-top:10px">管道角色 Provider Keys</div>
+    <div id="provKeys"><div style="font-size:11px;color:var(--ink3)">加载中…</div></div>
+    <div class="row">
+      <button class="m-no" onclick="$('setMask').classList.remove('show')">关闭</button>
+      <button class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground" style="flex:1" onclick="saveSettings()">保存设置</button>
+    </div>
+  </div>
+</div>
+<input type="file" id="fileInput" style="display:none" multiple>
 <script>
 /* ================================================================
    Motion 动效辅助（motion.dev；未加载时零降级——直接呈现）
@@ -683,7 +710,9 @@ const getFontMono=()=>"ui-monospace,Consolas,monospace";
 
 /* ---------- 平面 ---------- */
 function drawPlan(){
-  const pad=56,x0=-15,x1=150,y0=-22,y1=42;
+  const pad=56;
+  const pxs=NODES.map(n=>n.x),pys=NODES.map(n=>n.y);
+  const x0=Math.min(...pxs)-15,x1=Math.max(...pxs)+15,y0=Math.min(...pys)-15,y1=Math.max(...pys)+15;
   const sx=(W-2*pad)/(x1-x0), sy=(H-2*pad)/(y1-y0), s=Math.min(sx,sy);
   const X=x=>pad+(x-x0)*s, Y=y=>H-pad-(y-y0)*s;
   cx.strokeStyle='rgba(255,255,255,.05)';cx.lineWidth=1;
@@ -776,7 +805,15 @@ cv.addEventListener('pointermove',e=>{
 cv.addEventListener('pointerup',()=>{dragging=false;cv.classList.remove('drag');});
 cv.addEventListener('wheel',e=>{e.preventDefault();cam.dist=Math.max(30,Math.min(320,cam.dist*(1+Math.sign(e.deltaY)*0.09)));draw();},{passive:false});
 cv.addEventListener('contextmenu',e=>e.preventDefault());
-function resetCam(){Object.assign(cam,{yaw:-0.9,pitch:0.62,dist:120,tx:66,ty:8,tz:9.6});draw();}
+function resetCam(){
+  /* 按当前 NODES 动态取景（mock 与真实 IR 数据通用） */
+  const xs=NODES.map(n=>n.x),ys=NODES.map(n=>n.y),zs=NODES.map(n=>nz(n.invert));
+  const x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys);
+  const zA=Math.min(...zs),zB=Math.max(...zs);
+  const span=Math.max(x1-x0,y1-y0,16);
+  Object.assign(cam,{yaw:-0.9,pitch:0.62,dist:Math.max(26,span*1.05),tx:(x0+x1)/2,ty:(y0+y1)/2,tz:(zA+zB)/2});
+  draw();
+}
 function toggleOpt(k,el){opt[k]=!opt[k];el.classList.toggle('on',opt[k]);draw();}
 function setView(v,el){view=v;document.querySelectorAll('#viewSeg button').forEach(b=>b.classList.toggle('on',b===el));document.getElementById('scaleLbl').textContent=v==='prof'?'链age 135m':'20 m';draw();}
 (function spinLoop(){if(opt.spin&&!dragging&&view==='3d'){cam.yaw+=0.0035;draw();}requestAnimationFrame(spinLoop);})();
@@ -926,4 +963,5 @@ const hm=h.match(/step(\d)/);if(hm){tlStep=+hm[1];bendT=[0,0.5,1][tlStep];}
 renderTL();resize();runTurn();
 /* 入场动效：会话列表逐条滑入 + 线程首批元素依次升起（Motion 未加载时自动跳过） */
 staggerIn('.sess');staggerIn('#thScroll > *');
-</script>
+</script></body>
+</html>

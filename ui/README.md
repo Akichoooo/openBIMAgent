@@ -1,43 +1,41 @@
-# openBIMAgent UI（方案 L 已集成上线 · 2026-09-02）
+# openBIMAgent UI（方案 J 已集成上线 · 功能打通 · 2026-09-02）
 
-**终版 = `prototype-l-integrated.html`（方案 L），已迁入 `src/openbimagent/server/web_ui.py` 并接全部真实端点。**
+**终版 = `prototype-j-franken.html`（方案 J），已迁入 `src/openbimagent/server/web_ui.py`，全部功能接真实端点（非演示）。**
 
 启动：`uv run uvicorn openbimagent.server.fastapi_app:app --host 127.0.0.1 --port 8000` → 打开 http://127.0.0.1:8000/
 
-> 注意：方案 L 直接双击打开（file://）会因浏览器 CORS 拦截本地 ES module 而无法加载 Shoelace 组件——**必须经 HTTP 访问**（集成态由 FastAPI 伺服，无此问题）。
+## 功能打通清单（本轮新增，均有测试）
 
-## 终版技术栈（J + K 合并）
+| 功能 | 端点 | 说明 |
+|---|---|---|
+| **设置 · 模型与 API** | `GET/PUT /api/v1/settings/llm` | 基线 model/base_url/api_key 写 `config/llm_baseline.local.toml`（gitignored）；管道角色 provider keys（GLM/GEMINI/AGENTROUTER/FREETOKENFAUCET）写进程环境（即时生效）+ `.env`（持久化）；**key 只写不回显**，GET 仅返回 key_set 布尔 |
+| **上传附件** | `POST/GET /api/v1/uploads` | composer 回形针真实上传，落盘 `out/uploads/` + sha256 manifest（`index.json`）；检查器「上传」面板实时列表；64MB 上限，文件名消毒 |
+| **Composer 调度** | `GET /api/v1/demo/municipal-pipeline` | 普通文本回车 → 真实调度自愈求解器 → 追加工具块（converged/iterations/resolved）+ 3D 场景刷新 |
+| **能力控制台** | `POST /api/v1/plugins/invoke` | 检查器内选能力 + payload JSON + 真实 invoke，结构化结果渲染 |
+| **HITL 导出** | `POST /api/v1/demo/export-blender` | 批准 → `{confirm:true}` 走 prompt 策略门 → 真实回执（objects/bytes/elapsed/output_path/plan_sha256） |
+| **3D 视口** | `GET /api/v1/demo/municipal-pipeline` | 真实 nodes/segments 驱动 canvas 渲染器，动态取景；自愈时间线回放；3D/平面/纵断面三视图 |
+| 规则树 / 模型芯片 / 会话 | `demo/rule-tree` · `demo/runtime-info` · `sessions` | 真实数据填充 |
 
-- **Shoelace 2.20.1**（Web Components）：sl-select / sl-switch / sl-tab-group / sl-drawer / sl-dialog / sl-alert / sl-button 等真组件交互
-- **Franken UI 2.1.2**：shadcn zinc-dark 官方 HSL token 驱动整体皮肤
-- **Motion**：列表 stagger / 卡片 rise-in / 弹层 scale-fade
-- **全部 vendor 到本地**：`ui/vendor/`（评审用副本）+ `src/openbimagent/server/static/vendor/`（生产副本，120 文件 1.6MB，MIT 许可），**零外网依赖**
-- 3D 视口为自绘 canvas 渲染器（零依赖，无 Three.js）：真实 IR nodes/segments 驱动、动态取景、自愈时间线回放、3D/平面/纵断面三视图
+端点实现：`src/openbimagent/server/workbench_io.py`（设置/上传）；测试：`tests/test_workbench_io.py`（5 测，tmp 隔离不碰真实配置）。
 
-## 真实数据接线（页尾 bootstrap 脚本）
+## 终版技术栈（方案 J）
 
-| UI 区块 | 端点 |
-|---|---|
-| 3D 视口 + 工具块数值 | `GET /api/v1/demo/municipal-pipeline`（nodes/segments/resolved_violations/iterations_spent） |
-| 规则树 | `GET /api/v1/demo/rule-tree` |
-| 模型芯片 | `GET /api/v1/demo/runtime-info` |
-| 会话列表 | `GET /api/v1/sessions` |
-| 能力控制台下拉 | `GET /api/v1/plugins`，运行 → `POST /api/v1/plugins/invoke` |
-| HITL 批准导出 | `POST /api/v1/demo/export-blender`（`{confirm:true}` 走 prompt 策略门，回执填充交付卡） |
-
-端点失败时各区块保留内置演示数据兜底（演示值已显式标注）。
+- **Franken UI 2.1.2**：shadcn zinc-dark 官方 HSL token 皮肤 + 工具类主按钮
+- **Motion**：stagger/rise-in/scale-fade 微动效
+- **全部 vendor 本地**：`src/openbimagent/server/static/vendor/`（franken + motion，MIT），`/static` 挂载，**零外网依赖**
+- 3D 视口为自绘 canvas 渲染器（无 Three.js）
 
 ## 历史方案（审核留档）
 
-- `prototype-i-codex3d.html` 方案 I：vanilla + Motion，零依赖蓝调基线
-- `prototype-j-franken.html` 方案 J：Franken UI shadcn zinc 皮肤（CDN 版）
-- `prototype-k-shoelace.html` 方案 K：Shoelace 组件（CDN 版）
+- `prototype-i-codex3d.html` 方案 I：vanilla + Motion 零依赖基线
+- `prototype-k-shoelace.html` 方案 K：Shoelace 组件版（CDN）
+- `prototype-l-integrated.html` 方案 L：K 组件 + J 皮肤合并版（本地 vendor；**注意 file:// 打开会因 CORS 拦截本地 ES module 而不渲染组件，需经 HTTP**）
 - 旧 A–H 八套已删除（git 历史可回溯）
 
 ## 二次修改 UI 的流程
 
-1. 改 `ui/prototype-l-integrated.html`（布局/组件/渲染器）
+1. 改 `ui/prototype-j-franken.html`（布局/组件/渲染器/功能区块）
 2. 跑 `python scratch/build_web_ui.py`：自动替换 vendor 路径、注入集成接线脚本、重写 `web_ui.py`、同步测试断言
-3. `uv run pytest tests/test_m2_fastapi.py -q` + 起服目检
+3. `uv run pytest tests/test_m2_fastapi.py tests/test_workbench_io.py -q` + 起服目检
 
 业务接口背景见 `API_INVENTORY.md`。

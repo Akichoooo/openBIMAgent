@@ -95,7 +95,7 @@ def test_web_ui_accessible() -> None:
     resp = client.get("/")
     assert resp.status_code == 200
     assert "openBIMAgent" in resp.text
-    assert "/static/vendor/shoelace" in resp.text
+    assert "/static/vendor/franken" in resp.text
 
 
 def test_plugins_inventory_endpoint() -> None:

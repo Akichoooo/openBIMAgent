@@ -94,7 +94,7 @@ Ruff 静态检查：All checks passed!
 
 ## 6. 未完成债务与唯一下一动作
 
-- **2026-09-02 UI 集成收官（方案 L）**：`web_ui.py` 已由"Codex × 3D"终版替换（Shoelace 组件 + Franken shadcn zinc 皮肤 + Motion 动效；1540 行旧三栏巨石下线）。库文件 vendor 到 `src/openbimagent/server/static/vendor/`（120 文件 1.6MB，MIT），`/static` 挂载，**完全离线**。页尾接线脚本消费真实端点：demo/municipal-pipeline（真实 nodes/segments 驱动 canvas 3D 渲染 + 动态取景）、rule-tree、runtime-info、sessions、plugins/invoke、export-blender（HITL confirm=true 走策略门）。旧原型 A–H 已清理，ui/ 保留方案 I/J/K/L 与装配脚本 `scratch/build_web_ui.py`。
+- **2026-09-02 UI 集成收官（方案 J · 功能打通）**：`web_ui.py` 已由"Codex × 3D"终版替换（Franken shadcn zinc 皮肤 + Motion 动效；1540 行旧三栏巨石下线）。库文件 vendor 到 `src/openbimagent/server/static/vendor/`（franken+motion，MIT），`/static` 挂载，**完全离线**。功能全部打通非演示：设置页真实读写 `config/llm_baseline.local.toml` + provider keys 入环境/`.env`（`GET/PUT /api/v1/settings/llm`，key 只写不回显）；附件真实落盘 `out/uploads/`（`POST/GET /api/v1/uploads`，sha256 manifest）；composer 文本真实调度自愈求解器追加回合；HITL 批准 → 真实 POST export-blender 回填回执；3D 视口由真实 IR 驱动动态取景。新增 `server/workbench_io.py`（端点）+ `tests/test_workbench_io.py`（5 测）。旧原型 A–H 已清理，ui/ 保留方案 I/J/K/L 与装配脚本 `scratch/build_web_ui.py`。
 - **2026-09-02 审查修复（已提交）**：pyproject 补 `lxml>=4.9`；清理过期 TODO/docstring；VLM 评分区加 DEMO 水印。
 - **仓库卫生（已完成）**：`docs/学术材料/`、`开题报告.*`、`architecture.*`、`outputs/` 经 filter-repo 从全部历史清除并强推；本地文件保留且被 gitignore；权威备份 `scratch/git-backup/pre-rewrite-20260902.bundle`。
 - **已知风险（未修）**：`fastapi_app.py` 演示 app 的 `/api/v1/plugins/invoke` 与 export 端点无鉴权（confirm 仅为 body 布尔值）；绑 127.0.0.1 使用风险可控，**勿绑 0.0.0.0 暴露**。生产鉴权待 M2 后续落地（`authentication.py` 目前仅契约类）。

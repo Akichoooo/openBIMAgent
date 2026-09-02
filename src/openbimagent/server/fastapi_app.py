@@ -26,6 +26,7 @@ from openbimagent.server.readonly_http import (
 )
 from openbimagent.server.sse_endpoint import M2SseStreamBudget, add_sse_endpoint
 from openbimagent.server.web_ui import add_web_ui
+from openbimagent.server.workbench_io import add_workbench_io
 
 M2_FASTAPI_APP_TITLE = "openBIMAgent M2 Read-Only API"
 M2_FASTAPI_APP_VERSION = "0.1"
@@ -92,6 +93,7 @@ def build_m2_readonly_app(
     if sessions_dir is not None:
         add_sse_endpoint(app, sessions_dir=sessions_dir, budget=sse_budget)
     add_web_ui(app)
+    add_workbench_io(app)
 
     invoke_guard = InvokeConcurrencyGuard(invoke_max_concurrency)
     export_guard = InvokeConcurrencyGuard(1)  # 真机导出串行：Blender/VW 共用，防并发多宿主写盘
