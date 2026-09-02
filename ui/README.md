@@ -1,71 +1,40 @@
-# openBIMAgent UI 原型（审核稿 · 三套方案）
+# openBIMAgent UI 原型（审核稿 · Codex × 3D 三方案）
 
-日期：2026-08-23 · 状态：**待审核** —— 审核通过前不动 `web_ui.py`。
-（prototype.html 为旧 v2 单稿，已被下面三套取代，仅留档）
+日期：2026-09-02 · 状态：**待审核** —— 审核通过前不动 `web_ui.py`。
+（旧 A–H 八套方案已清理，git 历史中可回溯；本目录只保留同一布局的三种组件实现）
 
-## ⭐⭐ 方案 I（2026-09-01 · Codex 风格 × 3D 视口完全重构）
+## 布局（三方案共用）：Codex 风格 × 3D 视口英雄区
 
-`prototype-i-codex3d.html` —— **与 A–H 布局无关的完全重构**，设计取向：Codex 的极简任务/线程语言 + 3D 建模工具必需的常驻视口。
+- 左图标轨（任务/视口/规则/插件/设置）→ Codex 式任务列表（会话状态点 + 宿主连接 + 模型芯片）
+- **中央 3D 视口为英雄区**：零依赖自绘 canvas 渲染器（拖拽旋转 / 滚轮缩放 / Shift 平移 / 垂直夸大 ×3），真实渲染 6 井 5 段 IR 几何 + 建筑/燃气障碍 + 净距圈；3D / 平面 / 纵断面三视图
+- 视口底部**自愈时间线回放**：红色碰撞路径（净距 1.6m<2.5m）→ 膨胀半径重路由 → 绿色收敛，4.2s 动画可点步
+- 右侧 408px Codex 式线程（可收起）：流式工具块 → IR 工件卡 → HITL 琥珀审批（prompt 策略门）→ 确认弹层 → 交付回执；检查器 = 规则树 12 条 / Compiled IR / 插件 + 能力控制台
+- 数据诚信：VLM 评分等演示值显式标注；深链 `#plan` / `#prof` / `#step2` 直达指定视图（审核截图用）
 
-- **布局四区**：左图标轨（任务/视口/规则/插件/设置）→ 任务列表栏（Codex 式会话项 + 状态点 + 宿主连接 + 模型芯片）→ **中央 3D 视口为英雄区** → 右侧 408px Codex 式线程（对话/检查器双模式，可收起）
-- **3D 视口 = 核心增量**：零依赖自绘 canvas 3D 渲染器（轨道相机：拖拽旋转 / 滚轮缩放 / Shift 平移；垂直夸大 ×3 开关；自动旋转），真实渲染 6 井 5 段 IR 几何 + 建筑物/燃气管障碍 + 净距圈；**三视图切换**：3D / 平面布置 / 纵断面（链age-高程，含坡度与覆土标注）
-- **自愈时间线回放**：视口底部 scrubber，▶ 播放 4.2s 动画——初始红色碰撞路径（净距 1.6m<2.5m 标注）→ 膨胀半径重路由 → 绿色收敛路径，三节点可点击跳步
-- **线程 = Codex 语言**：用户气泡 → 可折叠工具块（等宽 capability 名 + running/✓ 三态）→ IR 工件卡 → HITL 琥珀卡（prompt 策略门语义）→ 确认弹层 → 绿色交付回执卡
-- **检查器**：规则树 12 条 / Compiled IR / 插件清单 + 能力调度控制台，右栏内切换不占新空间
-- **数据诚信**：VLM 评分等演示值显式标注「演示值」，与 benchmark 的 measured/provenance 契约对齐
-- 深链：`#plan` / `#prof` / `#step2` 可直达指定视图与时间线步骤（审核截图用）
-- **动效**：引入 [Motion](https://motion.dev/)（MIT，CDN ESM）驱动微交互——会话列表 stagger 滑入、工具块展开高度动画、卡片/弹层 scale-fade、消息 rise-in；**离线时自动降级为即时呈现**（不联网也能完整使用，迁入 web_ui.py 时可把 motion.js vendor 到本地）
-- 审核截图：`scratch/ui-review/shot1.png`（3D+线程）、`shot_plan.png`（平面）、`shot_prof.png`（纵断面）
+## 三方案差异 = 组件/动效技术栈（业务与布局完全一致）
 
-**审核建议**：打开后等首轮流式回合跑完（约 5s，自动播放自愈动画），然后 ① 拖转 3D 视口 ② 点「批准导出」走 HITL 全链路 ③ 切平面/纵断面 ④ 右栏切「检查器」看规则树。
+| 文件 | 技术栈 | 许可 | 离线可用 | 特点 |
+|---|---|---|---|---|
+| `prototype-i-codex3d.html` **I · vanilla + Motion** | 纯手写 CSS + [Motion](https://motion.dev/)（CDN ESM） | MIT | ✅（Motion 失败自动降级，无感） | 零依赖基线；动效=列表 stagger / 展开高度动画 / 弹层 scale-fade |
+| `prototype-j-franken.html` **J · Franken UI** | [Franken UI](https://franken-ui.dev/) 2.1.2 core+utilities（CDN） | MIT | ❌ 需联网 | **shadcn zinc-dark 官方 token 皮肤**（HSL 变量直取），主按钮为 shadcn 白色 primary；最像 shadcn 观感 |
+| `prototype-k-shoelace.html` **K · Shoelace** | [Shoelace](https://shoelace.style/) 2.20.1 autoloader + dark 主题（CDN） | MIT | ❌ 需联网 | **真组件行为**：sl-select / sl-switch / sl-tab-group / sl-drawer（设置）/ sl-dialog（HITL 确认）/ sl-alert（审批与回执）/ sl-tooltip |
 
-## ⭐ 方案 D（最新 · shadcn 设计语言复刻）
-
-`prototype-d-shadcn.html` —— 按 shadcn/ui 官方 zinc-dark 主题的精确 token 复刻（来源：仓库 `apps/v4/public/r/themes.css` 的 HSL 变量 + registry button/badge 官方 variants），纯 CSS 1:1 还原 shadcn 观感（`--radius: 0.5rem`、focus ring、hover 透明度体系），零依赖。业务覆盖与 A/B/C 相同（流式回合/平面纵断 SVG/HITL/数据看板/规则树/模型芯片）。**如果审核目标是 shadcn 观感，直接看这套。**
-
-## 三套方案（双击打开，零依赖零后端，数据=真实实测值）
-
-| 文件 | 布局哲学 | 参照系 | 适合场景 |
-|---|---|---|---|
-| `prototype-a-chat.html` **A 对话优先** | 线程占满主视野(740px 居中)，工作台=可开合抽屉 | C2S / Codex web | 以「和 agent 对话」为主的使用方式 |
-| `prototype-b-canvas.html` **B 双中心** | 对话流 + **常驻右画布**(500px: 平面/纵断/数据/规则) | Multi-Agent-CAD | 工程交付物必须常驻眼前 |
-| `prototype-c-cockpit.html` **C 驾驶舱** | 顶部 KPI 条 + 图标导航 + 中央画布为英雄区 + 对话流退居右栏(400px) | 工程运营看板 | 汇报/答辩演示，指标先入眼 |
-
-**每套都完整覆盖**：流式对话演示（▶ 按钮：打字机文本 + running→✓ 工具块 + 数字滚动 + 工件渐入）、平面布置图/纵断面 SVG（数据驱动）、HITL 审批（模拟 1.5s 导出→回执填充）、规则树、数据看板（BIMBench 对比表 + SH 消融柱状 + LLM n=3 方差）、会话列表、模型芯片/设置弹层、composer 斜杠命令。
+> J/K 的库均可 vendor 到本地（MIT 允许再分发），迁入 `web_ui.py` 时由 FastAPI 本地伺服即可摆脱 CDN；I 完全不依赖网络。
 
 ## 审核步骤建议
 
-1. 三套各打开看一遍：先点「▶ 演示流式回合」看流式效果，再点 HITL 导出、切画布标签
-2. 对照下方差异点选一套（或混搭：「B 的画布 + A 的线程密度」这类批注也行）
-3. 在对话里给我结论 + 修改批注
+1. 三个文件各打开一遍（J/K 需联网加载 CDN）：等首轮流式回合跑完（约 5s，自动播自愈动画）
+2. 逐项体验：拖转 3D 视口 → 切 3D/平面/纵断面 → 点「批准导出」走 HITL 全链路 → 右栏切「检查器」→ 输入 `/` 试斜杠命令
+3. 对比重点：**J 看皮肤质感**（shadcn zinc 白按钮 vs I 的蓝调）· **K 看组件交互**（下拉/开关/抽屉/对话框的开合动效）
+4. 结论 + 批注发我（如「K 的组件 + J 的 token 皮肤」混搭也可——两者不冲突，可合并）
 
-## 设计要点（这版和线上版的差别）
+## 审核截图（scratch/ui-review/）
 
-1. **线程为中心**：用户气泡 → 两个可折叠工具块（等宽字体名 + 状态）→ 工件直接长在对话里，740px 居中阅读宽度
-2. **新工件类型（核心增量）**：
-   - **平面布置图 SVG**：网格走廊 + 障碍物净距圈 + 红虚线初始碰撞路径 vs 白色自愈绕行路线（数据驱动，集成时由 `/demo/municipal-pipeline` 的 nodes/segments 绘制）
-   - **纵断面 SVG**：地面线/管顶线/覆土填充/坡度标注（同上数据驱动）
-3. **左栏**：会话树（上）+ 模型芯片/设置弹层（下，含运行时统计）
-4. **右栏工作台 = 抽屉**（默认收起）：规则树/图谱/工件/IR/插件/控制台 六标签
-5. **Composer**：圆角输入 + 命令 chip + `/` 命令；普通文本 → 真实调度求解器（集成态）
-
-## 审核清单（逐项看）
-
-- [ ] 整体布局（左栏/线程/抽屉）是否符合预期
-- [ ] 工具块样式（折叠交互、状态行）
-- [ ] 平面布置图 / 纵断面 两张 SVG 工件是否有价值、信息是否够
-- [ ] HITL 审批卡 + 交付回执卡的呈现
-- [ ] 左下角模型芯片 + 设置弹层内容
-- [ ] 工作台抽屉六标签的取舍
-- [ ] 配色/字号/密度
-
-## 反馈方式
-
-直接在本文件或对话里逐条批注（如「3D 视口要保留」「抽屉默认展开」），我改完原型再给你过一遍。
+- `shot_i2.png` 方案 I · `shot_j.png` 方案 J · `shot_k2.png` 方案 K（均 1680×1000 实渲）
 
 ## 审核通过后的集成步骤（预计一次会话完成）
 
-1. 原型 HTML/CSS/JS 整体迁入 `web_ui.py`（保留既有函数名 `loadSelfHealingDemo/loadRuleTree/exportHost/handleChat`）
-2. mock 全部替换为真实端点调用（映射表见 API_INVENTORY §二）
-3. SVG 平面图/纵断面由真实 IR 数据渲染；Three.js 3D 视口作为可选增强放回工件位
+1. 选定方案的 HTML/CSS/JS 整体迁入 `web_ui.py`（保留既有端点接线函数名 `loadSelfHealingDemo/loadRuleTree/exportHost/handleChat`）；若选 J/K 则先把库文件 vendor 进 `src/openbimagent/server/static/`
+2. mock 全部替换为真实端点调用（映射表见 `API_INVENTORY.md` §二）
+3. canvas 3D 渲染器改由真实 IR 数据驱动（nodes/segments/resolved_violations/timeline 端点字段已对齐）
 4. 跑全量测试 + 起服验收
