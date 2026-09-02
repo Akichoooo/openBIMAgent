@@ -36,12 +36,15 @@ def client(tmp_path_factory: pytest.TempPathFactory) -> TestClient:
 
 @pytest.fixture(scope="module")
 def finished_run(client: TestClient) -> str:
-    """启动一次真实运行并等待结束（最长 120s）；返回 session_id。"""
+    """启动一次真实运行；遇审批门一律批准直至结束（最长 180s）；返回 session_id。"""
     resp = client.post("/api/v1/runs", json={"brief": "测试：DN400 污水管新建任务", "playbook": "municipal_utility"})
     assert resp.status_code == 200, resp.text
     session_id = resp.json()["session_id"]
-    deadline = time.time() + 120
+    deadline = time.time() + 180
     while time.time() < deadline:
+        # 审批中心：批准所有待决票据（真实 Web 审批门，不再是 yes=True）
+        for item in client.get("/api/v1/approvals").json()["items"]:
+            client.post(f"/api/v1/approvals/{item['id']}/decide", json={"decision": "approved"})
         run = client.get("/api/v1/runs/active").json()["run"]
         if not run["active"]:
             break

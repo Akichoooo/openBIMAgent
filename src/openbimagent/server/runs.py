@@ -4,7 +4,7 @@
 - 单并发运行锁（pipeline 为重型任务；409 拒绝并发新任务），状态经 ``GET /api/v1/runs/active`` 轮询。
 - 会话落 ``sessions_dir``（默认 ``out/sessions``，``OPENBIMAGENT_SESSIONS_DIR`` 可覆盖，测试隔离）。
 - 离线安全：无 providers registry / 无 CAD 宿主时 pipeline 走确定性模板 + MockCritic（CLAUDE.md 约定路径）。
-- Web 运行暂不接入交互式审批：``yes=True`` 自动放行；C5 交付门仍只接受 manifest 提交的产物。
+- Web 运行审批门：触门（execute_code 前 / deliver 前）挂起，待 ``/api/v1/approvals`` 人工决策；超时失败关闭。
 """
 
 from __future__ import annotations
@@ -53,13 +53,16 @@ def _execute_run(brief: str, playbook: Path, session_id: str) -> None:
         from openbimagent.session.store import SessionStore
 
         SessionStore(sessions_dir / f"{session_id}.jsonl", title=brief[:60] or session_id)
+        # Web 审批门：触门即挂起，待前端 /api/v1/approvals 人工决策（撤掉 yes=True 自动放行）
+        from openbimagent.server.approvals import make_web_approval_fn
+
         run_pipeline(
             playbook_path=playbook,
             out_dir=_REPO_ROOT / "out",
             sessions_dir=sessions_dir,
             session_id=session_id,
             input_func=lambda _prompt="": "",
-            yes=True,
+            approval_fn=make_web_approval_fn(session_id, sessions_dir),
         )
         _run_state.update(active=False, done_at=datetime.now(timezone.utc).isoformat())
     except Exception as exc:  # noqa: BLE001 — 运行失败必须可视化而非吞掉

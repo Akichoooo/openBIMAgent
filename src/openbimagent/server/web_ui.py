@@ -1045,7 +1045,8 @@ async function loadSessionEvents(sid,el){
 }
 function renderEvents(events){
   const sc=$('thScroll');
-  const keep=_KEEP.map(id=>$(id)).filter(Boolean);
+  const keep=_KEEP.map(id=>$(id)).filter(Boolean)
+    .concat([...sc.children].filter(e=>e.id&&e.id.startsWith('appr-'))); /* 审批卡不被事件刷新抹掉 */
   sc.innerHTML='';
   let html='';
   for(const e of events){
@@ -1216,6 +1217,47 @@ async function doExport(){
     toast('导出被拦截或失败：'+e.message);
   }
 }
+
+/* ---------- 审批中心：轮询待决票据 → 动态 HITL 卡 ---------- */
+const _apprShown=new Set();
+async function pollApprovals(){
+  const d=await _get('/api/v1/approvals');
+  if(!d)return;
+  const tab=$('tabConv');
+  let badge=tab.querySelector('.bdg');
+  if(d.count>0){
+    if(!badge){badge=document.createElement('span');badge.className='bdg';tab.appendChild(badge);}
+    badge.textContent=d.count+' 待批';
+    badge.style.background='var(--amb-dim)';badge.style.color='var(--amb)';
+  }else if(badge){badge.remove();}
+  for(const it of d.items){
+    if(_apprShown.has(it.id))continue;
+    _apprShown.add(it.id);
+    showApprovalCard(it);
+  }
+}
+function showApprovalCard(it){
+  const sc=$('thScroll');
+  const card=document.createElement('div');
+  card.className='hitl';card.id='appr-'+it.id;
+  card.innerHTML=`<div class="hd"><span class="tag">审批门 · ${_esc(it.operation)}</span>等待人工决策<span style="margin-left:auto;font:10px var(--mono);color:var(--ink3)">已挂起 ${Math.round(it.waiting_s||0)}s</span></div>`+
+    `<div class="ds">运行会话 <code>${it.session_id.slice(0,8)}</code> 触达审批门（pipeline 线程已阻塞，决策前不会继续）。参数：<br><code style="color:var(--ink2);word-break:break-all">${_esc(JSON.stringify(it.params)).slice(0,300)}</code></div>`+
+    `<div class="row"><button class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground" style="flex:1" onclick="decideApproval('${it.id}','approved')">批准</button>`+
+    `<button class="reject" onclick="decideApproval('${it.id}','rejected')">拒绝</button></div>`;
+  sc.appendChild(card);riseIn(card);sc.scrollTop=sc.scrollHeight;
+  toast('审批门待决：'+it.operation);
+}
+async function decideApproval(id,decision){
+  try{
+    const r=await fetch(`/api/v1/approvals/${id}/decide`,{method:'POST',headers:{'Content-Type':'application/json','X-Request-ID':_rid()},body:JSON.stringify({decision,actor:'human:web-operator'})});
+    const card=$('appr-'+id);
+    if(r.ok&&card){
+      card.innerHTML=`<div class="hd"><span class="tag">审批门</span><span style="color:${decision==='approved'?'var(--grn)':'var(--red)'}">${decision==='approved'?'✓ 已批准':'✕ 已拒绝'} · 决策回执已落 session</span></div>`;
+      toast(decision==='approved'?'已批准，运行继续':'已拒绝，运行将 ESCALATE');
+    }else toast('决策提交失败（票据可能已超时）');
+  }catch(e){toast('决策提交失败：'+e);}
+}
+setInterval(pollApprovals,3000);pollApprovals();
 
 /* ---------- Composer：普通文本 → 真实调度自愈求解器并追加回合 ---------- */
 async function sendMsg(){
