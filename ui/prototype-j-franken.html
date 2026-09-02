@@ -260,7 +260,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 <!-- ================= 2. sidebar ================= -->
 <aside class="sidebar">
   <div class="sb-h"><span class="t">任务</span><span class="v">v3.4</span></div>
-  <button class="newtask" onclick="toast('新建任务（原型占位）')"><svg width="13" height="13" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>新任务<kbd>⌘K</kbd></button>
+  <button class="newtask" onclick="newTaskModal()"><svg width="13" height="13" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>新任务<kbd>⌘K</kbd></button>
   <div class="sb-sec">进行中</div>
   <div class="sb-list" id="sessList"></div>
   <div class="sb-foot">
@@ -323,23 +323,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 
   <!-- conversation -->
   <div class="th-scroll" id="thScroll">
-    <div class="msg-you">沿走廊生成 DN400 污水重力管，6 座检查井，避让东侧建筑物，GB 50289 核验后交付 Blender。</div>
-
-    <div class="agentline">收到。调度 <span class="dim mono">solver:self_healing</span> 生成确定性几何，再由规则集核验。<span class="dim">全程经微内核策略门，写盘前会请求确认。</span></div>
-
-    <div class="tool" id="tool1">
-      <div class="tool-h" onclick="toggleTool(this)">
-        <span class="ic solver">Σ</span>
-        <span class="nm">solver:self_healing</span>
-        <span class="st run" id="tool1St"><span class="spin"></span>running…</span>
-        <span class="car">▾</span>
-      </div>
-      <div class="tool-b" id="tool1Body">
-        <div><span class="k">capability&nbsp;&nbsp;</span>solver:self_healing <span class="hl">(承重调度)</span></div>
-        <div><span class="k">input&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>6 manholes · corridor 132m · DN400 · slope≥0.003</div>
-        <div id="tool1Live"><span class="k">status&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>A* 网格寻路中…</div>
-      </div>
-    </div>
+    <div class="agentline" id="welcomeLine">就绪。<span class="dim">新建任务真跑 pipeline（离线走确定性模板），或直接在下方输入工程指令调度自愈求解器。会话事件、规则树、IR、导出全部来自真实端点。</span></div>
 
     <div class="tool closed" id="tool2" style="display:none">
       <div class="tool-h" onclick="toggleTool(this)">
@@ -361,7 +345,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       <div class="mini-stat"><span><b>6</b> 检查井</span><span><b>5</b> 管段</span><span><b>DN400</b></span><span><b>0.003</b> 坡度</span></div>
       <div class="hash">canonical e9296294eb35eb22ecca11a7d3322e94a90588c7</div>
       <div class="row">
-        <button class="abtn" onclick="toast('已下载 IR JSON（原型）')">下载 JSON</button>
+        <button class="abtn" onclick="downloadIR()">下载 JSON</button>
         <button class="abtn" onclick="openInspector('ir')">在检查器查看</button>
       </div>
     </div>
@@ -447,8 +431,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       </div>
     </div>
     <div class="chips">
-      <button class="chip" onclick="replayAll()">↻ 重放本回合</button>
-      <button class="chip" onclick="askConfirm()">导出 Blender</button>
+            <button class="chip" onclick="askConfirm()">导出 Blender</button>
       <button class="chip" onclick="openInspector('rules')">规则树</button>
       <button class="chip" onclick="playTimeline()">▶ 自愈回放</button>
     </div>
@@ -492,6 +475,25 @@ plan_sha256: 7ac1…9f · objects: 22</pre>
 </div>
 
 <div class="toast" id="toastEl"></div>
+
+<!-- 新建任务弹层（真实 POST /api/v1/runs） -->
+<div class="modal-mask" id="runMask">
+  <div class="modal" style="width:460px">
+    <h3>新建任务 · 真跑 pipeline</h3>
+    <p>后台真实执行 Clarify → Planner → Orchestrator → Deliver；离线走确定性模板 + MockCritic，配置 LLM 后走真实模型。单并发。</p>
+    <textarea id="runBrief" class="fin" rows="3" style="resize:vertical" placeholder="工程指令，如：沿走廊生成 DN400 污水重力管，避让东侧建筑物"></textarea>
+    <label class="fl">Domain Pack
+      <select id="runPlaybook" class="fin">
+        <option value="municipal_utility">municipal_utility（市政管网主线）</option>
+        <option value="single_asset_hero">single_asset_hero（单体资产）</option>
+      </select>
+    </label>
+    <div class="row">
+      <button class="m-no" onclick="$('runMask').classList.remove('show')">取消</button>
+      <button class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground" style="flex:1" onclick="startRun()">启动运行</button>
+    </div>
+  </div>
+</div>
 
 <!-- 设置弹层（真实读写 /api/v1/settings/llm） -->
 <div class="modal-mask" id="setMask">
@@ -960,7 +962,7 @@ const h=location.hash;
 if(h.includes('plan'))setView('plan',document.querySelector('#viewSeg [data-v=plan]'));
 else if(h.includes('prof'))setView('prof',document.querySelector('#viewSeg [data-v=prof]'));
 const hm=h.match(/step(\d)/);if(hm){tlStep=+hm[1];bendT=[0,0.5,1][tlStep];}
-renderTL();resize();runTurn();
+renderTL();resize(); /* 首回合由真实会话/调度驱动，无脚本播放 */
 /* 入场动效：会话列表逐条滑入 + 线程首批元素依次升起（Motion 未加载时自动跳过） */
 staggerIn('.sess');staggerIn('#thScroll > *');
 </script></body>

@@ -3,9 +3,10 @@
 布局：Codex 风格 × 3D 视口英雄区（ui/prototype-j-franken.html 迁入）。
 - 组件栈：Franken UI 2.1.2 shadcn zinc token 皮肤 + Motion 动效
 - 库文件 vendor 到 server/static/vendor/（MIT 许可），经 /static 挂载，完全离线可用
-- 页尾集成态接线脚本消费真实端点（设置/上传/调度/导出全部功能打通）：
-  demo/municipal-pipeline、demo/rule-tree、demo/runtime-info、sessions、plugins、
-  plugins/invoke、demo/export-blender、settings/llm（GET/PUT）、uploads（GET/POST）
+- 页尾集成态接线脚本消费真实端点（运行/会话/设置/上传/调度/导出全部功能打通）：
+  runs（POST/GET active）、sessions + sessions/{id}/events、demo/municipal-pipeline、
+  demo/rule-tree、demo/runtime-info、plugins、plugins/invoke、demo/export-blender、
+  settings/llm（GET/PUT）、uploads（GET/POST）
 """
 
 from __future__ import annotations
@@ -277,7 +278,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 <!-- ================= 2. sidebar ================= -->
 <aside class="sidebar">
   <div class="sb-h"><span class="t">任务</span><span class="v">v3.4</span></div>
-  <button class="newtask" onclick="toast('新建任务（原型占位）')"><svg width="13" height="13" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>新任务<kbd>⌘K</kbd></button>
+  <button class="newtask" onclick="newTaskModal()"><svg width="13" height="13" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>新任务<kbd>⌘K</kbd></button>
   <div class="sb-sec">进行中</div>
   <div class="sb-list" id="sessList"></div>
   <div class="sb-foot">
@@ -340,23 +341,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 
   <!-- conversation -->
   <div class="th-scroll" id="thScroll">
-    <div class="msg-you">沿走廊生成 DN400 污水重力管，6 座检查井，避让东侧建筑物，GB 50289 核验后交付 Blender。</div>
-
-    <div class="agentline">收到。调度 <span class="dim mono">solver:self_healing</span> 生成确定性几何，再由规则集核验。<span class="dim">全程经微内核策略门，写盘前会请求确认。</span></div>
-
-    <div class="tool" id="tool1">
-      <div class="tool-h" onclick="toggleTool(this)">
-        <span class="ic solver">Σ</span>
-        <span class="nm">solver:self_healing</span>
-        <span class="st run" id="tool1St"><span class="spin"></span>running…</span>
-        <span class="car">▾</span>
-      </div>
-      <div class="tool-b" id="tool1Body">
-        <div><span class="k">capability&nbsp;&nbsp;</span>solver:self_healing <span class="hl">(承重调度)</span></div>
-        <div><span class="k">input&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>6 manholes · corridor 132m · DN400 · slope≥0.003</div>
-        <div id="tool1Live"><span class="k">status&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>A* 网格寻路中…</div>
-      </div>
-    </div>
+    <div class="agentline" id="welcomeLine">就绪。<span class="dim">新建任务真跑 pipeline（离线走确定性模板），或直接在下方输入工程指令调度自愈求解器。会话事件、规则树、IR、导出全部来自真实端点。</span></div>
 
     <div class="tool closed" id="tool2" style="display:none">
       <div class="tool-h" onclick="toggleTool(this)">
@@ -378,7 +363,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       <div class="mini-stat"><span><b>6</b> 检查井</span><span><b>5</b> 管段</span><span><b>DN400</b></span><span><b>0.003</b> 坡度</span></div>
       <div class="hash">canonical e9296294eb35eb22ecca11a7d3322e94a90588c7</div>
       <div class="row">
-        <button class="abtn" onclick="toast('已下载 IR JSON（原型）')">下载 JSON</button>
+        <button class="abtn" onclick="downloadIR()">下载 JSON</button>
         <button class="abtn" onclick="openInspector('ir')">在检查器查看</button>
       </div>
     </div>
@@ -464,8 +449,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       </div>
     </div>
     <div class="chips">
-      <button class="chip" onclick="replayAll()">↻ 重放本回合</button>
-      <button class="chip" onclick="askConfirm()">导出 Blender</button>
+            <button class="chip" onclick="askConfirm()">导出 Blender</button>
       <button class="chip" onclick="openInspector('rules')">规则树</button>
       <button class="chip" onclick="playTimeline()">▶ 自愈回放</button>
     </div>
@@ -509,6 +493,25 @@ plan_sha256: 7ac1…9f · objects: 22</pre>
 </div>
 
 <div class="toast" id="toastEl"></div>
+
+<!-- 新建任务弹层（真实 POST /api/v1/runs） -->
+<div class="modal-mask" id="runMask">
+  <div class="modal" style="width:460px">
+    <h3>新建任务 · 真跑 pipeline</h3>
+    <p>后台真实执行 Clarify → Planner → Orchestrator → Deliver；离线走确定性模板 + MockCritic，配置 LLM 后走真实模型。单并发。</p>
+    <textarea id="runBrief" class="fin" rows="3" style="resize:vertical" placeholder="工程指令，如：沿走廊生成 DN400 污水重力管，避让东侧建筑物"></textarea>
+    <label class="fl">Domain Pack
+      <select id="runPlaybook" class="fin">
+        <option value="municipal_utility">municipal_utility（市政管网主线）</option>
+        <option value="single_asset_hero">single_asset_hero（单体资产）</option>
+      </select>
+    </label>
+    <div class="row">
+      <button class="m-no" onclick="$('runMask').classList.remove('show')">取消</button>
+      <button class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground" style="flex:1" onclick="startRun()">启动运行</button>
+    </div>
+  </div>
+</div>
 
 <!-- 设置弹层（真实读写 /api/v1/settings/llm） -->
 <div class="modal-mask" id="setMask">
@@ -977,19 +980,23 @@ const h=location.hash;
 if(h.includes('plan'))setView('plan',document.querySelector('#viewSeg [data-v=plan]'));
 else if(h.includes('prof'))setView('prof',document.querySelector('#viewSeg [data-v=prof]'));
 const hm=h.match(/step(\d)/);if(hm){tlStep=+hm[1];bendT=[0,0.5,1][tlStep];}
-renderTL();resize();runTurn();
+renderTL();resize(); /* 首回合由真实会话/调度驱动，无脚本播放 */
 /* 入场动效：会话列表逐条滑入 + 线程首批元素依次升起（Motion 未加载时自动跳过） */
 staggerIn('.sess');staggerIn('#thScroll > *');
 </script>
 <script>
 /* ================================================================
-   集成态功能接线（真实端点，非演示）：设置 / 上传 / 调度 / 导出
+   集成态功能接线（真实端点，非演示）：运行 / 会话 / 设置 / 上传 / 调度 / 导出
    ================================================================ */
-const _get=async u=>{try{const r=await fetch(u);return r.ok?await r.json():null;}catch(e){return null;}};
+const _rid=()=>'wb-'+Math.random().toString(36).slice(2)+Date.now().toString(36);
+const _get=async u=>{try{const r=await fetch(u,{headers:{'X-Request-ID':_rid()}});return r.ok?await r.json():null;}catch(e){return null;}};
+const _esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+let _lastIR=null,_curSession=null,_pollTimer=null;
 
-/* ---------- 真实 IR → 渲染器（demo/municipal-pipeline 与 sendMsg 共用） ---------- */
+/* ---------- 真实 IR → 渲染器 ---------- */
 function applyRealIR(mp){
   if(!mp||!mp.nodes||mp.nodes.length<2)return;
+  _lastIR=mp;
   NODES.length=0;SEGS.length=0;
   mp.nodes.forEach(n=>NODES.push({id:n.node_id,x:n.x,y:n.y,ground:n.ground,invert:n.invert_z}));
   (mp.segments||[]).forEach((s,i)=>{if(NODES[i+1])SEGS.push({a:NODES[i].id,b:NODES[i+1].id,dn:s.diameter_mm||400,slope:s.slope||0.003,len:s.length_m||0});});
@@ -1013,19 +1020,87 @@ function applyRealIR(mp){
   renderTL();resetCam();draw();
   $('hudStat').textContent=`${NODES.length} 井 · ${SEGS.length} 段 · DN${SEGS[0]?SEGS[0].dn:400}`;
 }
+function downloadIR(){
+  const blob=new Blob([JSON.stringify(_lastIR||{note:'尚无 IR 数据'},null,1)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='compiled_utility_ir.json';a.click();
+  URL.revokeObjectURL(a.href);
+}
 
-/* ---------- 初始装载：真实端点填充各区块 ---------- */
+/* ---------- 会话列表（真实） + 事件渲染 ---------- */
+async function loadSessions(selectId){
+  const ss=await _get('/api/v1/sessions');
+  const items=ss&&ss.ok&&ss.data?ss.data.items:[];
+  const list=$('sessList');
+  if(!items.length){list.innerHTML='<div style="padding:8px 12px;font-size:11px;color:var(--ink3)">暂无会话 · 点「新任务」真跑一次</div>';return;}
+  list.innerHTML=items.map((s,i)=>`<div class="sess${(selectId?s.session_id===selectId:i===0)?' on':''}" data-sid="${s.session_id}" onclick="loadSessionEvents('${s.session_id}',this)"><span class="dot g"></span><div><div class="tt">${_esc(s.title||s.session_id)}</div><div class="meta">${(s.last_active||'').slice(0,16).replace('T',' ')} · ${s.event_count||0} 事件</div></div></div>`).join('');
+  return items;
+}
+const _KEEP=['welcomeLine','tool2','artIR','hitl','tool3','rcpt','doneLine'];
+async function loadSessionEvents(sid,el){
+  _curSession=sid;
+  document.querySelectorAll('#sessList .sess').forEach(e=>e.classList.toggle('on',e.dataset.sid===sid));
+  const d=await _get(`/api/v1/sessions/${sid}/events?tail=300`);
+  if(!d||!d.events){toast('会话事件读取失败');return;}
+  renderEvents(d.events);
+}
+function renderEvents(events){
+  const sc=$('thScroll');
+  const keep=_KEEP.map(id=>$(id)).filter(Boolean);
+  sc.innerHTML='';
+  let html='';
+  for(const e of events){
+    const p=e.payload||{};
+    if(e.type==='message'){
+      html+=p.role==='user'?`<div class="msg-you">${_esc(p.content||'')}</div>`:`<div class="agentline">${_esc(p.content||'')}</div>`;
+    }else if(e.type==='tool_call'){
+      const body=_esc((p.result_ui_view||p.result_llm_view||p.args_summary||'').slice(0,600));
+      html+=`<div class="tool closed"><div class="tool-h" onclick="toggleTool(this)"><span class="ic solver">⚙</span><span class="nm">${_esc(p.toolName||'tool')}</span><span class="st ok">${p.phase||''}</span><span class="car">▾</span></div><div class="tool-b">${body||'—'}</div></div>`;
+    }else if(e.type==='custom'){
+      html+=`<div class="agentline" style="font-size:11px;color:var(--ink3)">◆ ${_esc(p.customType||'custom')}</div>`;
+    }
+  }
+  if(!html)html='<div class="agentline"><span class="dim">（此会话暂无可视事件）</span></div>';
+  sc.innerHTML=html;
+  keep.forEach(k=>sc.appendChild(k));
+  sc.scrollTop=sc.scrollHeight;
+}
+
+/* ---------- 新建任务：真实 POST /api/v1/runs + 轮询 ---------- */
+function newTaskModal(){$('runMask').classList.add('show');popIn($('runMask').querySelector('.modal'));$('runBrief').focus();}
+async function startRun(){
+  const brief=$('runBrief').value.trim();
+  if(!brief){toast('请填写工程指令');return;}
+  $('runMask').classList.remove('show');
+  try{
+    const r=await fetch('/api/v1/runs',{method:'POST',headers:{'Content-Type':'application/json','X-Request-ID':_rid()},body:JSON.stringify({brief,playbook:$('runPlaybook').value})});
+    const d=await r.json();
+    if(!r.ok){toast(d.error||('启动失败 '+r.status));return;}
+    toast('任务已启动 · session '+d.session_id.slice(0,8));
+    const items=await loadSessions(d.session_id);
+    loadSessionEvents(d.session_id);
+    pollRun(d.session_id);
+  }catch(e){toast('启动失败：'+e);}
+}
+function pollRun(sid){
+  if(_pollTimer)clearInterval(_pollTimer);
+  _pollTimer=setInterval(async()=>{
+    const d=await _get('/api/v1/runs/active');
+    if(_curSession===sid)loadSessionEvents(sid);
+    if(d&&d.run&&!d.run.active){
+      clearInterval(_pollTimer);_pollTimer=null;
+      toast(d.run.error?('运行结束（有错误）：'+d.run.error):'任务完成 · 事件已落 session');
+      loadSessions(sid);
+    }
+  },2500);
+}
+
+/* ---------- 初始装载 ---------- */
 async function loadRuntimeInfo(){
   const ri=await _get('/api/v1/demo/runtime-info');
   if(ri&&ri.llm&&ri.llm.model){document.querySelectorAll('.mchip .nm,.mdl').forEach(e=>{e.textContent=ri.llm.model;});}
 }
 (async function bootstrapReal(){
   loadRuntimeInfo();
-  const ss=await _get('/api/v1/sessions');
-  const items=ss&&ss.data&&ss.data.items;
-  if(items&&items.length){
-    $('sessList').innerHTML=items.slice(0,8).map((s,i)=>`<div class="sess${i===0?' on':''}"><span class="dot g"></span><div><div class="tt">${s.title||s.session_id}</div><div class="meta">${s.session_id}</div></div></div>`).join('');
-  }
   const rt=await _get('/api/v1/demo/rule-tree');
   if(rt&&rt.rules){
     $('ruleList').innerHTML=rt.rules.map(r=>`<div class="rule"><div class="rh"><span class="rid">${r.rule_key}</span><span class="rst">${r.self_test_match?'✓':'·'} ${r.enforcement||''}</span></div><div class="rd">${r.obstacle_category||''} · 净距 <b class="mono">${r.required_clearance_m}m</b>${r.clause?' · '+r.clause:''}</div></div>`).join('');
@@ -1036,6 +1111,11 @@ async function loadRuntimeInfo(){
   }
   applyRealIR(await _get('/api/v1/demo/municipal-pipeline'));
   loadUploads();
+  const items=await loadSessions();
+  /* 页面刷新时若有进行中的运行，恢复轮询 */
+  const act=await _get('/api/v1/runs/active');
+  if(act&&act.run&&act.run.active){loadSessionEvents(act.run.session_id);pollRun(act.run.session_id);}
+  else if(items&&items.length){loadSessionEvents(items[0].session_id,document.querySelector('#sessList .sess'));}
 })();
 
 /* ---------- 设置：真实读写 /api/v1/settings/llm ---------- */
@@ -1063,7 +1143,7 @@ async function saveSettings(){
   document.querySelectorAll('#provKeys input[data-env]').forEach(i=>{if(i.value.trim())pk[i.dataset.env]=i.value.trim();});
   if(Object.keys(pk).length)body.provider_keys=pk;
   try{
-    const r=await fetch('/api/v1/settings/llm',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const r=await fetch('/api/v1/settings/llm',{method:'PUT',headers:{'Content-Type':'application/json','X-Request-ID':_rid()},body:JSON.stringify(body)});
     const d=await r.json();
     if(r.ok&&d.status==='success'){
       toast('设置已保存（llm_baseline.local.toml · key 已入环境/.env）');
@@ -1077,19 +1157,18 @@ async function saveSettings(){
 $('fileInput').addEventListener('change',async e=>{
   for(const f of e.target.files){
     try{
-      const r=await fetch('/api/v1/uploads?name='+encodeURIComponent(f.name),{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:f});
+      const r=await fetch('/api/v1/uploads?name='+encodeURIComponent(f.name),{method:'POST',headers:{'Content-Type':'application/octet-stream','X-Request-ID':_rid()},body:f});
       const d=await r.json();
       if(r.ok&&d.status==='success'){
         toast(`已上传：${d.item.name}（${d.item.size} B）`);
         document.querySelector('.chips').insertAdjacentHTML('beforeend',
-          `<button class="chip" title="sha256 ${it_sha(d)}…" onclick="openInspector('uploads')">📎 ${d.item.name}</button>`);
+          `<button class="chip" title="sha256 ${d.item.sha256.slice(0,12)}…" onclick="openInspector('uploads')">📎 ${d.item.name}</button>`);
         loadUploads();
       }else toast('上传失败：'+(d.error||r.status));
     }catch(err){toast('上传失败：'+err);}
   }
   e.target.value='';
 });
-function it_sha(d){return d.item.sha256?d.item.sha256.slice(0,12):''}
 async function loadUploads(){
   const d=await _get('/api/v1/uploads');
   if(!d)return;
@@ -1107,7 +1186,7 @@ async function invokeCap(){
   try{payload=JSON.parse(document.querySelector('.cons textarea').value||'{}');}catch(e){out.textContent='payload JSON 解析失败：'+e;return;}
   out.textContent='invoke '+cap+' …';
   try{
-    const r=await fetch('/api/v1/plugins/invoke',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({capability:cap,payload,confirm:true})});
+    const r=await fetch('/api/v1/plugins/invoke',{method:'POST',headers:{'Content-Type':'application/json','X-Request-ID':_rid()},body:JSON.stringify({capability:cap,payload,confirm:true})});
     const d=await r.json();
     out.textContent=JSON.stringify(d,null,1).slice(0,2000);
   }catch(e){out.textContent='invoke 失败：'+e;}
@@ -1120,7 +1199,7 @@ async function doExport(){
   $('tool3').style.display='';riseIn($('tool3'));$('tool3').classList.remove('closed');
   $('tool3St').className='st run';$('tool3St').innerHTML='<span class="spin"></span>executing…';
   try{
-    const r=await fetch('/api/v1/demo/export-blender',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true})});
+    const r=await fetch('/api/v1/demo/export-blender',{method:'POST',headers:{'Content-Type':'application/json','X-Request-ID':_rid()},body:JSON.stringify({confirm:true})});
     const d=await r.json();
     if(!r.ok)throw new Error((d.detail&&d.detail.error&&d.detail.error.message)||d.detail||r.status);
     const rc=d.receipt||d;
@@ -1158,6 +1237,10 @@ async function sendMsg(){
       `<div><span class="k">result&nbsp;&nbsp;</span>converged=<span class="ok">${d.converged}</span> · iterations=${d.iterations_spent} · nodes=${d.nodes.length} · segments=${d.segments.length}</div>`+
       `<div><span class="k">resolved</span> ${(d.resolved_violations||[]).map(x=>`<span class="bad">${x.rule_id}</span> ${x.required} → <span class="ok">合规</span>`).join('<br>')||'无违规'}</div>`);
     applyRealIR(d);
+    $('artIR').querySelector('.mini-stat').innerHTML=`<span><b>${d.nodes.length}</b> 检查井</span><span><b>${d.segments.length}</b> 管段</span><span><b>DN${d.segments[0]?d.segments[0].diameter_mm:400}</b></span><span><b>${d.segments[0]?d.segments[0].slope:0.003}</b> 坡度</span>`;
+    $('artIR').style.display='';riseIn($('artIR'));
+    $('hitl').style.display='';riseIn($('hitl'));
+    sc.scrollTop=sc.scrollHeight;
   }catch(e){
     $('dynSt').className='st bad';$('dynSt').textContent='✗ '+e.message;
   }

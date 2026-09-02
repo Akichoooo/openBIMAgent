@@ -27,6 +27,7 @@ from openbimagent.server.readonly_http import (
 from openbimagent.server.sse_endpoint import M2SseStreamBudget, add_sse_endpoint
 from openbimagent.server.web_ui import add_web_ui
 from openbimagent.server.workbench_io import add_workbench_io
+from openbimagent.server.runs import add_runs
 
 M2_FASTAPI_APP_TITLE = "openBIMAgent M2 Read-Only API"
 M2_FASTAPI_APP_VERSION = "0.1"
@@ -94,6 +95,7 @@ def build_m2_readonly_app(
         add_sse_endpoint(app, sessions_dir=sessions_dir, budget=sse_budget)
     add_web_ui(app)
     add_workbench_io(app)
+    add_runs(app)
 
     invoke_guard = InvokeConcurrencyGuard(invoke_max_concurrency)
     export_guard = InvokeConcurrencyGuard(1)  # 真机导出串行：Blender/VW 共用，防并发多宿主写盘
@@ -472,10 +474,22 @@ def build_demo_app() -> FastAPI:
 
     from openbimagent.server.readonly_http import M2ReadonlyHttpAdapter
     from openbimagent.server.service import M2ReadOnlyService
+    from openbimagent.session.store import SessionStore
+
+    def _session_index_reader() -> list:
+        """真实会话索引：读 out/sessions/index.json（OPENBIMAGENT_SESSIONS_DIR 可覆盖）。"""
+        import os
+
+        default_sessions = Path(__file__).resolve().parents[3] / "out" / "sessions"
+        sessions_dir = Path(os.environ.get("OPENBIMAGENT_SESSIONS_DIR", default_sessions))
+        try:
+            return SessionStore.list_sessions(sessions_dir)
+        except Exception:  # noqa: BLE001 — 索引缺失/损坏时返回空列表而非 500
+            return []
 
     service = M2ReadOnlyService(
         control_plane=_EmptyControlPlaneReader(),
-        session_index_reader=lambda: [],
+        session_index_reader=_session_index_reader,
         artifact_lookup=lambda _: None,
     )
     return build_m2_readonly_app(M2ReadonlyHttpAdapter(service))
