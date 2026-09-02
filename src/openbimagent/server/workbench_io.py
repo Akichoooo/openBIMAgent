@@ -177,6 +177,16 @@ def add_workbench_io(app: FastAPI) -> None:
     async def list_uploads() -> dict:
         return {"status": "success", "items": _read_upload_index(_uploads_dir())}
 
+    @app.get("/api/v1/usage", summary="LLM 用量汇总（out/usage_summary.json；P3 成本面板数据源）", tags=["Workbench"])
+    async def usage_summary() -> dict:
+        path = _REPO_ROOT / "out" / "usage_summary.json"
+        if not path.is_file():
+            return {"status": "success", "usage": None}
+        try:
+            return {"status": "success", "usage": json.loads(path.read_text(encoding="utf-8"))}
+        except (json.JSONDecodeError, OSError):
+            return {"status": "success", "usage": None}
+
     @app.post("/api/v1/uploads", summary="上传附件（原始字节流；sha256 manifest 落盘）", tags=["Workbench"])
     async def upload_file(request: Request) -> JSONResponse:
         data = await request.body()

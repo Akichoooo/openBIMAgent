@@ -92,6 +92,7 @@ def make_web_approval_fn(session_id: str, sessions_dir: Path):
                 "decision": ticket["decision"],
                 "actor": ticket["actor"],
                 "decided_at": ticket["decided_at"],
+                **({"instruction": ticket["instruction"]} if ticket.get("instruction") else {}),
             },
         )
         return ticket["decision"] == "approved"
@@ -130,5 +131,8 @@ def add_approvals(app: FastAPI) -> None:
             return JSONResponse(status_code=404, content={"status": "error", "error": f"票据不存在或已决策: {ticket_id}"})
         ticket["decision"] = decision
         ticket["actor"] = actor
+        instruction = request.get("instruction")
+        if isinstance(instruction, str) and instruction.strip():
+            ticket["instruction"] = instruction.strip()
         ticket["event"].set()
         return JSONResponse(content={"status": "success", "id": ticket_id, "decision": decision})

@@ -87,6 +87,8 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .sess .dot{margin-top:6px}
 .sess .tt{font-size:12.5px;line-height:1.35}
 .sess .meta{font:10.5px var(--mono);color:var(--ink3);margin-top:2px}
+.forkbtn{margin-left:auto;color:var(--ink3);font-size:12px;padding:2px 6px;border-radius:6px;flex:none}
+.forkbtn:hover{background:var(--bg3);color:var(--acc)}
 .sb-foot{border-top:1px solid var(--line);padding:10px 12px;display:flex;flex-direction:column;gap:8px}
 .hosts{display:flex;gap:6px}
 .host{flex:1;display:flex;align-items:center;gap:6px;font:10.5px var(--mono);color:var(--ink2);border:1px solid var(--line);border-radius:7px;padding:5px 8px}
@@ -430,6 +432,14 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       <div class="insp-sec-t">上传附件（真实落盘 out/uploads/ · sha256 manifest）</div>
       <div id="uplList"><div class="rd" style="color:var(--ink3);font-size:11px">加载中…</div></div>
     </div>
+    <div data-pane="usage" style="display:none">
+      <div class="insp-sec-t">LLM 用量与成本（out/usage_summary.json 真实数据）</div>
+      <div id="usageBody"><div style="font-size:11px;color:var(--ink3)">加载中…</div></div>
+    </div>
+    <div data-pane="archive" style="display:none">
+      <div class="insp-sec-t">Domain Pack 素材归档（每次交付只增不改 · 越用越好第一步）</div>
+      <div id="archiveBody"><div style="font-size:11px;color:var(--ink3)">加载中…</div></div>
+    </div>
   </div>
 
   <!-- composer -->
@@ -451,6 +461,8 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     <div class="chips">
             <button class="chip" onclick="askConfirm()">导出 Blender</button>
       <button class="chip" onclick="openInspector('rules')">规则树</button>
+      <button class="chip" onclick="openInspector('usage');loadUsage()">用量</button>
+      <button class="chip" onclick="openInspector('archive');loadArchive()">归档</button>
       <button class="chip" onclick="playTimeline()">▶ 自愈回放</button>
     </div>
   </div>
@@ -1032,7 +1044,7 @@ async function loadSessions(selectId){
   const items=ss&&ss.ok&&ss.data?ss.data.items:[];
   const list=$('sessList');
   if(!items.length){list.innerHTML='<div style="padding:8px 12px;font-size:11px;color:var(--ink3)">暂无会话 · 点「新任务」真跑一次</div>';return;}
-  list.innerHTML=items.map((s,i)=>`<div class="sess${(selectId?s.session_id===selectId:i===0)?' on':''}" data-sid="${s.session_id}" onclick="loadSessionEvents('${s.session_id}',this)"><span class="dot g"></span><div><div class="tt">${_esc(s.title||s.session_id)}</div><div class="meta">${(s.last_active||'').slice(0,16).replace('T',' ')} · ${s.event_count||0} 事件</div></div></div>`).join('');
+  list.innerHTML=items.map((s,i)=>`<div class="sess${(selectId?s.session_id===selectId:i===0)?' on':''}" data-sid="${s.session_id}" onclick="loadSessionEvents('${s.session_id}',this)"><span class="dot g"></span><div><div class="tt">${_esc(s.title||s.session_id)}</div><div class="meta">${(s.last_active||'').slice(0,16).replace('T',' ')} · ${s.event_count||0} 事件</div></div><span class="forkbtn" title="从此会话分支（/tree fork）" onclick="forkSession('${s.session_id}',event)">⑂</span></div>`).join('');
   return items;
 }
 const _KEEP=['welcomeLine','tool2','artIR','hitl','tool3','rcpt','doneLine'];
@@ -1079,16 +1091,38 @@ async function startRun(){
     toast('任务已启动 · session '+d.session_id.slice(0,8));
     const items=await loadSessions(d.session_id);
     loadSessionEvents(d.session_id);
+    streamSession(d.session_id);
     pollRun(d.session_id);
   }catch(e){toast('启动失败：'+e);}
+}
+/* SSE 实时跟随（P1）：回放后持续推送新增；断开/结束回退轮询 */
+let _evtSrc=null;
+function streamSession(sid){
+  if(_evtSrc){_evtSrc.close();_evtSrc=null;}
+  const buf=[];
+  const es=new EventSource(`/api/v1/sessions/${sid}/events/stream`);
+  _evtSrc=es;
+  es.onmessage=m=>{try{buf.push(JSON.parse(m.data));}catch(e){return;} renderEvents(buf);};
+  es.onerror=()=>{es.close();if(_evtSrc===es)_evtSrc=null;};
+}
+async function forkSession(sid,ev){
+  ev&&ev.stopPropagation();
+  try{
+    const r=await fetch(`/api/v1/sessions/${sid}/fork`,{method:'POST',headers:{'Content-Type':'application/json','X-Request-ID':_rid()},body:JSON.stringify({})});
+    const d=await r.json();
+    if(r.ok){toast('已创建分支会话');loadSessions(d.session_id);}
+    else toast('分支失败：'+(d.error||r.status));
+  }catch(e){toast('分支失败：'+e);}
 }
 function pollRun(sid){
   if(_pollTimer)clearInterval(_pollTimer);
   _pollTimer=setInterval(async()=>{
     const d=await _get('/api/v1/runs/active');
-    if(_curSession===sid)loadSessionEvents(sid);
+    if(!_evtSrc&&_curSession===sid)loadSessionEvents(sid); /* SSE 断开时回退轮询 */
     if(d&&d.run&&!d.run.active){
       clearInterval(_pollTimer);_pollTimer=null;
+      if(_evtSrc){_evtSrc.close();_evtSrc=null;}
+      loadSessionEvents(sid);
       toast(d.run.error?('运行结束（有错误）：'+d.run.error):'任务完成 · 事件已落 session');
       loadSessions(sid);
     }
@@ -1242,6 +1276,7 @@ function showApprovalCard(it){
   card.className='hitl';card.id='appr-'+it.id;
   card.innerHTML=`<div class="hd"><span class="tag">审批门 · ${_esc(it.operation)}</span>等待人工决策<span style="margin-left:auto;font:10px var(--mono);color:var(--ink3)">已挂起 ${Math.round(it.waiting_s||0)}s</span></div>`+
     `<div class="ds">运行会话 <code>${it.session_id.slice(0,8)}</code> 触达审批门（pipeline 线程已阻塞，决策前不会继续）。参数：<br><code style="color:var(--ink2);word-break:break-all">${_esc(JSON.stringify(it.params)).slice(0,300)}</code></div>`+
+    `<input class="fin" id="instr-${it.id}" placeholder="附带指令（可选，写入决策回执 · steer 语义）" style="margin-bottom:8px">`+
     `<div class="row"><button class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground" style="flex:1" onclick="decideApproval('${it.id}','approved')">批准</button>`+
     `<button class="reject" onclick="decideApproval('${it.id}','rejected')">拒绝</button></div>`;
   sc.appendChild(card);riseIn(card);sc.scrollTop=sc.scrollHeight;
@@ -1249,7 +1284,9 @@ function showApprovalCard(it){
 }
 async function decideApproval(id,decision){
   try{
-    const r=await fetch(`/api/v1/approvals/${id}/decide`,{method:'POST',headers:{'Content-Type':'application/json','X-Request-ID':_rid()},body:JSON.stringify({decision,actor:'human:web-operator'})});
+    const instrEl=$('instr-'+id);
+    const instr=instrEl&&instrEl.value.trim();
+    const r=await fetch(`/api/v1/approvals/${id}/decide`,{method:'POST',headers:{'Content-Type':'application/json','X-Request-ID':_rid()},body:JSON.stringify({decision,actor:'human:web-operator',...(instr?{instruction:instr}:{})})});
     const card=$('appr-'+id);
     if(r.ok&&card){
       card.innerHTML=`<div class="hd"><span class="tag">审批门</span><span style="color:${decision==='approved'?'var(--grn)':'var(--red)'}">${decision==='approved'?'✓ 已批准':'✕ 已拒绝'} · 决策回执已落 session</span></div>`;
@@ -1258,6 +1295,24 @@ async function decideApproval(id,decision){
   }catch(e){toast('决策提交失败：'+e);}
 }
 setInterval(pollApprovals,3000);pollApprovals();
+
+/* ---------- 用量（P3）与归档（P2）面板 ---------- */
+async function loadUsage(){
+  const d=await _get('/api/v1/usage');
+  const u=d&&d.usage;
+  $('usageBody').innerHTML=u?
+    `<div class="mini-stat" style="margin-bottom:8px"><span><b>${u.total.calls}</b> 调用</span><span><b>${u.total.total_tokens}</b> tok</span><span><b>${u.total.prompt_tokens}</b> in</span><span><b>${u.total.completion_tokens}</b> out</span></div>`+
+    (Object.entries(u.by_model||{}).map(([m,v])=>`<div class="rule"><div class="rh"><span class="rid">${_esc(m)}</span><span class="rst">${v.total_tokens||0} tok</span></div><div class="rd">${v.calls||0} 次调用 · in ${v.prompt_tokens||0} · out ${v.completion_tokens||0}${v.cost_usd!=null?' · $'+v.cost_usd:''}</div></div>`).join('')||'<div style="font-size:11px;color:var(--ink3)">尚无分模型数据</div>')
+  :'<div style="font-size:11px;color:var(--ink3)">暂无用量记录（离线模板运行不消耗 LLM）</div>';
+}
+async function loadArchive(){
+  const d=await _get('/api/v1/archive');
+  if(!d)return;
+  $('archiveBody').innerHTML=d.items.length?d.items.map(it=>
+    `<div class="rule"><div class="rh"><span class="rid">${_esc(it.brief||it.session_id)}</span><span class="rst">${_esc(it.pack)}</span></div>`+
+    `<div class="rd">${(it.archived_at||'').slice(0,19).replace('T',' ')} · ${it.files.map(f=>`${f.name} (${f.size}B)`).join('、')}</div></div>`).join('')
+  :'<div style="font-size:11px;color:var(--ink3)">暂无归档（完成任务交付后自动写入）</div>';
+}
 
 /* ---------- Composer：普通文本 → 真实调度自愈求解器并追加回合 ---------- */
 async function sendMsg(){

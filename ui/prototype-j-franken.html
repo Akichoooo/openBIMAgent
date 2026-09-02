@@ -69,6 +69,8 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .sess .dot{margin-top:6px}
 .sess .tt{font-size:12.5px;line-height:1.35}
 .sess .meta{font:10.5px var(--mono);color:var(--ink3);margin-top:2px}
+.forkbtn{margin-left:auto;color:var(--ink3);font-size:12px;padding:2px 6px;border-radius:6px;flex:none}
+.forkbtn:hover{background:var(--bg3);color:var(--acc)}
 .sb-foot{border-top:1px solid var(--line);padding:10px 12px;display:flex;flex-direction:column;gap:8px}
 .hosts{display:flex;gap:6px}
 .host{flex:1;display:flex;align-items:center;gap:6px;font:10.5px var(--mono);color:var(--ink2);border:1px solid var(--line);border-radius:7px;padding:5px 8px}
@@ -412,6 +414,14 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       <div class="insp-sec-t">上传附件（真实落盘 out/uploads/ · sha256 manifest）</div>
       <div id="uplList"><div class="rd" style="color:var(--ink3);font-size:11px">加载中…</div></div>
     </div>
+    <div data-pane="usage" style="display:none">
+      <div class="insp-sec-t">LLM 用量与成本（out/usage_summary.json 真实数据）</div>
+      <div id="usageBody"><div style="font-size:11px;color:var(--ink3)">加载中…</div></div>
+    </div>
+    <div data-pane="archive" style="display:none">
+      <div class="insp-sec-t">Domain Pack 素材归档（每次交付只增不改 · 越用越好第一步）</div>
+      <div id="archiveBody"><div style="font-size:11px;color:var(--ink3)">加载中…</div></div>
+    </div>
   </div>
 
   <!-- composer -->
@@ -433,6 +443,8 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     <div class="chips">
             <button class="chip" onclick="askConfirm()">导出 Blender</button>
       <button class="chip" onclick="openInspector('rules')">规则树</button>
+      <button class="chip" onclick="openInspector('usage');loadUsage()">用量</button>
+      <button class="chip" onclick="openInspector('archive');loadArchive()">归档</button>
       <button class="chip" onclick="playTimeline()">▶ 自愈回放</button>
     </div>
   </div>

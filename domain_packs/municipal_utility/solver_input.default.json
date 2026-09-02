@@ -1,0 +1,20 @@
+{
+  "protocol_version": "0.4",
+  "request_id": "web-default-001",
+  "source_ir_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "coordinate_reference": {
+    "crs_id": "LOCAL:PROJECT-M",
+    "origin": { "x_m": 0.0, "y_m": 0.0, "z_m": 0.0 },
+    "horizontal_unit": "m",
+    "vertical_unit": "m",
+    "vertical_datum": "project datum"
+  },
+  "start": { "node_id": "mh-001", "x_m": 0.0, "y_m": 0.0, "ground_elevation_m": 11.0 },
+  "end": { "node_id": "mh-002", "x_m": 30.0, "y_m": 0.0, "ground_elevation_m": 11.0 },
+  "diameter_mm": 300.0,
+  "material": "concrete",
+  "design_slope": 0.003,
+  "surface_context": "driveway",
+  "start_invert_m": null,
+  "collision_context": { "coverage": "complete", "obstacles": [] }
+}
