@@ -1029,16 +1029,35 @@ async function forkSession(sid,ev){
 function pollRun(sid){
   if(_pollTimer)clearInterval(_pollTimer);
   _pollTimer=setInterval(async()=>{
+    /* 缺陷六：视口流式生长——运行中轮询工件 sha，变化即重渲染 */
+    pollLiveIR(sid);
     const d=await _get('/api/v1/runs/active');
+    const run=d&&d.runs?d.runs.find(r=>r.session_id===sid):(d&&d.run);
     if(!_evtSrc&&_curSession===sid)loadSessionEvents(sid); /* SSE 断开时回退轮询 */
-    if(d&&d.run&&!d.run.active){
+    if(run&&!run.active){
       clearInterval(_pollTimer);_pollTimer=null;
       if(_evtSrc){_evtSrc.close();_evtSrc=null;}
+      pollLiveIR(sid);
       loadSessionEvents(sid);
-      toast(d.run.error?('运行结束（有错误）：'+d.run.error):'任务完成 · 事件已落 session');
+      toast(run.error?('运行结束（有错误）：'+run.error):'任务完成 · 事件已落 session');
       loadSessions(sid);
     }
   },2500);
+}
+/* 缺陷六：运行工件的流式渲染（CompiledUtilityIR 变化即生长） */
+const _liveSha={};
+async function pollLiveIR(sid){
+  const a=await _get(`/api/v1/runs/artifact?session=${encodeURIComponent(sid)}&name=compiled_utility_ir.json`);
+  if(a&&a.sha256&&a.sha256!==_liveSha[sid]){
+    _liveSha[sid]=a.sha256;
+    if(a.data&&a.data.nodes)applyCompiledIR(a.data);
+  }
+}
+function applyCompiledIR(ir){
+  /* CompiledUtilityIR v1 schema → 渲染器数据（applyRealIR 的工件形态适配） */
+  const nodes=(ir.nodes||[]).map(n=>({node_id:n.node_id,x:n.position.x_m,y:n.position.y_m,ground:n.ground_elevation_m,invert_z:n.position.z_m}));
+  if(nodes.length<2)return;
+  applyRealIR({converged:true,nodes,segments:(ir.segments||[]).map(s=>({diameter_mm:s.diameter_mm,slope:s.slope,length_m:s.horizontal_length_m}))});
 }
 
 /* ---------- 初始装载 ---------- */
@@ -1075,7 +1094,8 @@ async function loadRuntimeInfo(){
   const items=await loadSessions();
   /* 页面刷新时若有进行中的运行，恢复轮询 */
   const act=await _get('/api/v1/runs/active');
-  if(act&&act.run&&act.run.active){loadSessionEvents(act.run.session_id);pollRun(act.run.session_id);}
+  const liveRun=act&&act.runs?act.runs.find(r=>r.active):(act&&act.run&&act.run.active?act.run:null);
+  if(liveRun){loadSessionEvents(liveRun.session_id);streamSession(liveRun.session_id);pollRun(liveRun.session_id);}
   else if(items&&items.length){loadSessionEvents(items[0].session_id,document.querySelector('#sessList .sess'));}
 })();
 
@@ -1200,11 +1220,18 @@ function showApprovalCard(it){
   const sc=$('thScroll');
   const card=document.createElement('div');
   card.className='hitl';card.id='appr-'+it.id;
-  card.innerHTML=`<div class="hd"><span class="tag">审批门 · ${_esc(it.operation)}</span>等待人工决策<span style="margin-left:auto;font:10px var(--mono);color:var(--ink3)">已挂起 ${Math.round(it.waiting_s||0)}s</span></div>`+
-    `<div class="ds">运行会话 <code>${it.session_id.slice(0,8)}</code> 触达审批门（pipeline 线程已阻塞，决策前不会继续）。参数：<br><code style="color:var(--ink2);word-break:break-all">${_esc(JSON.stringify(it.params)).slice(0,300)}</code></div>`+
-    `<input class="fin" id="instr-${it.id}" placeholder="附带指令（可选，写入决策回执 · steer 语义）" style="margin-bottom:8px">`+
-    `<div class="row"><button class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground" style="flex:1" onclick="decideApproval('${it.id}','approved')">批准</button>`+
-    `<button class="reject" onclick="decideApproval('${it.id}','rejected')">拒绝</button></div>`;
+  if(it.expired){
+    /* 缺陷四：重启遗留票据——运行线程已死，仅可显式作废 */
+    card.innerHTML=`<div class="hd"><span class="tag" style="background:var(--red-dim);color:var(--red)">审批门 · ${_esc(it.operation)} · 已过期</span>进程重启遗留<span style="margin-left:auto;font:10px var(--mono);color:var(--ink3)">请求于 ${(it.requested_at||'').slice(0,16).replace('T',' ')}</span></div>`+
+      `<div class="ds">该票据所属的运行线程已随进程重启终止，<b>不可放行</b>。请作废以清理注册表。</div>`+
+      `<div class="row"><button class="reject" style="flex:1" onclick="decideApproval('${it.id}','rejected')">作废</button></div>`;
+  }else{
+    card.innerHTML=`<div class="hd"><span class="tag">审批门 · ${_esc(it.operation)}</span>等待人工决策<span style="margin-left:auto;font:10px var(--mono);color:var(--ink3)">已挂起 ${Math.round(it.waiting_s||0)}s</span></div>`+
+      `<div class="ds">运行会话 <code>${it.session_id.slice(0,8)}</code> 触达审批门（pipeline 线程已阻塞，决策前不会继续）。参数：<br><code style="color:var(--ink2);word-break:break-all">${_esc(JSON.stringify(it.params)).slice(0,300)}</code></div>`+
+      `<input class="fin" id="instr-${it.id}" placeholder="附带指令（可选，写入决策回执 · steer 语义）" style="margin-bottom:8px">`+
+      `<div class="row"><button class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground" style="flex:1" onclick="decideApproval('${it.id}','approved')">批准</button>`+
+      `<button class="reject" onclick="decideApproval('${it.id}','rejected')">拒绝</button></div>`;
+  }
   sc.appendChild(card);riseIn(card);sc.scrollTop=sc.scrollHeight;
   toast('审批门待决：'+it.operation);
 }
@@ -1213,11 +1240,13 @@ async function decideApproval(id,decision){
     const instrEl=$('instr-'+id);
     const instr=instrEl&&instrEl.value.trim();
     const r=await fetch(`/api/v1/approvals/${id}/decide`,{method:'POST',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({decision,actor:'human:web-operator',...(instr?{instruction:instr}:{})})});
+    const d=await r.json().catch(()=>({}));
     const card=$('appr-'+id);
     if(r.ok&&card){
-      card.innerHTML=`<div class="hd"><span class="tag">审批门</span><span style="color:${decision==='approved'?'var(--grn)':'var(--red)'}">${decision==='approved'?'✓ 已批准':'✕ 已拒绝'} · 决策回执已落 session</span></div>`;
-      toast(decision==='approved'?'已批准，运行继续':'已拒绝，运行将 ESCALATE');
-    }else toast('决策提交失败（票据可能已超时）');
+      const label=d.decision==='expired_discarded'?'✕ 已作废（过期票据已清理）':(decision==='approved'?'✓ 已批准 · 运行继续':'✕ 已拒绝 · 运行将 ESCALATE');
+      card.innerHTML=`<div class="hd"><span class="tag">审批门</span><span style="color:${decision==='approved'?'var(--grn)':'var(--red)'}">${label} · 决策回执已落 session</span></div>`;
+      toast(label);
+    }else toast('决策提交失败：'+(d.error||r.status));
   }catch(e){toast('决策提交失败：'+e);}
 }
 setInterval(pollApprovals,3000);pollApprovals();

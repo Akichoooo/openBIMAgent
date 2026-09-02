@@ -21,6 +21,7 @@ def client(tmp_path_factory: pytest.TempPathFactory) -> TestClient:
 
     os.environ["OPENBIMAGENT_WORKBENCH_TOKEN"] = "test-wb-token"
     os.environ["OPENBIMAGENT_SESSIONS_DIR"] = str(tmp / "sessions")
+    os.environ["OPENBIMAGENT_PENDING_APPROVALS"] = str(tmp / "pending.json")
     from openbimagent.server.fastapi_app import build_demo_app
 
     class _RidClient(TestClient):

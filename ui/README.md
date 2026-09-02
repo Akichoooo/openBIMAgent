@@ -11,7 +11,7 @@
 | **新建任务（真跑 Agent）** | `POST /api/v1/runs` · `GET /api/v1/runs/active` | 后台真跑 pipeline（Clarify→Planner→Orchestrator→Deliver；单并发锁 409；离线确定性模板 + MockCritic）→ 会话落 `out/sessions/index.json`（demo app 已改真实索引） |
 | **审批中心（P0）** | `GET /api/v1/approvals` · `POST /api/v1/approvals/{id}/decide` | pipeline 触审批门（execute_code/deliver 前）**挂起运行线程**；前端 3s 轮询，对话 tab 琥珀角标 + 线程内 HITL 卡（参数可见/挂起时长/**附带指令输入** → 写入决策回执，steer 语义）；30min 超时失败关闭。**已撤掉 yes=True 自动放行** |
 | **SSE 实时流（P1）** | `GET /api/v1/sessions/{id}/events/stream` | 回放既有事件后 0.6s 间隔持续推送新增（keepalive），运行结束自动 drain+关闭；前端 EventSource，断开自动回退轮询；10min 连接上限 |
-| **素材归档（P2 · 越用越好）** | `GET /api/v1/archive` | 每次运行结束自动把关键工件（IR/规则集/门禁报告/PLAN/manifest）**只增不改**拷入 `domain_packs/<pack>/assets/auto_archive/<session>/` + sha256 index.json（gitignored）；检查器「归档」面板可见 |
+| **素材归档（P2 · 事件溯源+资产沉淀）** | `GET /api/v1/archive` | 每次运行结束自动把关键工件（IR/规则集/门禁报告/PLAN/manifest）**只增不改**拷入 `domain_packs/<pack>/assets/auto_archive/<session>/` + sha256 index.json（gitignored）；检查器「归档」面板可见 |
 | **用量面板（P3）** | `GET /api/v1/usage` | 读 `out/usage_summary.json`；检查器「用量」页：总调用/tokens + 分模型明细（离线模板运行为 0，配 LLM 后真实累计） |
 | **会话分支（P4）** | `POST /api/v1/sessions/{id}/fork` | 会话项 ⑂ 按钮 → `/tree` branch/fork 主干链到新会话（fork 写 forked_from 元数据供续跑检测）；审批附带指令为 steer 语义在审批门生效（运行时中途 steer 属 Subagent Runtime 路径，assembly 顺序流不接） |
 | **会话事件** | `GET /api/v1/sessions/{id}/events` | 点会话 → 线程渲染真实事件（clarify 问答 / tool_call / 子代理 custom）；运行中页面 2.5s 轮询实时追加 |
