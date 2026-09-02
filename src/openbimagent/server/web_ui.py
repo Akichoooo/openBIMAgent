@@ -1,1543 +1,1007 @@
-"""M2 P6 Web Console: 现代化 openBIMAgent 数字化工程工作台。
+"""M2 P6 Web Console: openBIMAgent 数字化工程工作台（方案 L 集成版）。
 
-基于 M2 API 与 SSE 事件流的本地管理界面。
-采用现代化三栏架构：
-  - 左栏：项目、Domain Pack 与会话树（Session Fork/Tree）
-  - 中栏：Agent 执行流、Slot 澄清、确定性 Solver 卡片、HITL 审批操作
-  - 右栏：3D 视口渲染对比、GB 50289 规则证据树、IFC/IDS 交付物清单、Compiled IR 检查器
+布局：Codex 风格 × 3D 视口英雄区（ui/prototype-l-integrated.html 迁入）。
+- 组件栈：Shoelace 2.20.1（Web Components）+ Franken UI 2.1.2 shadcn zinc token 皮肤 + Motion 动效
+- 库文件全部 vendor 到 server/static/vendor/（MIT 许可），经 /static 挂载，完全离线可用
+- 数据：页面尾部集成态接线脚本直接消费 /api/v1 真实端点
+  （demo/municipal-pipeline、demo/rule-tree、demo/runtime-info、sessions、plugins、
+   plugins/invoke、demo/export-blender；HITL confirm=true 走 prompt 策略门）
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 PAGE = r"""<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh" class="sl-theme-dark dark uk-theme-zinc">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>openBIMAgent Engineering Studio</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>openBIMAgent · 方案 L（集成终版：Shoelace 组件 + shadcn zinc 皮肤 · 全离线）</title>
+<!-- Shoelace 2.20.1（MIT）：dark.css + autoloader，CDN 加载；离线时组件无样式（结构仍可读） -->
+<!-- 全部库文件已 vendor 到本地 /static/vendor/（MIT 许可），完全离线可用 -->
+<link rel="stylesheet" href="/static/vendor/franken/core.min.css">
+<link rel="stylesheet" href="/static/vendor/franken/utilities.min.css">
+<link rel="stylesheet" href="/static/vendor/shoelace/themes/dark.css"/>
+<script src="/static/vendor/motion/motion.js"></script>
+<script>window.__M={animate:window.Motion&&window.Motion.animate,stagger:window.Motion&&window.Motion.stagger};</script>
+<script type="module">
+  import { setBasePath } from '/static/vendor/shoelace/utilities/base-path.js';
+  setBasePath('/static/vendor/shoelace/');
+  const C='/static/vendor/shoelace/components/';
+  for(const c of ['button/button','button-group/button-group','select/select','option/option','switch/switch','tab-group/tab-group','tab/tab','tab-panel/tab-panel','drawer/drawer','dialog/dialog','alert/alert','badge/badge','tooltip/tooltip','textarea/textarea']) import(C+c+'.js');
+</script>
 <style>
-/* ============================================================
-   Design language: Codex-style minimal neutral
-   - 近无彩中性灰阶, 白色主按钮(签名元素), 绿色仅成功态
-   - 1px 细边框扁平卡片, 无渐变无发光, tabular-nums 等宽数字
-   ============================================================ */
-:root {
-  --bg-primary: #0d0f11;
-  --bg-secondary: #141619;
-  --bg-tertiary: #1a1d21;
-  --bg-card: #141619;
-  --bg-card-hover: #1d2024;
-  --border-color: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.14);
-  --border-focus: rgba(255, 255, 255, 0.45);
-  --text-primary: #ececec;
-  --text-secondary: #b4b8bd;
-  --text-muted: #8b9096;
-  --accent-cyan: #9aa4ad;
-  --accent-blue: #d4d9de;
-  --accent-emerald: #10a37f;
-  --accent-amber: #c9a227;
-  --accent-rose: #e5534b;
-  --accent-purple: #a08dde;
-  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  --font-mono: 'SFMono-Regular', 'Cascadia Code', Consolas, 'Courier New', monospace;
+/* ============ 布局层（组件外观交给 Shoelace 主题） ============ */
+:root{
+  --bg:hsl(var(--background)); --bg1:hsl(var(--card));
+  --bg2:hsl(var(--muted) / .55); --bg3:hsl(var(--accent));
+  --line:hsl(var(--border) / .55); --line2:hsl(var(--border));
+  --ink:hsl(var(--foreground)); --ink2:hsl(var(--muted-foreground)); --ink3:hsl(var(--muted-foreground) / .6);
+  --acc:#4f9cf9; --acc-fg:#04121f; --acc-dim:rgba(79,156,249,.14);
+  --grn:#3fb68b; --grn-dim:rgba(63,182,139,.13);
+  --red:#e5636c; --amb:#d9a13f; --amb-dim:rgba(217,161,63,.13);
+  --mono:ui-monospace,'Cascadia Code','JetBrains Mono',Consolas,monospace;
 }
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font:13px/1.55 var(--sl-font-sans);background:var(--bg);color:var(--ink);display:flex;overflow:hidden}
+::-webkit-scrollbar{width:9px;height:9px}::-webkit-scrollbar-thumb{background:#2a323e;border-radius:5px;border:2px solid var(--bg)}::-webkit-scrollbar-track{background:transparent}
+.dot{width:7px;height:7px;border-radius:50%;flex:none;display:inline-block}
+.dot.g{background:var(--grn)}.dot.y{background:var(--amb)}.dot.b{background:var(--acc)}
+.mono{font-family:var(--mono)}
 
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body {
-  font-family: var(--font-sans);
-  background-color: var(--bg-primary);
-  color: var(--text-primary);
-  height: 100vh;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  font-size: 13px;
-  -webkit-font-smoothing: antialiased;
-}
+/* 1. icon rail */
+.rail{width:52px;flex:none;background:var(--bg1);border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:4px;z-index:30}
+.rail .logo{width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,#4f9cf9,#3fb68b);color:#04121f;font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:center;margin-bottom:10px}
+.rail .sp{flex:1}
+.rb{width:36px;height:36px;border-radius:9px;background:none;border:none;color:var(--ink2);display:flex;align-items:center;justify-content:center;position:relative;cursor:pointer}
+.rb:hover{background:var(--bg3);color:var(--ink)}
+.rb.on{background:var(--bg3);color:var(--ink)}
+.rb.on::before{content:'';position:absolute;left:-8px;top:9px;bottom:9px;width:3px;border-radius:2px;background:var(--acc)}
+.rb svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
 
-/* Header */
-header {
-  height: 52px;
-  background: var(--bg-primary);
-  border-bottom: 1px solid var(--border-color);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 20px;
-  z-index: 100;
-}
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.brand-logo {
-  width: 26px;
-  height: 26px;
-  background: #ffffff;
-  border-radius: 7px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  font-size: 13px;
-  color: #0d0f11;
-}
-.brand-title {
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: #ffffff;
-}
-.brand-badge {
-  font-size: 11px;
-  font-weight: 500;
-  padding: 2px 9px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-strong);
-  color: var(--text-secondary);
-  border-radius: 999px;
-  font-family: var(--font-mono);
-}
-.header-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 11px;
-  border-radius: 999px;
-  font-size: 11.5px;
-  font-weight: 500;
-  background: transparent;
-  border: 1px solid var(--border-color);
-  color: var(--text-secondary);
-}
-.status-pill.online {
-  border-color: rgba(16, 163, 127, 0.35);
-  color: #35b99a;
-  background: rgba(16, 163, 127, 0.06);
-}
-.pulse-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-}
+/* 2. sidebar */
+.sidebar{width:248px;flex:none;background:var(--bg1);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.sb-h{padding:14px 14px 10px;display:flex;align-items:center;gap:8px}
+.sb-h .t{font-weight:650;font-size:13.5px}
+.newtask{margin:2px 12px 10px;width:calc(100% - 24px)}
+.sb-sec{padding:4px 16px 6px;font:10.5px var(--mono);letter-spacing:.08em;color:var(--ink3);text-transform:uppercase}
+.sb-list{flex:1;overflow-y:auto;padding:0 8px 8px}
+.sess{display:flex;gap:9px;padding:8px 10px;border-radius:8px;cursor:pointer;align-items:flex-start}
+.sess:hover{background:var(--bg2)}
+.sess.on{background:var(--bg3)}
+.sess .dot{margin-top:6px}
+.sess .tt{font-size:12.5px;line-height:1.35}
+.sess .meta{font:10.5px var(--mono);color:var(--ink3);margin-top:2px}
+.sb-foot{border-top:1px solid var(--line);padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.hosts{display:flex;gap:6px}
+.host{flex:1;display:flex;align-items:center;gap:6px;font:10.5px var(--mono);color:var(--ink2);border:1px solid var(--line);border-radius:7px;padding:5px 8px}
 
-/* Layout */
-.app-container {
-  display: grid;
-  grid-template-columns: 250px minmax(0, 1fr);
-  height: calc(100vh - 52px);
-  overflow: hidden;
-}
-.workbench-drawer {
-  display: none;
-  width: 460px;
-  border-left: 1px solid var(--border-color);
-}
-.workbench-drawer.open { display: flex; }
+/* 3. stage */
+.stage{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--bg)}
+.st-top{height:48px;flex:none;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--line);background:var(--bg1)}
+.crumb{font-size:13px;color:var(--ink2);display:flex;align-items:center;gap:7px;min-width:0}
+.crumb b{color:var(--ink);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.st-top .sp{flex:1}
+.viewport{flex:1;position:relative;min-height:0;background:radial-gradient(1200px 600px at 60% 20%,#12161d 0%,var(--bg) 70%)}
+#gl{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:grab}
+#gl.drag{cursor:grabbing}
+.vp-hud{position:absolute;top:12px;left:14px;display:flex;gap:8px;align-items:center;pointer-events:none}
+.hud-chip{pointer-events:auto;display:flex;align-items:center;gap:6px;background:rgba(13,16,20,.72);backdrop-filter:blur(8px);border:1px solid var(--line);border-radius:8px;padding:5px 10px;font:10.5px var(--mono);color:var(--ink2)}
+.vp-tools{position:absolute;top:12px;right:14px;display:flex;flex-direction:column;gap:8px;background:rgba(13,16,20,.72);backdrop-filter:blur(8px);border:1px solid var(--line);border-radius:10px;padding:8px}
+.vp-tools .row{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ink2)}
+.vp-scale{position:absolute;left:14px;bottom:64px;font:10px var(--mono);color:var(--ink3);display:flex;flex-direction:column;gap:3px}
+.vp-scale .bar{width:80px;height:4px;border-left:1.5px solid var(--ink3);border-right:1.5px solid var(--ink3);border-bottom:1.5px solid var(--ink3)}
+.play{width:28px;height:28px;border-radius:50%;background:var(--acc);color:var(--acc-fg);display:flex;align-items:center;justify-content:center;flex:none;border:none;cursor:pointer}
+.play:hover{opacity:.9}
+.play svg{width:13px;height:13px;fill:currentColor}
+.vp-tl{position:absolute;left:50%;transform:translateX(-50%);bottom:12px;display:flex;align-items:center;gap:10px;background:rgba(13,16,20,.8);backdrop-filter:blur(10px);border:1px solid var(--line2);border-radius:12px;padding:8px 12px;min-width:480px}
+.tl-steps{display:flex;align-items:center;gap:0;flex:1}
+.tl-s{display:flex;align-items:center;gap:7px;flex:none;cursor:pointer;padding:3px 2px}
+.tl-s .n{width:19px;height:19px;border-radius:50%;border:1.5px solid var(--ink3);color:var(--ink3);display:flex;align-items:center;justify-content:center;font:9.5px var(--mono);flex:none}
+.tl-s .lb{font-size:11px;color:var(--ink2);white-space:nowrap}
+.tl-s .sub{font:9.5px var(--mono);color:var(--ink3);white-space:nowrap}
+.tl-s.on .n{border-color:var(--acc);color:var(--acc);background:var(--acc-dim)}
+.tl-s.on .lb{color:var(--ink)}
+.tl-s.ok .n{border-color:var(--grn);color:var(--grn)}
+.tl-s.bad .n{border-color:var(--red);color:var(--red)}
+.tl-link{flex:1;height:1.5px;background:var(--line2);min-width:22px}
+.tl-note{font:10px var(--mono);color:var(--ink3);max-width:170px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
-/* Columns */
-.column {
-  display: flex;
-  flex-direction: column;
-  border-right: 1px solid var(--border-color);
-  background: var(--bg-primary);
-  overflow: hidden;
-}
-.column:last-child {
-  border-right: none;
-}
-.col-header {
-  height: 42px;
-  padding: 0 18px;
-  background: var(--bg-primary);
-  border-bottom: 1px solid var(--border-color);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-}
-.col-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px;
-}
-
-/* Left Panel: Navigation */
-.domain-card {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  padding: 13px;
-  margin-bottom: 18px;
-}
-.domain-card-title {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.domain-card-desc {
-  font-size: 11px;
-  color: var(--text-muted);
-  line-height: 1.5;
-}
-.session-item {
-  background: transparent;
-  border: 1px solid var(--border-color);
-  border-radius: 10px;
-  padding: 11px 12px;
-  margin-bottom: 8px;
-  cursor: pointer;
-  transition: border-color 0.12s ease, background 0.12s ease;
-}
-.session-item:hover {
-  background: var(--bg-secondary);
-  border-color: var(--border-strong);
-}
-.session-item.active {
-  background: var(--bg-tertiary);
-  border-color: var(--border-strong);
-}
-.session-id {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--text-primary);
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 4px;
-}
-.session-title {
-  font-size: 12px;
-  color: var(--text-secondary);
-  margin-bottom: 5px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.session-meta {
-  font-size: 11px;
-  color: var(--text-muted);
-  display: flex;
-  justify-content: space-between;
-  font-variant-numeric: tabular-nums;
-}
-
-/* Center Panel: Stream */
-.stream-container {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.card {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  padding: 16px;
-  position: relative;
-}
-.card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-.card-tag {
-  font-size: 9.5px;
-  font-weight: 600;
-  padding: 2px 7px;
-  border-radius: 999px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  border: 1px solid var(--border-strong);
-  color: var(--text-muted);
-  background: transparent;
-}
-.tag-clarify { color: #b9a7e8; border-color: rgba(160, 141, 222, 0.35); }
-.tag-solver { color: #9fc3d8; border-color: rgba(159, 195, 216, 0.35); }
-.tag-rule { color: #35b99a; border-color: rgba(16, 163, 127, 0.4); }
-.tag-hitl { color: #d4b45a; border-color: rgba(201, 162, 39, 0.4); }
-.tag-deliver { color: #b4b8bd; border-color: var(--border-strong); }
-
-.grid-kv {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-  gap: 10px;
-  background: var(--bg-primary);
-  padding: 11px 12px;
-  border-radius: 8px;
-  margin-top: 8px;
-  border: 1px solid var(--border-color);
-}
-.kv-item {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.kv-label {
-  font-size: 10.5px;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.kv-val {
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  font-weight: 500;
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-}
-
-/* HITL Action Bar */
-.hitl-box {
-  background: var(--bg-secondary);
-  border: 1px solid rgba(201, 162, 39, 0.35);
-  border-radius: 12px;
-  padding: 14px;
-}
-.hitl-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 12px;
-  flex-wrap: wrap;
-}
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 7px 15px;
-  border-radius: 8px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  border: 1px solid transparent;
-  transition: opacity 0.12s ease, background 0.12s ease;
-}
-.btn:disabled { opacity: 0.55; cursor: wait; }
-.btn-primary {
-  background: #ffffff;
-  color: #0d0f11;
-}
-.btn-primary:hover { background: #e8e8e8; }
-.btn-success {
-  background: var(--accent-emerald);
-  color: #ffffff;
-}
-.btn-success:hover { background: #0d8a6c; }
-.btn-danger {
-  background: transparent;
-  color: var(--accent-rose);
-  border-color: rgba(229, 83, 75, 0.4);
-}
-.btn-danger:hover { background: rgba(229, 83, 75, 0.08); }
-.btn-secondary {
-  background: transparent;
-  border-color: var(--border-strong);
-  color: var(--text-primary);
-}
-.btn-secondary:hover { background: var(--bg-tertiary); }
-
-/* Right Panel: Tabs */
-.tabs {
-  display: flex;
-  border-bottom: 1px solid var(--border-color);
-  background: var(--bg-primary);
-  overflow-x: auto;
-}
-.tab {
-  flex: 1;
-  padding: 10px 4px;
-  text-align: center;
-  font-size: 11.5px;
-  font-weight: 500;
-  color: var(--text-muted);
-  cursor: pointer;
-  border-bottom: 1.5px solid transparent;
-  transition: color 0.12s, border-color 0.12s;
-  white-space: nowrap;
-}
-.tab:hover { color: var(--text-secondary); }
-.tab.active {
-  color: #ffffff;
-  border-bottom-color: #ffffff;
-}
-
-.tab-content {
-  display: none;
-  flex-direction: column;
-  height: 100%;
-  overflow-y: auto;
-  padding: 16px;
-}
-.tab-content.active { display: flex; }
-
-/* 3D Canvas Viewport */
-#viewport3d {
-  width: 100%;
-  height: 240px;
-  background: #0a0c0d;
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  position: relative;
-  overflow: hidden;
-  margin-bottom: 12px;
-}
-.viewport-overlay {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  font-size: 10px;
-  font-family: var(--font-mono);
-  background: rgba(13, 15, 17, 0.85);
-  padding: 4px 8px;
-  border-radius: 6px;
-  border: 1px solid var(--border-color);
-  color: var(--text-secondary);
-}
-
-/* Rule Tree */
-.rule-item {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 10px;
-  padding: 11px 12px;
-  margin-bottom: 8px;
-}
-.rule-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 5px;
-}
-.rule-id {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-.badge-pass {
-  background: rgba(16, 163, 127, 0.1);
-  color: #35b99a;
-  border: 1px solid rgba(16, 163, 127, 0.35);
-  font-size: 9.5px;
-  font-weight: 700;
-  padding: 1px 7px;
-  border-radius: 999px;
-  letter-spacing: 0.04em;
-}
-.rule-desc {
-  font-size: 12px;
-  color: var(--text-secondary);
-  line-height: 1.5;
-  font-variant-numeric: tabular-nums;
-}
-
-/* Code Pre */
-pre {
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 10px;
-  padding: 11px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-secondary);
-  overflow-x: auto;
-  line-height: 1.5;
-}
-
-/* Input area */
-.input-box {
-  padding: 12px 16px;
-  background: var(--bg-primary);
-  border-top: 1px solid var(--border-color);
-  display: flex;
-  gap: 8px;
-}
-.chat-input {
-  flex: 1;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 9px;
-  padding: 9px 13px;
-  color: var(--text-primary);
-  font-family: var(--font-sans);
-  font-size: 13px;
-  outline: none;
-  transition: border-color 0.12s;
-}
-.chat-input:focus { border-color: var(--border-focus); }
-
-/* Sidebar footer: model chip + settings (Codex sidebar-bottom) */
-.sidebar-footer {
-  position: relative;
-  border-top: 1px solid var(--border-color);
-  background: var(--bg-primary);
-  padding: 10px 12px;
-}
-.model-chip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 8px 11px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 10px;
-  color: var(--text-primary);
-  font-size: 12.5px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: border-color 0.12s, background 0.12s;
-}
-.model-chip:hover { border-color: var(--border-strong); background: var(--bg-tertiary); }
-.model-chip-icon { color: var(--text-muted); font-size: 10px; }
-.model-chip-caret { margin-left: auto; color: var(--text-muted); font-size: 11px; }
-.settings-popover {
-  display: none;
-  position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: calc(100% + 6px);
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-strong);
-  border-radius: 12px;
-  padding: 4px 0;
-  z-index: 200;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-  max-height: 60vh;
-  overflow-y: auto;
-}
-.settings-popover.open { display: block; }
-.settings-section { padding: 10px 14px; }
-.settings-section + .settings-section { border-top: 1px solid var(--border-color); }
-.settings-title {
-  font-size: 10.5px;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  margin-bottom: 8px;
-}
-.settings-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-  padding: 3px 0;
-  font-size: 12px;
-}
-.settings-key { color: var(--text-muted); }
-.settings-val {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  color: var(--text-primary);
-  text-align: right;
-  word-break: break-all;
-}
-.settings-hint {
-  font-size: 10.5px;
-  color: var(--text-muted);
-  margin-top: 8px;
-  line-height: 1.5;
-}
-.settings-pills { display: flex; flex-wrap: wrap; gap: 6px; }
-
-/* Agent Thread (Codex/pi 对话流) */
-.thread-scroll {
-  flex: 1;
-  overflow-y: auto;
-  padding: 20px 24px;
-  scroll-behavior: smooth;
-}
-.thread .stream-container { max-width: 760px; margin: 0 auto; }
-.msg-user { display: flex; justify-content: flex-end; margin-bottom: 14px; }
-.msg-user-bubble {
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-strong);
-  border-radius: 14px 14px 4px 14px;
-  padding: 10px 14px;
-  max-width: 78%;
-  font-size: 13px;
-  color: var(--text-primary);
-  line-height: 1.6;
-}
-.turn { display: flex; flex-direction: column; gap: 10px; }
-.turn-agent-label {
-  font-size: 11px;
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  margin-bottom: 2px;
-}
-.toolcall {
-  border: 1px solid var(--border-color);
-  border-radius: 10px;
-  background: var(--bg-secondary);
-  overflow: hidden;
-}
-.toolcall-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  cursor: pointer;
-  user-select: none;
-  font-size: 12px;
-}
-.toolcall-header:hover { background: var(--bg-tertiary); }
-.toolcall-caret { color: var(--text-muted); font-size: 10px; transition: transform 0.12s; }
-.toolcall:not(.open) .toolcall-caret { transform: rotate(-90deg); }
-.toolcall-name {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-.toolcall-status { margin-left: auto; font-size: 11px; color: #35b99a; font-family: var(--font-mono); }
-.toolcall-body {
-  display: none;
-  padding: 4px 12px 12px;
-  border-top: 1px solid var(--border-color);
-}
-.toolcall.open .toolcall-body { display: block; }
-.artifact-card {
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  background: var(--bg-secondary);
-  padding: 14px;
-}
-.artifact-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-  font-size: 12.5px;
-  font-weight: 600;
-}
-.artifact-card #viewport3d { height: 300px; margin-bottom: 0; }
-
-/* Scrollbar */
-::-webkit-scrollbar { width: 5px; height: 5px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); }
+/* 4. thread */
+.thread{width:408px;flex:none;border-left:1px solid var(--line);background:var(--bg1);display:flex;flex-direction:column;min-height:0;transition:width .18s}
+.th-scroll{flex:1;overflow-y:auto;padding:16px 14px 10px;display:flex;flex-direction:column;gap:14px}
+.msg-you{align-self:flex-end;max-width:88%;background:var(--bg3);border:1px solid var(--line);border-radius:14px 14px 4px 14px;padding:9px 13px;font-size:13px}
+.agentline{font-size:13px;color:var(--ink);line-height:1.65}
+.agentline .dim{color:var(--ink2)}
+.tool{border:1px solid var(--line);border-radius:10px;background:var(--bg2);overflow:hidden}
+.tool-h{display:flex;align-items:center;gap:9px;padding:8px 11px;cursor:pointer;user-select:none}
+.tool-h:hover{background:var(--bg3)}
+.tool-h .ic{width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;flex:none;font:10px var(--mono)}
+.ic.solver{background:var(--acc-dim);color:var(--acc)}
+.ic.rules{background:var(--grn-dim);color:var(--grn)}
+.ic.host{background:var(--amb-dim);color:var(--amb)}
+.tool-h .nm{font:11.5px var(--mono);color:var(--ink)}
+.tool-h .st{margin-left:auto;font:10.5px var(--mono);color:var(--ink3);display:flex;align-items:center;gap:6px}
+.st.ok{color:var(--grn)}.st.run{color:var(--acc)}
+.tool-h .car{color:var(--ink3);font-size:10px;transition:transform .15s}
+.tool.closed .car{transform:rotate(-90deg)}
+.tool-b{border-top:1px solid var(--line);padding:9px 12px;font:11px var(--mono);color:var(--ink2);line-height:1.7;overflow:hidden}
+.tool.closed .tool-b{display:none}
+.tool-b .k{color:var(--ink3)}
+.tool-b .ok{color:var(--grn)}.tool-b .bad{color:var(--red)}.tool-b .hl{color:var(--acc)}
+.spin{width:11px;height:11px;border:1.5px solid var(--acc);border-top-color:transparent;border-radius:50%;animation:sp .7s linear infinite;display:inline-block}
+@keyframes sp{to{transform:rotate(360deg)}}
+.art{border:1px solid var(--line);border-radius:10px;background:var(--bg2);padding:11px 12px;display:flex;flex-direction:column;gap:8px}
+.art-t{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600}
+.art .hash{font:10.5px var(--mono);color:var(--ink3)}
+.art .row,.hitl .row{display:flex;gap:8px}
+.mini-stat{display:flex;gap:12px;font:10.5px var(--mono);color:var(--ink2)}
+.mini-stat b{color:var(--ink);font-weight:600}
+.hitl .hd{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:650;margin-bottom:2px}
+.hitl .ds{font-size:12px;margin:7px 0 10px;line-height:1.6}
+.hitl .ds code{font:10.5px var(--mono);color:var(--amb)}
+.rcpt .k{color:var(--ink3)}
+.rcpt{font:11px var(--mono);line-height:1.8}
+.insp{display:none;flex:1;overflow-y:auto;padding:14px;flex-direction:column;gap:12px}
+.thread.ins-mode .th-scroll{display:none}
+.thread.ins-mode .insp{display:flex}
+.insp-sec-t{font:10.5px var(--mono);letter-spacing:.08em;color:var(--ink3);text-transform:uppercase;margin-bottom:6px}
+.rule{border:1px solid var(--line);border-radius:8px;background:var(--bg2);padding:8px 10px;margin-bottom:6px}
+.rule .rh{display:flex;align-items:center;gap:8px}
+.rule .rid{font:11px var(--mono);color:var(--ink)}
+.rule .rst{margin-left:auto;font:9.5px var(--mono);color:var(--grn)}
+.rule .rd{font-size:11px;color:var(--ink2);margin-top:3px}
+.irpre{font:10.5px var(--mono);color:var(--ink2);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;line-height:1.6;overflow-x:auto;white-space:pre}
+.plg{border:1px solid var(--line);border-radius:8px;background:var(--bg2);padding:8px 10px;margin-bottom:6px}
+.plg .pid{font:11px var(--mono)}
+.plg .pds{font-size:11px;color:var(--ink2);margin-top:2px}
+.cons{display:flex;flex-direction:column;gap:7px}
+.cons-out{font:10.5px var(--mono);color:var(--grn);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px;white-space:pre-wrap;line-height:1.6}
+.composer{flex:none;padding:10px 12px 12px;border-top:1px solid var(--line)}
+.cmp{border:1px solid var(--line2);border-radius:14px;background:var(--bg2);padding:9px 11px 7px;position:relative}
+.cmp:focus-within{border-color:rgba(79,156,249,.5)}
+.cmp textarea{width:100%;background:none;border:none;outline:none;resize:none;color:var(--ink);font:13px/1.5 inherit;max-height:110px;display:block}
+.cmp textarea::placeholder{color:var(--ink3)}
+.cmp-row{display:flex;align-items:center;gap:4px;margin-top:5px}
+.chips{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.slash{position:absolute;left:10px;right:10px;bottom:calc(100% + 6px);background:var(--bg3);border:1px solid var(--line2);border-radius:10px;box-shadow:0 14px 44px rgba(0,0,0,.5);display:none;overflow:hidden;z-index:40}
+.slash.show{display:block}
+.sl{display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer}
+.sl:hover{background:var(--bg2)}
+.sl .c{font:11px var(--mono);color:var(--acc);width:92px;flex:none}
+.sl .d{font-size:11.5px;color:var(--ink2)}
+.setpop{display:none;position:absolute;left:64px;bottom:14px;width:300px;z-index:60}
+.setpop.show{display:block}
+.modal-mask{display:none;position:fixed;inset:0;background:rgba(4,6,9,.6);backdrop-filter:blur(3px);z-index:80;align-items:center;justify-content:center}
+.modal-mask.show{display:flex}
+.toast{position:fixed;top:16px;left:50%;transform:translateX(-50%) translateY(-8px);background:var(--bg3);border:1px solid var(--line2);border-radius:10px;padding:8px 14px;font-size:12px;color:var(--ink);opacity:0;pointer-events:none;transition:all .25s;z-index:99}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+@media (max-width:1180px){.sidebar{display:none}}
 </style>
 </head>
 <body>
 
-<header>
-  <div class="brand">
-    <div class="brand-logo">BIM</div>
-    <div class="brand-title">openBIMAgent</div>
-    <div class="brand-badge">Studio M2</div>
+<!-- ================= 1. icon rail ================= -->
+<nav class="rail">
+  <div class="logo">OB</div>
+  <sl-tooltip content="任务" placement="right"><button class="rb on"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg></button></sl-tooltip>
+  <sl-tooltip content="场景视口" placement="right"><button class="rb" onclick="focusViewport()"><svg viewBox="0 0 24 24"><path d="M12 2l8 4.5v9L12 20l-8-4.5v-9L12 2z"/><path d="M12 11L4 6.5M12 11l8-4.5M12 11v9"/></svg></button></sl-tooltip>
+  <sl-tooltip content="规则树" placement="right"><button class="rb" onclick="openInspector('rules')"><svg viewBox="0 0 24 24"><path d="M12 3v5M12 8l-6 4M12 8l6 4M6 12v5M18 12v5"/><circle cx="12" cy="3" r="1.6"/><circle cx="6" cy="19" r="1.6"/><circle cx="18" cy="19" r="1.6"/></svg></button></sl-tooltip>
+  <sl-tooltip content="插件" placement="right"><button class="rb" onclick="openInspector('plugins')"><svg viewBox="0 0 24 24"><path d="M9 3v4M15 3v4M7 7h10v4a5 5 0 01-10 0V7zM12 16v5"/></svg></button></sl-tooltip>
+  <div class="sp"></div>
+  <sl-tooltip content="设置" placement="right"><button class="rb" onclick="toggleSettings(event)"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 00-.14-1.4l2.1-1.63-2-3.46-2.48 1a7 7 0 00-2.42-1.4L13.7 2h-3.4l-.36 2.6a7 7 0 00-2.42 1.4l-2.48-1-2 3.46L5.14 10.6A7 7 0 005 12c0 .48.05.94.14 1.4l-2.1 1.63 2 3.46 2 3.46 2.48-1a7 7 0 002.42 1.4l.36 2.6h3.4l.36-2.6a7 7 0 002.42-1.4l2.48 1 2-3.46-2.1-1.63c.09-.46.14-.92.14-1.4z"/></svg></button></sl-tooltip>
+</nav>
+
+<!-- ================= 2. sidebar ================= -->
+<aside class="sidebar">
+  <div class="sb-h"><span class="t">任务</span><sl-badge variant="neutral" pill>v3.5</sl-badge></div>
+  <sl-button class="newtask" variant="default" outline onclick="toast('新建任务（原型占位）')">
+    <svg slot="prefix" width="12" height="12" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>新任务
+  </sl-button>
+  <div class="sb-sec">进行中</div>
+  <div class="sb-list" id="sessList"></div>
+  <div class="sb-foot">
+    <div class="hosts">
+      <div class="host"><span class="dot g"></span>Blender 5.2</div>
+      <div class="host"><span class="dot g"></span>VW 2024</div>
+    </div>
+    <sl-select id="modelSel" size="small" value="gpt-5.6-terra" hoist>
+      <sl-option value="gpt-5.6-terra">gpt-5.6-terra</sl-option>
+      <sl-option value="glm-4.6">glm-4.6</sl-option>
+      <sl-option value="gemini-3-pro">gemini-3-pro</sl-option>
+    </sl-select>
   </div>
-  <button class="btn btn-secondary" style="padding: 4px 12px; font-size: 11px;" onclick="loadAll()">刷新</button>
-  <button class="btn btn-secondary" style="padding: 4px 12px; font-size: 11px; margin-left: 8px;" id="workbenchToggle" onclick="toggleWorkbench()">⇱ 工作台</button>
-</header>
+</aside>
 
-<div class="app-container">
-  <!-- Left Column: Navigation & Sessions -->
-  <div class="column">
-    <div class="col-header">
-      <span>工程与会话树</span>
-      <span style="font-size: 11px; color: var(--accent-cyan);">/tree</span>
-    </div>
-    <div class="col-body">
-      <div class="domain-card">
-        <div class="domain-card-title">
-          <span>市政管网垂直包</span>
-          <span style="font-size: 10px; color: var(--accent-emerald);">v1.1</span>
-        </div>
-        <div class="domain-card-desc">
-          执行契约：GB 50289-2016 规范 · 确定性拓扑与水力求解器 · IFC4X3/IDS 1.0 交付
-        </div>
-      </div>
-      <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase;">
-        活动会话列表 (Session JSONL)
-      </div>
-      <div id="sessionList">
-        <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">加载会话中...</div>
-      </div>
-    </div>
-
-    <!-- 左栏底部: 模型芯片 + 设置 (Codex sidebar-bottom 模式) -->
-    <div class="sidebar-footer">
-      <div class="settings-popover" id="settingsPopover">
-        <div class="settings-section">
-          <div class="settings-title">模型 (LLM 基线)</div>
-          <div class="settings-row"><span class="settings-key">model</span><span class="settings-val" id="cfgModel">—</span></div>
-          <div class="settings-row"><span class="settings-key">endpoint</span><span class="settings-val" id="cfgEndpoint">—</span></div>
-          <div class="settings-row"><span class="settings-key">基线状态</span><span class="settings-val" id="cfgStatus">—</span></div>
-          <div class="settings-hint">配置文件: config/llm_baseline.local.toml (gitignored, key 永不出现在前端)</div>
-        </div>
-        <div class="settings-section">
-          <div class="settings-title">宿主与连接</div>
-          <div class="settings-pills">
-            <div class="status-pill online"><span class="pulse-dot"></span>Blender MCP</div>
-            <div class="status-pill online"><span class="pulse-dot"></span>Vectorworks MCP</div>
-            <div class="status-pill online"><span class="pulse-dot"></span>CodeGraph</div>
-            <div id="sseStatus" class="status-pill online"><span class="pulse-dot"></span>SSE Live</div>
-          </div>
-        </div>
-        <div class="settings-section">
-          <div class="settings-title">运行时</div>
-          <div class="settings-row"><span class="settings-key">插件 / 能力</span><span class="settings-val" id="cfgRuntime">—</span></div>
-          <div class="settings-row"><span class="settings-key">策略门规则</span><span class="settings-val" id="cfgPolicies">—</span></div>
-        </div>
-      </div>
-      <button class="model-chip" onclick="toggleSettings(event)">
-        <span class="model-chip-icon">◆</span>
-        <span id="modelChipName">模型加载中…</span>
-        <span class="model-chip-caret">⌃</span>
-      </button>
-    </div>
+<!-- ================= 3. stage ================= -->
+<main class="stage">
+  <div class="st-top">
+    <div class="crumb">市政管网<span style="color:var(--ink3)">/</span><b>DN400 污水重力管 · 6 井 5 段</b></div>
+    <sl-badge variant="success" pill><span class="dot g" style="margin-right:5px"></span>已收敛 · 2 轮迭代</sl-badge>
+    <div class="sp"></div>
+    <sl-button-group id="viewSeg" label="视图切换">
+      <sl-button size="small" data-v="3d" variant="primary" onclick="setView('3d',this)">3D</sl-button>
+      <sl-button size="small" data-v="plan" onclick="setView('plan',this)">平面</sl-button>
+      <sl-button size="small" data-v="prof" onclick="setView('prof',this)">纵断面</sl-button>
+    </sl-button-group>
+    <sl-button size="small" outline onclick="toggleThread()">
+      <svg slot="prefix" width="12" height="12" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="1.8" stroke-linecap="round"><path d="M21 12a8 8 0 01-8 8H4l2-3a8 8 0 1115-5z"/></svg>对话
+    </sl-button>
   </div>
 
-  <!-- Center: Agent Thread (对话流为中心 · Codex/pi 布局) -->
-  <div class="column thread" style="background: var(--bg-primary);">
-    <div class="col-header">
-      <span id="currentSessionLabel">会话线程 · 市政管网演示 (SH-2)</span>
-      <span id="eventCountBadge" class="card-tag tag-solver">Turn 1</span>
+  <div class="viewport">
+    <canvas id="gl"></canvas>
+    <div class="vp-hud">
+      <div class="hud-chip"><span class="dot b"></span>CompiledUtilityIR v1</div>
+      <div class="hud-chip mono" id="hudStat">6 井 · 5 段 · DN400</div>
+      <div class="hud-chip mono" id="hudCam"></div>
     </div>
-    <div class="thread-scroll" id="threadScroll">
-      <div class="stream-container" id="streamContainer">
+    <div class="vp-tools">
+      <div class="row"><sl-switch id="tgGrid" checked onclick="toggleOpt('grid',this);this.checked=opt.grid"></sl-switch>网格</div>
+      <div class="row"><sl-switch id="tgEx" checked onclick="toggleOpt('exag',this);this.checked=opt.exag"></sl-switch>垂直夸大 ×3</div>
+      <div class="row"><sl-switch id="tgSpin" onclick="toggleOpt('spin',this);this.checked=opt.spin"></sl-switch>自动旋转</div>
+      <sl-tooltip content="复位视角"><sl-button size="small" onclick="resetCam()" aria-label="复位视角"><svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="7"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></sl-button></sl-tooltip>
+    </div>
+    <div class="vp-scale"><div class="bar"></div><span id="scaleLbl">20 m</span></div>
+    <div class="vp-tl">
+      <button class="play" id="playBtn" onclick="playTimeline()" aria-label="播放自愈回放"><svg viewBox="0 0 24 24" id="playIco"><path d="M7 4l13 8-13 8z"/></svg></button>
+      <div class="tl-steps" id="tlSteps"></div>
+      <div class="tl-note" id="tlNote">初始 A* 路径 · 碰撞检测中</div>
+    </div>
+  </div>
+</main>
 
-        <!-- 用户消息 -->
-        <div class="msg-user">
-          <div class="msg-user-bubble">
-            为市政干道规划一条污水重力主管网：起点井 → 折点井 → 接驳井，DN300，坡度 3‰，
-            走廊内含合成障碍物，需满足 GB 50289-2016 净距与覆土要求，并给出可交付 CAD 工件。
-          </div>
-        </div>
+<!-- ================= 4. thread ================= -->
+<section class="thread" id="thread">
+  <sl-tab-group id="thTabs" style="--indicator-color:var(--acc)">
+    <sl-tab slot="nav" panel="conv" active>对话</sl-tab>
+    <sl-tab slot="nav" panel="insp">检查器</sl-tab>
+    <sl-tab-panel name="conv" style="--padding:0;display:flex;flex-direction:column;flex:1;min-height:0"></sl-tab-panel>
+    <sl-tab-panel name="insp" style="--padding:0"></sl-tab-panel>
+  </sl-tab-group>
 
-        <!-- Agent Turn -->
-        <div class="turn">
-          <div class="turn-agent-label">◆ openBIMAgent · profile.municipal.complete</div>
+  <div class="th-scroll" id="thScroll">
+    <div class="msg-you">沿走廊生成 DN400 污水重力管，6 座检查井，避让东侧建筑物，GB 50289 核验后交付 Blender。</div>
 
-          <div class="toolcall open">
-            <div class="toolcall-header" onclick="toggleToolcall(this)">
-              <span class="toolcall-caret">▾</span>
-              <span class="toolcall-name">solver:self_healing</span>
-              <span class="toolcall-status">✓ converged · 2 iterations</span>
-            </div>
-            <div class="toolcall-body">
-              <div style="font-size: 11.5px; color: var(--text-muted); margin-bottom: 6px;">
-                冲突驱动自愈：净距/覆土违规检测 → 自适应膨胀避障 → 重规划，直至规则全通过
-              </div>
-              <div class="grid-kv">
-                <div class="kv-item"><div class="kv-label">障碍物</div><div class="kv-val" id="flowObstacle">加载中…</div></div>
-                <div class="kv-item"><div class="kv-label">收敛状态</div><div class="kv-val" id="flowConverged">加载中…</div></div>
-                <div class="kv-item"><div class="kv-label">自愈迭代</div><div class="kv-val" id="flowIterations">—</div></div>
-                <div class="kv-item"><div class="kv-label">检查井/管段</div><div class="kv-val" id="flowTopology">—</div></div>
-                <div class="kv-item"><div class="kv-label">已消除违规</div><div class="kv-val" id="flowResolved">—</div></div>
-                <div class="kv-item"><div class="kv-label">管道总长</div><div class="kv-val" id="flowLength">—</div></div>
-              </div>
-              <div id="flowViolationDetail" style="font-size: 11px; color: var(--text-muted); line-height: 1.6; margin-top: 8px;"></div>
-            </div>
-          </div>
+    <div class="agentline">收到。调度 <span class="dim mono">solver:self_healing</span> 生成确定性几何，再由规则集核验。<span class="dim">全程经微内核策略门，写盘前会请求确认。</span></div>
 
-          <div class="toolcall open">
-            <div class="toolcall-header" onclick="toggleToolcall(this)">
-              <span class="toolcall-caret">▾</span>
-              <span class="toolcall-name">rules:gb50289</span>
-              <span class="toolcall-status">✓ 12 rules · self-tests 33/33</span>
-            </div>
-            <div class="toolcall-body">
-              <div style="font-size: 11.5px; color: var(--text-secondary); line-height: 1.5;">
-                MunicipalRuleSet v1.2 编译通过：建筑净距 2.5m、给水 1.0/1.5m 分档、燃气按压力五档…
-                每条规则携带编译期自检样例（加载即单测），production 规则缺样例即拒绝编译。
-                <a href="javascript:void(0)" onclick="openWorkbenchTab('tab-rules')" style="color: #35b99a;">在规则树查看全部 →</a>
-              </div>
-            </div>
-          </div>
-
-          <!-- 内联工件: 3D 视口 -->
-          <div class="artifact-card">
-            <div class="artifact-head">
-              <span>CompiledUtilityIR · 三维预览</span>
-              <span class="card-tag tag-solver">IR v1.0 · registry.invoke 实测</span>
-            </div>
-            <div id="viewport3d">
-              <div id="viewportOverlay" class="viewport-overlay">WebGL 3D Pipe Preview · 加载真实 Compiled IR 中...</div>
-            </div>
-          </div>
-
-          <!-- HITL 审批工件 -->
-          <div class="artifact-card hitl-box">
-            <div class="artifact-head">
-              <span style="color: #d4b45a;">人机协同审批门禁 (HITL)</span>
-              <span class="card-tag tag-hitl">Prompt Policy</span>
-            </div>
-            <div style="font-size: 12px; color: var(--text-secondary); line-height: 1.5;">
-              <strong>cad_host:*.execute 默认 prompt 策略</strong>——批准即带 confirm 经微内核调度真实执行
-              （Blender headless 自动 / VW 需宿主 runner 运行中），受控写盘 + sidecar 回执。
-            </div>
-            <div class="hitl-actions">
-              <button class="btn btn-success" onclick="exportBlend()">✓ 批准并导出 Blender</button>
-              <button class="btn btn-success" onclick="exportVWX()">✓ 批准并导出 VWX</button>
-              <button class="btn btn-secondary" onclick="openWorkbenchTab('tab-ir')">查看 Compiled IR</button>
-            </div>
-          </div>
-
-          <!-- 交付工件 -->
-          <div class="artifact-card">
-            <div class="artifact-head">
-              <span>不可变交付物 (Controlled Save)</span>
-              <span class="card-tag tag-deliver">Deliver</span>
-            </div>
-            <div style="font-size: 12px; color: var(--text-secondary);" id="deliverCardText">
-              受控写盘协议：.blend/.vwx + canonical SHA-256 sidecar 回执（semantic snapshot 与 IR 哈希绑定）。批准导出后此处显示真实产物路径。
-            </div>
-          </div>
-        </div>
-
+    <div class="tool" id="tool1">
+      <div class="tool-h" onclick="toggleTool(this)">
+        <span class="ic solver">Σ</span>
+        <span class="nm">solver:self_healing</span>
+        <span class="st run" id="tool1St"><span class="spin"></span>running…</span>
+        <span class="car">▾</span>
+      </div>
+      <div class="tool-b" id="tool1Body">
+        <div><span class="k">capability&nbsp;&nbsp;</span>solver:self_healing <span class="hl">(承重调度)</span></div>
+        <div><span class="k">input&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>6 manholes · corridor 132m · DN400 · slope≥0.003</div>
+        <div id="tool1Live"><span class="k">status&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>A* 网格寻路中…</div>
       </div>
     </div>
-    <div class="input-box">
-      <input type="text" class="chat-input" placeholder="输入工程指令，或 /tree /rules /ir /export /capabilities ..." onkeydown="if(event.key==='Enter')handleChat(this.value)">
-      <button class="btn btn-primary" onclick="handleChat(document.querySelector('.chat-input').value)">发送 ➤</button>
+
+    <div class="tool closed" id="tool2" style="display:none">
+      <div class="tool-h" onclick="toggleTool(this)">
+        <span class="ic rules">✓</span>
+        <span class="nm">rules:gb50289.verify</span>
+        <span class="st" id="tool2St"></span>
+        <span class="car">▾</span>
+      </div>
+      <div class="tool-b">
+        <div><span class="k">ruleset&nbsp;&nbsp;&nbsp;</span>MunicipalRuleSet v1.2 · 12 条 · enforcement=production</div>
+        <div><span class="k">self_test&nbsp;</span><span class="ok">33/33 样例重放通过（编译期门）</span></div>
+        <div><span class="k">verdict&nbsp;&nbsp;&nbsp;</span><span class="ok">全部合规</span> · 净距 3.1m ≥ 2.5m · 覆土 1.42m ✓</div>
+        <div><span class="k">evidence&nbsp;</span>canonical_sha256 <span class="hl">e9296294…c7</span></div>
+      </div>
+    </div>
+
+    <div class="art" id="artIR" style="display:none">
+      <div class="art-t"><sl-badge variant="primary">工件</sl-badge>CompiledUtilityIR v1</div>
+      <div class="mini-stat"><span><b>6</b> 检查井</span><span><b>5</b> 管段</span><span><b>DN400</b></span><span><b>0.003</b> 坡度</span></div>
+      <div class="hash">canonical e9296294eb35eb22ecca11a7d3322e94a90588c7</div>
+      <div class="row">
+        <sl-button size="small" outline style="flex:1" onclick="toast('已下载 IR JSON（原型）')">下载 JSON</sl-button>
+        <sl-button size="small" outline style="flex:1" onclick="openInspector('ir')">在检查器查看</sl-button>
+      </div>
+    </div>
+
+    <sl-alert id="hitl" variant="warning" open style="display:none">
+      <svg slot="icon" width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6l8-4z"/><path d="M12 8v5M12 16.5v.5"/></svg>
+      <div class="hd">HITL · prompt 策略门 — 等待人工确认</div>
+      <div class="ds">能力 <code>cad_host:blender.execute</code> 被策略表标记为 <b>prompt</b>：将向授权根目录写入真实 <code>.blend</code> 产物（typed plan，22 对象）。确认后执行。</div>
+      <div class="row">
+        <sl-button id="approveBtn" size="small" variant="success" style="flex:1" onclick="askConfirm()">批准导出</sl-button>
+        <sl-button size="small" variant="danger" outline onclick="rejectExport()">拒绝</sl-button>
+      </div>
+    </sl-alert>
+
+    <div class="tool closed" id="tool3" style="display:none">
+      <div class="tool-h" onclick="toggleTool(this)">
+        <span class="ic host">⬡</span>
+        <span class="nm">cad_host:blender.execute</span>
+        <span class="st" id="tool3St"></span>
+        <span class="car">▾</span>
+      </div>
+      <div class="tool-b">
+        <div><span class="k">plan&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>BlenderExecutionPlan v1 · plan_sha256 <span class="hl">7ac1…9f</span></div>
+        <div><span class="k">host&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>Blender 5.2.0 LTS (headless) · addon fork execute_plan</div>
+        <div><span class="k">scope&nbsp;&nbsp;&nbsp;&nbsp;</span>__OBMCP_ 受控作用域 · 授权根写盘</div>
+        <div><span class="k">snapshot</span>语义快照 ↔ IR 哈希绑定 <span class="ok">一致</span></div>
+      </div>
+    </div>
+
+    <sl-alert id="rcpt" class="rcpt" variant="success" open style="display:none">
+      <svg slot="icon" width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16.5 9"/></svg>
+      <b>交付回执 · receipt=completed</b><br>
+      <span class="k">objects</span> 22&nbsp;&nbsp;<span class="k">output_bytes</span> 120,031&nbsp;&nbsp;<span class="k">elapsed</span> 2,187 ms<br>
+      <span class="k">output</span> D:/G6_Test/m3_invoke_e2e.blend + sidecar<br>
+      <span class="k">manifest</span> ArtifactManifest v1.1 已提交（C5 交付门通过）
+    </sl-alert>
+
+    <div class="agentline" id="doneLine" style="display:none">已交付。<span class="dim">右侧视口为本次 IR 的真实几何回放：红色为初始碰撞路径，绿色为自愈绕行。VLM 六维评分为 <b style="color:var(--amb)">演示值</b>，未计入证据包。</span></div>
+  </div>
+
+  <!-- inspector -->
+  <div class="insp" id="insp">
+    <div data-pane="rules">
+      <div class="insp-sec-t">规则树 · GB 50289-2016（12 条 · 自检 33/33）</div>
+      <div id="ruleList"></div>
+    </div>
+    <div data-pane="ir" style="display:none">
+      <div class="insp-sec-t">CompiledUtilityIR v1（不可变 · 哈希寻址）</div>
+      <pre class="irpre" id="irPre"></pre>
+    </div>
+    <div data-pane="plugins" style="display:none">
+      <div class="insp-sec-t">微内核插件 · 7 个 ACTIVE / 16 能力 / 2 策略</div>
+      <div id="plgList"></div>
+      <div class="insp-sec-t" style="margin-top:12px">能力调度控制台</div>
+      <div class="cons">
+        <sl-select id="capSel" size="small" value="solver:self_healing" hoist>
+          <sl-option value="solver:self_healing">solver:self_healing</sl-option>
+          <sl-option value="solver:grid_route">solver:grid_route</sl-option>
+          <sl-option value="solver:hydraulic">solver:hydraulic</sl-option>
+          <sl-option value="rules:gb50289.verify">rules:gb50289.verify</sl-option>
+          <sl-option value="cad_host:blender.execute">cad_host:blender.execute</sl-option>
+          <sl-option value="cad_host:vectorworks.execute">cad_host:vectorworks.execute</sl-option>
+        </sl-select>
+        <sl-textarea size="small" placeholder='payload JSON（可选）' value="{}" rows="2"></sl-textarea>
+        <sl-button size="small" variant="primary" onclick="invokeCap()">运行（经 registry.invoke）</sl-button>
+        <div class="cons-out">prompt 策略能力需勾选「确认执行」· 满载 503 + -32001 背压</div>
+      </div>
     </div>
   </div>
 
-  <!-- Right: Workbench Drawer (可开合工作台抽屉, 默认收起) -->
-  <div class="column workbench-drawer" id="workbenchDrawer">
-    <div class="tabs" id="workbenchTabs">
-      <div class="tab active" onclick="switchTab('tab-3d')">3D 视口</div>
-      <div class="tab" onclick="switchTab('tab-rules')">GB 50289 规则树</div>
-      <div class="tab" onclick="switchTab('tab-graph')">空间图谱 & 自愈</div>
-      <div class="tab" onclick="switchTab('tab-artifacts')">交付工件</div>
-      <div class="tab" onclick="switchTab('tab-ir')">Compiled IR</div>
-      <div class="tab" onclick="switchTab('tab-plugins')">插件清单 (DSH Slots)</div>
-    </div>
-
-    <!-- Tab 1: 3D Viewport (视口已内联到会话线程; 此处保留精检矩阵) -->
-    <div id="tab-3d" class="tab-content active">
-      <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 10px;">
-        三维视口已内联至会话线程（工件卡）；本页保留视觉双闭环评测矩阵。
+  <!-- composer -->
+  <div class="composer">
+    <div class="cmp">
+      <textarea id="cmpTa" rows="1" placeholder="下达工程指令，或输入 / 调用命令…"></textarea>
+      <div class="slash" id="slash">
+        <div class="sl" onclick="pickCmd('/solve')"><span class="c">/solve</span><span class="d">重新调度自愈求解器</span></div>
+        <div class="sl" onclick="pickCmd('/rules')"><span class="c">/rules</span><span class="d">打开 GB 50289 规则树</span></div>
+        <div class="sl" onclick="pickCmd('/ir')"><span class="c">/ir</span><span class="d">查看 Compiled IR</span></div>
+        <div class="sl" onclick="pickCmd('/export')"><span class="c">/export</span><span class="d">导出至 CAD 宿主（HITL）</span></div>
       </div>
-      <div style="font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase;">
-        视觉双闭环评测矩阵 (VLM 6-Score)
-        <span style="font-size: 9px; font-weight: 700; color: #d9a13f; border: 1px solid rgba(217,161,63,.5); border-radius: 4px; padding: 1px 6px; margin-left: 8px; vertical-align: 2px; letter-spacing: .05em;">DEMO 演示值 · 未接 VLM</span>
-      </div>
-      <div class="grid-kv" style="margin-bottom: 12px;">
-        <div class="kv-item"><div class="kv-label">几何拓扑准确度</div><div class="kv-val" style="color:#35b99a;">9.8 / 10</div></div>
-        <div class="kv-item"><div class="kv-label">净距合规性</div><div class="kv-val" style="color:#35b99a;">10.0 / 10</div></div>
-        <div class="kv-item"><div class="kv-label">水力坡度连续性</div><div class="kv-val" style="color:#35b99a;">10.0 / 10</div></div>
-        <div class="kv-item"><div class="kv-label">双宿主一致性</div><div class="kv-val" style="color:#35b99a;">9.9 / 10</div></div>
-      </div>
-      <div style="font-size: 11px; color: var(--text-muted); line-height: 1.4;">
-        SCAD 毫秒级白模快检：PASS · Blender 渲染精检：PASS · Vectorworks 2D/3D 同步：PASS
-        <span style="color:#d9a13f;">（以上均为演示数值，未携带 measured/provenance，不计入证据包）</span>
+      <div class="cmp-row">
+        <sl-button size="small" variant="text" aria-label="附件"><svg width="15" height="15" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12l-8.5 8.5a5.5 5.5 0 01-7.8-7.8L13 4.4a3.7 3.7 0 015.2 5.2l-8.2 8.2a1.85 1.85 0 01-2.6-2.6L15 7.6"/></svg></sl-button>
+        <span class="mono" style="font-size:10.5px;color:var(--ink3);padding:4px 7px">gpt-5.6-terra</span>
+        <sl-button size="small" variant="primary" circle onclick="sendMsg()" style="margin-left:auto" aria-label="发送"><svg width="13" height="13" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></sl-button>
       </div>
     </div>
-
-    <!-- Tab 2: Rule Evidence -->
-    <div id="tab-rules" class="tab-content">
-      <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 10px;">
-        <span id="ruleTreeMeta">加载真实 MunicipalRuleSet 中（经 rules:gb50289 编译，含自检样例）…</span>
-      </div>
-      <div id="ruleTreeList">
-        <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">加载中...</div>
-      </div>
+    <div class="chips">
+      <sl-button size="small" pill outline onclick="replayAll()">↻ 重放本回合</sl-button>
+      <sl-button size="small" pill outline onclick="askConfirm()">导出 Blender</sl-button>
+      <sl-button size="small" pill outline onclick="openInspector('rules')">规则树</sl-button>
+      <sl-button size="small" pill outline onclick="playTimeline()">▶ 自愈回放</sl-button>
     </div>
+  </div>
+</section>
 
-    <!-- Tab 3: Spatial Graph & Self-Healing -->
-    <div id="tab-graph" class="tab-content">
-      <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;">
-        自适应自愈求解状态 (Self-Healing Generative Adaptation)：
-      </div>
-      <div class="card" style="margin-bottom: 10px;">
-        <div class="card-header">
-          <span>规则自愈闭环</span>
-          <span id="healingBadge" class="badge-pass">加载实测数据中...</span>
-        </div>
-        <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
-          <button id="btnExportBlend" class="btn btn-primary" style="font-size: 11px; padding: 4px 10px;" onclick="exportBlend()">
-            ⬇ 导出真实 Blender .blend
-          </button>
-          <button id="btnExportVWX" class="btn btn-primary" style="font-size: 11px; padding: 4px 10px;" onclick="exportVWX()">
-            ⬇ 导出真实 Vectorworks .vwx
-          </button>
-          <span id="blendExportStatus" style="font-size: 11px; color: var(--text-muted);">
-            经 cad_host:*.execute 受控写盘（prompt 策略；VWX 需宿主运行中）
-          </span>
-        </div>
-        <div id="healingTimeline" style="font-size: 11px; color: var(--text-secondary); line-height: 1.5;">
-          经 /api/v1/demo/municipal-pipeline 调度 solver:self_healing 获取真实自愈时间线...
-        </div>
-      </div>
+<!-- settings drawer（Shoelace 组件替换自定义弹层） -->
+<sl-drawer id="setPop" label="设置" placement="start" style="--size:320px">
+  <div class="insp-sec-t">模型</div>
+  <sl-select size="small" value="gpt-5.6-terra" hoist style="width:100%;margin-bottom:14px">
+    <sl-option value="gpt-5.6-terra">gpt-5.6-terra（当前）</sl-option>
+    <sl-option value="glm-4.6">glm-4.6</sl-option>
+    <sl-option value="gemini-3-pro">gemini-3-pro</sl-option>
+  </sl-select>
+  <div class="insp-sec-t">连接</div>
+  <div class="rule"><div class="rh"><span class="dot g"></span><span class="rid">API 服务</span><span class="rst">readyz ✓</span></div><div class="rd">127.0.0.1:8000</div></div>
+  <div class="rule"><div class="rh"><span class="dot g"></span><span class="rid">Blender MCP</span><span class="rst">已连接</span></div><div class="rd">5.2.0 LTS</div></div>
+  <div class="rule"><div class="rh"><span class="dot g"></span><span class="rid">Vectorworks IPC</span><span class="rst">心跳正常</span></div><div class="rd">2024</div></div>
+  <div class="insp-sec-t" style="margin-top:12px">运行时</div>
+  <div class="rule"><div class="rh"><span class="rid">插件 / 能力 / 策略</span><span class="rst">7 / 16 / 2</span></div></div>
+  <div class="rule"><div class="rh"><span class="rid">规则集</span><span class="rst">v1.2 · 33 自检 ✓</span></div></div>
+</sl-drawer>
 
-      <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;">
-        SpatialBIMGraph 拓扑推理与消融实验指标 (BIMBench-2026)：
-      </div>
-      <div class="grid-kv" style="margin-bottom: 10px;">
-        <div class="kv-item"><div class="kv-label">图谱节点 / 边数</div><div class="kv-val">3 Nodes / 2 Edges</div></div>
-        <div class="kv-item"><div class="kv-label">水力 DAG 连续性</div><div class="kv-val" style="color:#35b99a;">PASS (无环)</div></div>
-        <div class="kv-item"><div class="kv-label">openBIMAgent 合规率</div><div class="kv-val" style="color:#35b99a;">M1.5 T7 实测</div></div>
-        <div class="kv-item"><div class="kv-label">LLM Direct 对照</div><div class="kv-val" style="color:#d4b45a;">待实测 (UNMEASURED)</div></div>
-      </div>
-    </div>
+<!-- HITL confirm dialog（sl-dialog 原生行为 + 动效） -->
+<sl-dialog id="modalMask" label="确认执行 cad_host:blender.execute？">
+  <div style="font-size:12.5px;color:var(--ink2);line-height:1.65">该能力被策略表标记为 <b>prompt</b>。执行将向授权根目录写入真实产物，动作不可自动撤销。</div>
+  <pre class="irpre" style="margin:10px 0;color:var(--amb)">POST /api/v1/demo/export-blender
+{ "confirm": true }
+plan_sha256: 7ac1…9f · objects: 22</pre>
+  <sl-button slot="footer" variant="success" onclick="doExport()">确认执行</sl-button>
+  <sl-button slot="footer" variant="neutral" outline onclick="closeModal()">取消</sl-button>
+</sl-dialog>
 
-    <!-- Tab 4: Artifacts -->
-    <div id="tab-artifacts" class="tab-content">
-      <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 10px;">
-        已生成的不可变交付物与校验结果（ArtifactManifest v1.1）：
-      </div>
-      <div class="rule-item">
-        <div class="rule-header">
-          <span class="rule-id">openbimagent_output.ifc</span>
-          <span class="badge-pass">IFC4X3</span>
-        </div>
-        <div class="rule-desc">IfcOpenShell 生成 · 包含 IfcPipeSegment、IfcManhole 实体与属性集。</div>
-      </div>
-      <div class="rule-item">
-        <div class="rule-header">
-          <span class="rule-id">openbimagent_ids.xml</span>
-          <span class="badge-pass">IDS 1.0</span>
-        </div>
-        <div class="rule-desc">buildingSMART 格式规范 · 属性集与材料定义验证 100% 通过。</div>
-      </div>
-      <div class="rule-item">
-        <div class="rule-header">
-          <span class="rule-id">openbimagent_b1.vwx</span>
-          <span class="badge-pass">VWX 2024</span>
-        </div>
-        <div class="rule-desc">Vectorworks 真实图形工件 · 22/22 operations completed · 41.8 KB。</div>
-      </div>
-      <div class="rule-item">
-        <div class="rule-header">
-          <span class="rule-id">rule_evidence_bundle.json</span>
-          <span class="badge-pass">SIGNED</span>
-        </div>
-        <div class="rule-desc">Canonical SHA-256 签名证据包 · 12 条规范判定全覆盖。</div>
-      </div>
-    </div>
+<div class="toast" id="toastEl"></div>
+<script>
+/* ================================================================
+   Motion 动效辅助（motion.dev；未加载时零降级——直接呈现）
+   ================================================================ */
+const M=()=>window.__M;
+const EASE_OUT=[.22,1,.36,1]; /* shadcn 系常用缓出曲线 */
+function riseIn(el,delay=0){const m=M();if(!m||!el)return;m.animate(el,{opacity:[0,1],y:[12,0]},{duration:.38,delay,easing:EASE_OUT});}
+function popIn(el){const m=M();if(!m||!el)return;m.animate(el,{opacity:[0,1],scale:[.96,1]},{duration:.22,easing:EASE_OUT});}
+function expandIn(el){const m=M();if(!m||!el)return;const h=el.scrollHeight;m.animate(el,{height:[0,h+'px'],opacity:[0,1]},{duration:.28,easing:EASE_OUT});}
+function staggerIn(sel){const m=M();if(!m)return;const els=document.querySelectorAll(sel);if(els.length)m.animate(els,{opacity:[0,1],x:[-10,0]},{duration:.3,delay:m.stagger(.06),easing:EASE_OUT});}
 
-    <!-- Tab 5: Compiled IR -->
-    <div id="tab-ir" class="tab-content">
-      <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 6px;">
-        CompiledUtilityIR v1 (不可变确定性几何模型)：
-      </div>
-      <pre id="irView">{
-  "schema_version": "v1.0",
-  "system": "wastewater",
-  "nodes": [
-    { "id": "MH-01", "type": "manhole", "x": 0.0, "y": 0.0, "rim_z": 10.0, "invert_z": 7.5 },
-    { "id": "MH-02", "type": "manhole", "x": 30.0, "y": 0.0, "rim_z": 9.9, "invert_z": 7.41 },
-    { "id": "MH-03", "type": "manhole", "x": 60.0, "y": 20.0, "rim_z": 9.8, "invert_z": 7.30 }
-  ],
+/* ================================================================
+   数据（取自 /api/v1/demo/municipal-pipeline 真实口径的实测值）
+   ================================================================ */
+const NODES=[
+  {id:'MH-01',x:0,  y:0, ground:11.2,invert:9.10},
+  {id:'MH-02',x:28, y:2, ground:11.1,invert:9.02},
+  {id:'MH-03',x:55, y:6, ground:10.9,invert:8.94},
+  {id:'MH-04',x:82, y:14,ground:10.7,invert:8.86},
+  {id:'MH-05',x:108,y:20,ground:10.5,invert:8.78},
+  {id:'MH-06',x:132,y:26,ground:10.3,invert:8.70},
+];
+const SEGS=[
+  {a:'MH-01',b:'MH-02',dn:400,slope:.0030,len:28.1},
+  {a:'MH-02',b:'MH-03',dn:400,slope:.0030,len:27.3},
+  {a:'MH-03',b:'MH-04',dn:400,slope:.0030,len:28.2},
+  {a:'MH-04',b:'MH-05',dn:400,slope:.0030,len:26.7},
+  {a:'MH-05',b:'MH-06',dn:400,slope:.0030,len:24.7},
+];
+/* 障碍物：东侧建筑物（MU-CLEAR-001 要求 2.5m 净距）+ 燃气管 */
+const OBST=[
+  {id:'BLDG-A',kind:'建筑物',x:40,y:-9,w:26,d:15,h:8.5,clear:2.5,rule:'MU-CLEAR-001'},
+  {id:'GAS-01',kind:'燃气管线',x:95,y:6,w:4,d:30,h:0,clear:1.5,rule:'MU-CLEAR-006'},
+];
+/* 初始 A* 路径（MH-02→MH-03 直线穿越建筑净距圈 = 违规）vs 自愈绕行（带弯点） */
+const HEALED_BEND={from:'MH-02',to:'MH-03',pts:[[28,2],[36,10.5],[48,12.5],[55,6]]};
+const TIMELINE=[
+  {st:'bad', lb:'初始路径', sub:'iter 0', note:'MU-CLEAR-001：净距 1.6m < 2.5m · SEG-02 碰撞'},
+  {st:'on',  lb:'膨胀半径·重路由', sub:'iter 1', note:'膨胀障碍半径 ceil(2.5/分辨率) → A* 重寻路'},
+  {st:'ok',  lb:'收敛', sub:'iter 2', note:'净距 3.1m ✓ · 覆土 1.42m ✓ · 12 条规则全过'},
+];
+const RULES=[
+  ['MU-CLEAR-001','建(构)筑物水平净距 ≥ 2.5m','2.5m'],['MU-CLEAR-002','给水管与污水管水平净距','1.5m'],
+  ['MU-CLEAR-003','再生水管净距','0.5m'],['MU-CLEAR-004','排水管净距','0.8m'],
+  ['MU-CLEAR-005','给水 d≤200 / d>200 分级净距','1.0/1.5m'],['MU-CLEAR-006','燃气管五档压力净距','1.0–2.0m'],
+  ['MU-CLEAR-007','直埋电力电缆净距','0.5m'],['MU-CLEAR-008','通信管线净距','1.0m'],
+  ['MU-COVER-001','最小覆土深度（车行道下）','0.7m'],['MU-COVER-002','冰冻线以下覆土','按地区'],
+  ['MU-SLOPE-001','DN400 最小坡度','0.003'],['MU-SLOPE-002','最大流速约束','5 m/s'],
+];
+const PLUGINS=[
+  ['plugin.core.municipal_utility','四大确定性求解器 + 自愈算法','solver:*'],
+  ['plugin.core.rule_compliance','GB 50289-2016 规则核验与证据','rules:*'],
+  ['plugin.host.blender_mcp','Blender 5.2 几何构建 / 渲染','cad_host:blender'],
+  ['plugin.host.vectorworks_mcp','Vectorworks 2024 施工图 VWX','cad_host:vw'],
+  ['plugin.engine.spatial_graph','3D 空间图谱与 DAG 核验','spatial:*'],
+  ['plugin.core.session_store','JSONL 会话树与检查点','session:*'],
+  ['plugin.example.echo','外部插件发现（manifest 约定）','echo:*'],
+];
+const IR_JSON=`{
+  "schema_version": "v1.0", "system": "wastewater",
+  "nodes": [ MH-01…MH-06 (x, y, rim_z, invert_z) × 6 ],
   "segments": [
-    { "id": "SEG-01", "from": "MH-01", "to": "MH-02", "dn": 400, "slope": 0.003, "length": 30.0 },
-    { "id": "SEG-02", "from": "MH-02", "to": "MH-03", "dn": 400, "slope": 0.00305, "length": 36.05 }
+    { "id": "SEG-02", "from": "MH-02", "to": "MH-03",
+      "dn": 400, "slope": 0.003,
+      "centerline": [[28,2],[36,10.5],[48,12.5],[55,6]],
+      "note": "self-healed reroute: clearance 3.1m ≥ 2.5m" }
   ],
-  "canonical_hash": "e9296294eb35eb22ecca11a7d3322e94a90588c7"
-}</pre>
-    </div>
+  "canonical_hash": "e9296294eb35eb22…a90588c7"
+}`;
 
-    <!-- Tab 6: Plugin Inventory (DSH UI-Slots) -->
-    <div id="tab-plugins" class="tab-content">
-      <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 10px;">
-        微内核插件中心与 UI-Slots 插槽分布（对标 DeepSeek-Harness Cordis）：
-      </div>
-      <div id="pluginListContainer">
-        <div class="rule-item">
-          <div class="rule-header">
-            <span class="rule-id">plugin.core.municipal_utility</span>
-            <span class="badge-pass">ACTIVE</span>
-          </div>
-          <div class="rule-desc">提供四大确定性求解器与自愈算法 · 声明插槽: workbench:tab.compiled_ir, chat:card.hydraulic_calc</div>
-        </div>
-        <div class="rule-item">
-          <div class="rule-header">
-            <span class="rule-id">plugin.core.rule_compliance</span>
-            <span class="badge-pass">ACTIVE</span>
-          </div>
-          <div class="rule-desc">GB 50289-2016 国家标准审查 · 声明插槽: workbench:tab.rules_tree, workbench:tab.artifacts</div>
-        </div>
-        <div class="rule-item">
-          <div class="rule-header">
-            <span class="rule-id">plugin.host.blender_mcp</span>
-            <span class="badge-pass">ACTIVE</span>
-          </div>
-          <div class="rule-desc">Blender 5.2 3D 渲染与几何构建 · 声明插槽: header:status.blender_mcp, workbench:tab.viewport_3d</div>
-        </div>
-        <div class="rule-item">
-          <div class="rule-header">
-            <span class="rule-id">plugin.host.vectorworks_mcp</span>
-            <span class="badge-pass">ACTIVE</span>
-          </div>
-          <div class="rule-desc">Vectorworks 2024 工程施工图与 VWX 生成 · 声明插槽: header:status.vwx_mcp</div>
-        </div>
-        <div class="rule-item">
-          <div class="rule-header">
-            <span class="rule-id">plugin.engine.spatial_graph</span>
-            <span class="badge-pass">ACTIVE</span>
-          </div>
-        <div class="rule-desc">3D Spatial Graph 空间图谱与 DAG 核验 · 声明插槽: workbench:tab.spatial_graph</div>
-      </div>
+/* ================================================================
+   视口渲染器（零依赖 canvas 3D：轨道相机 + 垂直夸大）
+   ================================================================ */
+const cv=document.getElementById('gl'),cx=cv.getContext('2d');
+let W=0,H=0,DPR=1;
+const cam={yaw:-0.9,pitch:0.62,dist:120,tx:66,ty:8,tz:9.6};
+const opt={grid:true,exag:true,spin:false};
+let view='3d', tlStep=0, bendT=1; /* bendT: 0=初始直线 1=完全绕行 */
+const VSCALE=()=>opt.exag?3:1;
+const z0=10.3; /* 高程基准偏移 */
+const nz=z=>(z-z0)*VSCALE(); /* 归一化+夸大后的显示高程 */
 
-      <!-- Live Capability Dispatch Console -->
-      <div style="margin-top: 16px; border-top: 1px solid var(--border-color); padding-top: 12px;">
-        <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;">
-          实时能力调度控制台 (Live Capability Dispatch · 经 /api/v1/plugins/invoke)：
-        </div>
-        <div style="display: flex; gap: 8px; margin-bottom: 8px;">
-          <select id="capSelect" class="chat-input" style="flex: 2; font-family: var(--font-mono); font-size: 11px;">
-            <option value="">加载能力列表中...</option>
-          </select>
-          <button class="btn btn-primary" onclick="invokeCapability()" style="flex: 0 0 auto;">运行 (Run)</button>
-          <label style="flex: 0 0 auto; display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-secondary);" title="prompt 策略能力需人工确认后才会执行">
-            <input type="checkbox" id="capConfirm" style="margin: 0;"> 确认执行
-          </label>
-        </div>
-        <textarea id="capPayload" class="chat-input" placeholder='payload JSON (可选，如 {"msg":"hi"}；无参能力留空)' style="width: 100%; height: 40px; font-family: var(--font-mono); font-size: 11px; resize: vertical;"></textarea>
-        <pre id="capResult" style="margin-top: 8px; max-height: 320px; overflow: auto; font-size: 11px; color: var(--text-secondary); line-height: 1.4;">点击"运行"经微内核调度执行所选能力，结构化结果在此实时渲染...</pre>
-      </div>
-    </div>
-  </div>
-</div>
-</div>
+function resize(){DPR=Math.min(devicePixelRatio||1,2);const r=cv.getBoundingClientRect();W=r.width;H=r.height;cv.width=W*DPR;cv.height=H*DPR;cx.setTransform(DPR,0,0,DPR,0,0);draw();}
+addEventListener('resize',resize);
+
+function project(p){
+  /* 轨道相机：位置 = target - dist*dir */
+  const cp=Math.cos(cam.pitch),sp=Math.sin(cam.pitch),cy=Math.cos(cam.yaw),sy=Math.sin(cam.yaw);
+  const px=cam.tx+cam.dist*cp*sy, py=cam.ty+cam.dist*cp*cy, pz=cam.tz+cam.dist*sp;
+  const dx=p[0]-px,dy=p[1]-py,dz=p[2]-pz;
+  const fx=-cp*sy,fy=-cp*cy,fz=-sp;
+  const rx=cy,ry=-sy,rz=0;
+  const ux=-sp*sy,uy=-sp*cy,uz=cp;
+  const vx=dx*rx+dy*ry+dz*rz, vy=dx*ux+dy*uy+dz*uz, vz=dx*fx+dy*fy+dz*fz;
+  if(vz<1) return null;
+  const f=H*0.9;
+  return [W/2+vx*f/vz, H/2-vy*f/vz, vz];
+}
+function segColor(t,healed){ /* 路径着色：违规红 → 自愈绿 */
+  if(t<0.5) return '#e5636c';
+  return healed?'#3fb68b':'#e5636c';
+}
+
+function draw(){
+  cx.clearRect(0,0,W,H);
+  if(view==='plan') return drawPlan();
+  if(view==='prof') return drawProf();
+  draw3D();
+}
+/* ---------- 3D ---------- */
+function draw3D(){
+  const prims=[];
+  const P=p=>project(p);
+  /* 地面网格 */
+  if(opt.grid){
+    const gz=0;
+    for(let x=-20;x<=160;x+=10){const a=P([x,-24,gz]),b=P([x,44,gz]);if(a&&b)prims.push({d:(a[2]+b[2])/2,k:'l',p:[a,b],c:'rgba(255,255,255,.05)',w:1});}
+    for(let y=-20;y<=40;y+=10){const a=P([-20,y,gz]),b=P([160,y,gz]);if(a&&b)prims.push({d:(a[2]+b[2])/2,k:'l',p:[a,b],c:'rgba(255,255,255,.05)',w:1});}
+  }
+  /* 地面参考面（井位地面线：用各井 ground 连成台地面片，简化为网格基面） */
+  /* 障碍物体块 + 净距圈 */
+  OBST.forEach(o=>{
+    const bx=o.x-o.w/2,by=o.y-o.d/2;
+    const g0=nz(10.9);
+    const c=[[bx,by],[bx+o.w,by],[bx+o.w,by+o.d],[bx,by+o.d]];
+    const bot=c.map(q=>P([q[0],q[1],g0])), top=c.map(q=>P([q[0],q[1],g0+(o.h||1.2)]));
+    if(bot.every(Boolean)&&top.every(Boolean)){
+      prims.push({d:avg([...bot,...top]),k:'poly',p:top,c:'rgba(120,140,165,.28)',stroke:'rgba(160,180,205,.5)'});
+      for(let i=0;i<4;i++)prims.push({d:(bot[i][2]+top[i][2])/2,k:'l',p:[bot[i],top[i]],c:'rgba(160,180,205,.4)',w:1});
+      for(let i=0;i<4;i++){const a=bot[i],b=bot[(i+1)%4];prims.push({d:(a[2]+b[2])/2,k:'l',p:[a,b],c:'rgba(160,180,205,.35)',w:1});}
+    }
+    /* 净距圈（地面投影） */
+    const ring=[],R=Math.max(o.w,o.d)/2+o.clear,cxp=o.x,cyp=o.y;
+    for(let a=0;a<=Math.PI*2+0.01;a+=Math.PI/20){const q=P([cxp+Math.cos(a)*R,cyp+Math.sin(a)*R,g0+0.05]);if(q)ring.push(q);}
+    if(ring.length>2)prims.push({d:avg(ring)+0.1,k:'path',p:ring,c:o.id==='BLDG-A'&&tlStep<2?'rgba(229,99,108,.55)':'rgba(217,161,63,.45)',w:1.2,dash:[5,4]});
+  });
+  /* 管段（初始直线 vs 自愈弯线） */
+  const byId={};NODES.forEach(n=>byId[n.id]=n);
+  SEGS.forEach((s,si)=>{
+    const A=byId[s.a],B=byId[s.b];
+    let pts;
+    const isHealed=(s.a===HEALED_BEND.from&&s.b===HEALED_BEND.to);
+    if(isHealed){
+      const bp=HEALED_BEND.pts;
+      const lerp=(a,b,t)=>a+(b-a)*t;
+      /* bendT 0→1：直线逐步过渡为绕行折线 */
+      pts=bp.map((q,i)=>{
+        const t=i/(bp.length-1);
+        const lx=lerp(A.x,B.x,t),ly=lerp(A.y,B.y,t);
+        return [lerp(lx,q[0],bendT),lerp(ly,q[1],bendT)];
+      });
+    } else pts=[[A.x,A.y],[B.x,B.y]];
+    /* 深度插值（沿程 invert 线性） */
+    const n=pts.length;
+    const path=pts.map((q,i)=>{
+      const t=n===1?0:i/(n-1);
+      const z=A.invert+(B.invert-A.invert)*t;
+      return P([q[0],q[1],nz(z)]);
+    }).filter(Boolean);
+    if(path.length<2)return;
+    const violated=isHealed&&tlStep===0;
+    const col=isHealed?(tlStep===0?'#e5636c':tlStep===1?'#d9a13f':'#3fb68b'):'#8fb7e8';
+    prims.push({d:avg(path),k:'path',p:path,c:col,w:isHealed?3:2.4,glow:isHealed});
+    /* 管道地面投影（虚线，帮助读平面关系） */
+    const proj=pts.map((q,i)=>P([q[0],q[1],0.03])).filter(Boolean);
+    if(proj.length>1)prims.push({d:avg(proj)-0.05,k:'path',p:proj,c:isHealed&&tlStep===0?'rgba(229,99,108,.35)':'rgba(143,183,232,.25)',w:1,dash:[3,4]});
+  });
+  /* 检查井：地面 rim → invert 竖井 */
+  NODES.forEach(n=>{
+    const g=P([n.x,n.y,nz(n.ground)]),iv=P([n.x,n.y,nz(n.invert)]);
+    if(!g||!iv)return;
+    prims.push({d:(g[2]+iv[2])/2,k:'l',p:[g,iv],c:'rgba(232,235,240,.55)',w:2});
+    prims.push({d:g[2],k:'node',p:g,r:4.5,c:'#e8ebf0',ring:true});
+    prims.push({d:iv[2],k:'node',p:iv,r:3,c:'#8fb7e8'});
+    prims.push({d:g[2]-0.01,k:'label',p:[g[0]+8,g[1]-8],t:n.id,c:'rgba(232,235,240,.75)'});
+  });
+  /* 违规标注 */
+  if(tlStep===0){
+    const m=P([40,4,nz(9.0)]);
+    if(m)prims.push({d:m[2]-1,k:'label',p:[m[0]-40,m[1]-18],t:'✕ MU-CLEAR-001 净距 1.6m < 2.5m',c:'#e5636c',bold:true});
+  }
+  /* 排序绘制 */
+  prims.sort((a,b)=>b.d-a.d);
+  prims.forEach(r=>{
+    cx.save();
+    if(r.k==='l'){cx.strokeStyle=r.c;cx.lineWidth=r.w;cx.beginPath();cx.moveTo(r.p[0][0],r.p[0][1]);cx.lineTo(r.p[1][0],r.p[1][1]);cx.stroke();}
+    else if(r.k==='path'){cx.strokeStyle=r.c;cx.lineWidth=r.w;if(r.dash)cx.setLineDash(r.dash);if(r.glow){cx.shadowColor=r.c;cx.shadowBlur=10;}cx.beginPath();cx.moveTo(r.p[0][0],r.p[0][1]);for(let i=1;i<r.p.length;i++)cx.lineTo(r.p[i][0],r.p[i][1]);cx.stroke();}
+    else if(r.k==='poly'){cx.fillStyle=r.c;cx.strokeStyle=r.stroke;cx.beginPath();cx.moveTo(r.p[0][0],r.p[0][1]);for(let i=1;i<r.p.length;i++)cx.lineTo(r.p[i][0],r.p[i][1]);cx.closePath();cx.fill();cx.stroke();}
+    else if(r.k==='node'){cx.fillStyle=r.c;cx.beginPath();cx.arc(r.p[0],r.p[1],r.r,0,7);cx.fill();if(r.ring){cx.strokeStyle='rgba(232,235,240,.4)';cx.lineWidth=1;cx.beginPath();cx.arc(r.p[0],r.p[1],r.r+3,0,7);cx.stroke();}}
+    else if(r.k==='label'){cx.fillStyle=r.c;cx.font=(r.bold?'700 11px':'11px')+' '+getFontMono();cx.fillText(r.t,r.p[0],r.p[1]);}
+    cx.restore();
+  });
+  hudCam.textContent=`yaw ${(cam.yaw*57.3).toFixed(0)}° · pitch ${(cam.pitch*57.3).toFixed(0)}° · d ${cam.dist.toFixed(0)}m`;
+}
+const avg=a=>a.reduce((s,q)=>s+q[2],0)/a.length;
+const getFontMono=()=>"ui-monospace,Consolas,monospace";
+
+/* ---------- 平面 ---------- */
+function drawPlan(){
+  const pad=56;
+  const pxs=NODES.map(n=>n.x),pys=NODES.map(n=>n.y);
+  const x0=Math.min(...pxs)-15,x1=Math.max(...pxs)+15,y0=Math.min(...pys)-15,y1=Math.max(...pys)+15;
+  const sx=(W-2*pad)/(x1-x0), sy=(H-2*pad)/(y1-y0), s=Math.min(sx,sy);
+  const X=x=>pad+(x-x0)*s, Y=y=>H-pad-(y-y0)*s;
+  cx.strokeStyle='rgba(255,255,255,.05)';cx.lineWidth=1;
+  if(opt.grid){for(let x=0;x<=150;x+=10){cx.beginPath();cx.moveTo(X(x),Y(y0));cx.lineTo(X(x),Y(y1));cx.stroke();}for(let y=-20;y<=40;y+=10){cx.beginPath();cx.moveTo(X(x0),Y(y));cx.lineTo(X(x1),Y(y));cx.stroke();}}
+  OBST.forEach(o=>{
+    cx.fillStyle='rgba(120,140,165,.2)';cx.strokeStyle='rgba(160,180,205,.55)';
+    cx.fillRect(X(o.x-o.w/2),Y(o.y+o.d/2),o.w*s,o.d*s);cx.strokeRect(X(o.x-o.w/2),Y(o.y+o.d/2),o.w*s,o.d*s);
+    cx.strokeStyle=o.id==='BLDG-A'&&tlStep<2?'rgba(229,99,108,.6)':'rgba(217,161,63,.5)';cx.setLineDash([5,4]);
+    const R=(Math.max(o.w,o.d)/2+o.clear)*s;
+    cx.beginPath();cx.arc(X(o.x),Y(o.y),R,0,7);cx.stroke();cx.setLineDash([]);
+    cx.fillStyle='rgba(160,180,205,.8)';cx.font='10px '+getFontMono();cx.fillText(o.id+' · '+o.kind,X(o.x-o.w/2),Y(o.y+o.d/2)-6);
+  });
+  const byId={};NODES.forEach(n=>byId[n.id]=n);
+  SEGS.forEach(s=>{
+    const A=byId[s.a],B=byId[s.b];
+    const isH=(s.a===HEALED_BEND.from&&s.b===HEALED_BEND.to);
+    cx.lineWidth=isH?3:2.2;
+    cx.strokeStyle=isH?(tlStep===0?'#e5636c':tlStep===1?'#d9a13f':'#3fb68b'):'#8fb7e8';
+    if(isH&&tlStep===0)cx.shadowColor='#e5636c',cx.shadowBlur=8;
+    cx.beginPath();
+    if(isH){HEALED_BEND.pts.forEach((q,i)=>{const t=i/(HEALED_BEND.pts.length-1);const lx=A.x+(B.x-A.x)*t,ly=A.y+(B.y-A.y)*t;const px=lx+(q[0]-lx)*bendT,py=ly+(q[1]-ly)*bendT;i?cx.lineTo(X(px),Y(py)):cx.moveTo(X(px),Y(py));});}
+    else{cx.moveTo(X(A.x),Y(A.y));cx.lineTo(X(B.x),Y(B.y));}
+    cx.stroke();cx.shadowBlur=0;
+  });
+  NODES.forEach(n=>{
+    cx.fillStyle='#e8ebf0';cx.beginPath();cx.arc(X(n.x),Y(n.y),5,0,7);cx.fill();
+    cx.strokeStyle='rgba(232,235,240,.4)';cx.beginPath();cx.arc(X(n.x),Y(n.y),8,0,7);cx.stroke();
+    cx.fillStyle='rgba(232,235,240,.8)';cx.font='10.5px '+getFontMono();cx.fillText(n.id,X(n.x)+10,Y(n.y)-8);
+  });
+  if(tlStep===0){cx.fillStyle='#e5636c';cx.font='700 11px '+getFontMono();cx.fillText('✕ MU-CLEAR-001：净距 1.6m < 2.5m',X(24),Y(16));}
+  cx.fillStyle='rgba(154,164,178,.6)';cx.font='10px '+getFontMono();
+  cx.fillText('平面布置图 · 数据=/api/v1/demo/municipal-pipeline · 红=初始碰撞路径 绿=自愈绕行',pad,20);
+}
+/* ---------- 纵断面 ---------- */
+function drawProf(){
+  const padL=64,padR=40,padT=44,padB=52;
+  /* 链age */
+  let chain=[0];SEGS.forEach(s=>chain.push(chain[chain.length-1]+s.len));
+  const x0=0,x1=chain[chain.length-1];
+  const zs=NODES.map(n=>n.ground).concat(NODES.map(n=>n.invert));
+  const zMin=Math.min(...zs)-0.6,zMax=Math.max(...zs)+0.6;
+  const X=x=>padL+(x-x0)/(x1-x0)*(W-padL-padR);
+  const Y=z=>padT+(zMax-z)/(zMax-zMin)*(H-padT-padB);
+  /* 网格与标尺 */
+  cx.strokeStyle='rgba(255,255,255,.06)';cx.fillStyle='rgba(154,164,178,.7)';cx.font='10px '+getFontMono();cx.lineWidth=1;
+  for(let z=Math.ceil(zMin*2)/2;z<=zMax;z+=0.5){cx.beginPath();cx.moveTo(padL,Y(z));cx.lineTo(W-padR,Y(z));cx.stroke();cx.fillText(z.toFixed(1)+'m',18,Y(z)+3);}
+  /* 覆土填充 */
+  cx.beginPath();cx.moveTo(X(chain[0]),Y(NODES[0].ground));
+  NODES.forEach((n,i)=>cx.lineTo(X(chain[i]),Y(n.ground)));
+  for(let i=NODES.length-1;i>=0;i--)cx.lineTo(X(chain[i]),Y(NODES[i].invert));
+  cx.closePath();cx.fillStyle='rgba(79,156,249,.08)';cx.fill();
+  /* 地面线 / 管中线 */
+  cx.strokeStyle='#9aa4b2';cx.lineWidth=1.6;cx.beginPath();
+  NODES.forEach((n,i)=>i?cx.lineTo(X(chain[i]),Y(n.ground)):cx.moveTo(X(chain[i]),Y(n.ground)));cx.stroke();
+  cx.strokeStyle='#8fb7e8';cx.lineWidth=2.6;cx.beginPath();
+  NODES.forEach((n,i)=>i?cx.lineTo(X(chain[i]),Y(n.invert)):cx.moveTo(X(chain[i]),Y(n.invert)));cx.stroke();
+  /* 井 + 标注 */
+  NODES.forEach((n,i)=>{
+    cx.strokeStyle='rgba(232,235,240,.5)';cx.lineWidth=1.4;
+    cx.beginPath();cx.moveTo(X(chain[i]),Y(n.ground));cx.lineTo(X(chain[i]),Y(n.invert));cx.stroke();
+    cx.fillStyle='#e8ebf0';cx.beginPath();cx.arc(X(chain[i]),Y(n.invert),3.5,0,7);cx.fill();
+    cx.fillStyle='rgba(232,235,240,.8)';cx.font='10.5px '+getFontMono();
+    cx.fillText(n.id,X(chain[i])-14,Y(n.ground)-8);
+    cx.fillStyle='rgba(154,164,178,.8)';
+    cx.fillText('inv '+n.invert.toFixed(2),X(chain[i])+8,Y(n.invert)+4);
+    if(i<SEGS.length){
+      const mx=(X(chain[i])+X(chain[i+1]))/2,my=(Y(NODES[i].invert)+Y(NODES[i+1].invert))/2;
+      cx.fillStyle='rgba(79,156,249,.9)';cx.fillText('DN400 i=0.003 L='+SEGS[i].len+'m',mx-64,my-10);
+    }
+  });
+  /* 覆土标注 */
+  cx.fillStyle='rgba(63,182,139,.9)';cx.font='10.5px '+getFontMono();
+  cx.fillText('覆土 1.42m ≥ 0.7m (MU-COVER-001 ✓)',X(chain[2])+6,(Y(NODES[2].ground)+Y(NODES[2].invert))/2);
+  cx.fillStyle='rgba(154,164,178,.6)';cx.font='10px '+getFontMono();
+  cx.fillText('纵断面 · 链age 0–135m · 垂直比例 1:1（原型；集成态接 IR 直接绘制）',padL,20);
+}
+
+/* ================================================================
+   相机交互
+   ================================================================ */
+let dragging=false,lx=0,ly=0,panMode=false;
+cv.addEventListener('pointerdown',e=>{dragging=true;lx=e.clientX;ly=e.clientY;panMode=e.shiftKey||e.button===2;cv.classList.add('drag');cv.setPointerCapture(e.pointerId);});
+cv.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  const dx=e.clientX-lx,dy=e.clientY-ly;lx=e.clientX;ly=e.clientY;
+  if(panMode){const k=cam.dist/700;cam.tx-=dx*k*Math.cos(cam.yaw);cam.ty+=dx*k*Math.sin(cam.yaw);}
+  else{cam.yaw+=dx*0.005;cam.pitch=Math.max(0.08,Math.min(1.5,cam.pitch+dy*0.004));}
+  draw();
+});
+cv.addEventListener('pointerup',()=>{dragging=false;cv.classList.remove('drag');});
+cv.addEventListener('wheel',e=>{e.preventDefault();cam.dist=Math.max(30,Math.min(320,cam.dist*(1+Math.sign(e.deltaY)*0.09)));draw();},{passive:false});
+cv.addEventListener('contextmenu',e=>e.preventDefault());
+function resetCam(){
+  /* 按当前 NODES 动态取景（mock 与真实 IR 数据通用） */
+  const xs=NODES.map(n=>n.x),ys=NODES.map(n=>n.y),zs=NODES.map(n=>nz(n.invert));
+  const x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys);
+  const zA=Math.min(...zs),zB=Math.max(...zs);
+  const span=Math.max(x1-x0,y1-y0,16);
+  Object.assign(cam,{yaw:-0.9,pitch:0.62,dist:Math.max(26,span*1.05),tx:(x0+x1)/2,ty:(y0+y1)/2,tz:(zA+zB)/2});
+  draw();
+}
+function toggleOpt(k,el){opt[k]=!opt[k];el.classList.toggle('on',opt[k]);draw();}
+function setView(v,el){view=v;document.querySelectorAll('#viewSeg button').forEach(b=>b.classList.toggle('on',b===el));document.getElementById('scaleLbl').textContent=v==='prof'?'链age 135m':'20 m';draw();}
+(function spinLoop(){if(opt.spin&&!dragging&&view==='3d'){cam.yaw+=0.0035;draw();}requestAnimationFrame(spinLoop);})();
+
+/* ================================================================
+   自愈时间线
+   ================================================================ */
+const tlSteps=document.getElementById('tlSteps'),tlNote=document.getElementById('tlNote');
+function renderTL(){
+  tlSteps.innerHTML='';
+  TIMELINE.forEach((s,i)=>{
+    if(i){const l=document.createElement('div');l.className='tl-link';tlSteps.appendChild(l);}
+    const d=document.createElement('div');
+    d.className='tl-s '+(i===tlStep?'on':i<tlStep?s.st==='bad'?'bad':'ok':(s.st==='bad'?'bad':''));
+    d.innerHTML=`<span class="n">${i===tlStep?'●':i<tlStep?(s.st==='bad'?'✕':'✓'):i}</span><span><span class="lb">${s.lb}</span><br><span class="sub">${s.sub}</span></span>`;
+    d.onclick=()=>{tlStep=i;bendT=i===0?0:i===1?0.5:1;tlNote.textContent=TIMELINE[tlStep].note;renderTL();draw();};
+    tlSteps.appendChild(d);
+  });
+  tlNote.textContent=TIMELINE[tlStep].note;
+}
+let playing=false;
+/* 播放键图标切换（变体原型可覆盖此函数以适配不同组件库） */
+function setPlayState(on){const pi=document.getElementById('playIco');if(!pi)return;
+  pi.innerHTML=on?'<rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/>':'<path d="M7 4l13 8-13 8z"/>';}
+function playTimeline(){
+  if(playing)return;playing=true;
+  setPlayState(true);
+  tlStep=0;bendT=0;renderTL();draw();
+  const t0=performance.now();
+  (function anim(now){
+    const t=(now-t0)/4200; /* 4.2s 全程 */
+    if(t<0.3){tlStep=0;bendT=0;}
+    else if(t<0.75){tlStep=1;bendT=(t-0.3)/0.45;bendT=bendT<0?0:bendT>1?1:bendT;}
+    else{tlStep=2;bendT=1;}
+    renderTL();draw();
+    if(t<1)requestAnimationFrame(anim);
+    else{playing=false;setPlayState(false);tlNote.textContent=TIMELINE[2].note;}
+  })(t0);
+}
+
+/* ================================================================
+   线程交互（演示流式回合）
+   ================================================================ */
+/* thread interactions */
+const $=id=>document.getElementById(id);
+function toggleTool(h){const t=h.parentElement,wasClosed=t.classList.contains('closed');t.classList.toggle('closed');if(wasClosed)expandIn(t.querySelector('.tool-b'));}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
+async function runTurn(){
+  /* tool1 running → done */
+  await sleep(900);
+  $('tool1Live').innerHTML='<span class="k">status&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>iter 0：MU-CLEAR-001 碰撞（净距 1.6m）→ 膨胀半径重路由…';
+  playTimeline();
+  await sleep(1800);
+  $('tool1Live').innerHTML='<span class="k">status&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>iter 2：<span class="ok">converged</span> · 净距 3.1m ✓';
+  await sleep(700);
+  $('tool1St').className='st ok';$('tool1St').textContent='✓ 2.9s · converged';
+  $('tool1').classList.add('closed');
+  $('tool1Body').insertAdjacentHTML('beforeend',
+    `<div><span class="k">result&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>converged=<span class="ok">true</span> · iterations=2 · nodes=6 · segments=5</div>
+     <div><span class="k">resolved&nbsp;&nbsp;&nbsp;</span><span class="bad">MU-CLEAR-001</span> 2.5m 净距违规 → <span class="ok">3.1m 合规</span>（A* 绕行）</div>`);
+  /* tool2 */
+  $('tool2').style.display='';riseIn($('tool2'));$('tool2St').className='st run';$('tool2St').innerHTML='<span class="spin"></span>running…';
+  await sleep(1100);
+  $('tool2St').className='st ok';$('tool2St').textContent='✓ 0.8s · 12/12 pass';
+  $('artIR').style.display='';riseIn($('artIR'));
+  await sleep(600);
+  /* HITL */
+  $('hitl').style.display='';riseIn($('hitl'));$('hitl').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+function replayAll(){
+  ['tool2','artIR','hitl','tool3','rcpt','doneLine'].forEach(i=>$(i).style.display='none');
+  const t1=$('tool1');t1.classList.remove('closed');
+  $('tool1St').className='st run';$('tool1St').innerHTML='<span class="spin"></span>running…';
+  $('tool1Live').innerHTML='<span class="k">status&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>A* 网格寻路中…';
+  const extra=$('tool1Body').querySelectorAll('div:nth-child(n+4)');extra.forEach(e=>e.remove());
+  $('approveBtn').disabled=false;$('approveBtn').textContent='批准导出';
+  runTurn();
+}
+function askConfirm(){$('modalMask').classList.add('show');popIn($('modalMask').querySelector('.modal'));}
+function closeModal(){$('modalMask').classList.remove('show');}
+async function doExport(){
+  closeModal();
+  const b=$('approveBtn');b.disabled=true;b.textContent='执行中…';
+  $('tool3').style.display='';riseIn($('tool3'));$('tool3').classList.remove('closed');
+  $('tool3St').className='st run';$('tool3St').innerHTML='<span class="spin"></span>executing…';
+  await sleep(1500);
+  $('tool3St').className='st ok';$('tool3St').textContent='✓ 2,187 ms · completed';
+  $('tool3').classList.add('closed');
+  $('rcpt').style.display='';riseIn($('rcpt'));$('doneLine').style.display='';riseIn($('doneLine'),.1);
+  $('rcpt').scrollIntoView({behavior:'smooth',block:'nearest'});
+  toast('交付完成：m3_invoke_e2e.blend（22 对象 · 120KB）');
+}
+function rejectExport(){
+  $('hitl').innerHTML='<div class="hd"><span class="tag">HITL</span><span style="color:var(--red)">已拒绝 · 策略门拦截，未执行任何写盘</span></div>';
+  toast('已拒绝导出（决策回执已记入会话树）');
+}
+/* composer */
+const ta=$('cmpTa'),slash=$('slash');
+ta.addEventListener('input',()=>{slash.classList.toggle('show',ta.value==='/');});
+ta.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg();}});
+function pickCmd(c){slash.classList.remove('show');ta.value='';
+  if(c==='/rules')openInspector('rules');
+  else if(c==='/ir')openInspector('ir');
+  else if(c==='/export')askConfirm();
+  else if(c==='/solve'){replayAll();toast('重新调度 solver:self_healing');}
+}
+function sendMsg(){
+  const v=ta.value.trim();if(!v)return;ta.value='';slash.classList.remove('show');
+  const sc=$('thScroll');
+  sc.insertAdjacentHTML('beforeend',`<div class="msg-you"></div><div class="agentline">收到「${v.replace(/</g,'&lt;')}」。<span class="dim">原型态：真实集成时此处走 registry.invoke 调度并追加工具块。</span></div>`);
+  sc.querySelectorAll('.msg-you')[sc.querySelectorAll('.msg-you').length-1].textContent=v;
+  const kids=sc.children;riseIn(kids[kids.length-2]);riseIn(kids[kids.length-1],.08);
+  sc.scrollTop=sc.scrollHeight;
+}
+/* panel & tabs */
+function threadMode(m){$('thread').classList.toggle('ins-mode',m==='insp');$('tabConv').classList.toggle('on',m==='conv');$('tabInsp').classList.toggle('on',m==='insp');}
+function toggleThread(){const t=$('thread');t.style.width=t.style.width==='0px'?'':'0px';setTimeout(resize,200);}
+function openInspector(p){
+  $('thread').style.width='';threadMode('insp');
+  document.querySelectorAll('.insp [data-pane]').forEach(e=>e.style.display=e.dataset.pane===p?'':'none');
+}
+function focusViewport(){toast('视口：拖拽旋转 · 滚轮缩放 · Shift+拖拽平移');}
+/* settings */
+function toggleSettings(e){e.stopPropagation();const p=$('setPop');p.classList.toggle('show');if(p.classList.contains('show'))popIn(p);}
+document.addEventListener('click',e=>{if(!$('setPop').contains(e.target))$('setPop').classList.remove('show');});
+/* toast */
+let toastTm;
+function toast(m){const t=$('toastEl');t.textContent=m;t.classList.add('show');clearTimeout(toastTm);toastTm=setTimeout(()=>t.classList.remove('show'),2200);}
+/* sessions list */
+const SESS=[
+  ['g','DN400 污水重力管 · 6 井 5 段','现在 · converged',1],
+  ['g','高程冲突场景 T4 核验','2h 前 · 12/12 pass',0],
+  ['y','B10 · 102 节点复杂管网','昨天 · LLM 行超时 ×3',0],
+  ['g','Edo 赛博街区 · 资产装配','3 天前 · 已交付',0],
+  ['b','单体资产 Hero · G6 双宿主','3 天前 · blend+vwx',0],
+];
+$('sessList').innerHTML=SESS.map(s=>`<div class="sess${s[3]?' on':''}"><span class="dot ${s[0]}"></span><div><div class="tt">${s[1]}</div><div class="meta">${s[2]}</div></div></div>`).join('');
+/* rules & plugins */
+$('ruleList').innerHTML=RULES.map(r=>`<div class="rule"><div class="rh"><span class="rid">${r[0]}</span><span class="rst">✓ pass</span></div><div class="rd">${r[1]} · 阈值 <b class="mono">${r[2]}</b></div></div>`).join('');
+$('plgList').innerHTML=PLUGINS.map(p=>`<div class="plg"><div class="pid">${p[0]} <span style="color:var(--grn);font-size:9.5px">ACTIVE</span></div><div class="pds">${p[1]} · 能力前缀 <span class="mono" style="color:var(--acc)">${p[2]}</span></div></div>`).join('');
+$('irPre').textContent=IR_JSON;
+
+</script><script>
+/* ===== 方案 K 变体 glue：Shoelace 组件事件 ↔ 共享逻辑（覆盖共享版同名函数） ===== */
+const thTabs=$('thTabs');
+let tabSync=false;
+function threadMode(m){
+  $('thread').classList.toggle('ins-mode',m==='insp');
+  const want=m==='insp'?'insp':'conv';
+  if(thTabs.active!==want){tabSync=true;thTabs.show(want);tabSync=false;}
+}
+thTabs.addEventListener('sl-tab-show',e=>{if(!tabSync)threadMode(e.detail.name);});
+function setView(v,el){
+  view=v;
+  document.querySelectorAll('#viewSeg sl-button').forEach(b=>{b.variant=(b===el)?'primary':'default';});
+  document.getElementById('scaleLbl').textContent=v==='prof'?'链age 135m':'20 m';
+  draw();
+}
+function toggleSettings(e){e&&e.stopPropagation();$('setPop').show();}
+function askConfirm(){$('modalMask').show();}
+function closeModal(){$('modalMask').hide();}
+/* init（支持 #plan / #prof / #step2 直达深链） */
+const h=location.hash;
+if(h.includes('plan'))setView('plan',document.querySelector('#viewSeg [data-v=plan]'));
+else if(h.includes('prof'))setView('prof',document.querySelector('#viewSeg [data-v=prof]'));
+const hm=h.match(/step(\d)/);if(hm){tlStep=+hm[1];bendT=[0,0.5,1][tlStep];}
+renderTL();resize();runTurn();
+staggerIn('.sess');staggerIn('#thScroll > *');
+</script>
 
 <script>
-const API = '';
-const REQ = { headers: { 'X-Request-ID': 'studio-ui-' + Math.random().toString(36).slice(2) } };
-
-async function fetchJSON(url) {
-  try {
-    const resp = await fetch(url, REQ);
-    return await resp.json();
-  } catch(e) {
-    console.error('Fetch error:', e);
-    return null;
+/* ===== 集成态真实数据接线：/api/v1 端点 → 视口/线程/检查器 ===== */
+(async function bootstrapReal(){
+  const get=async u=>{try{const r=await fetch(u);return r.ok?await r.json():null;}catch(e){return null;}};
+  /* 运行时信息 → 模型芯片 */
+  const ri=await get('/api/v1/demo/runtime-info');
+  if(ri&&ri.llm&&ri.llm.model){document.querySelectorAll('.mchip .nm,.mdl').forEach(e=>{e.textContent=ri.llm.model;});}
+  /* 会话列表 */
+  const ss=await get('/api/v1/sessions');
+  const items=ss&&ss.data&&ss.data.items;
+  if(items&&items.length){
+    $('sessList').innerHTML=items.slice(0,8).map((s,i)=>`<div class="sess${i===0?' on':''}"><span class="dot g"></span><div><div class="tt">${s.title||s.session_id}</div><div class="meta">${s.session_id}</div></div></div>`).join('');
   }
-}
-
-function switchTab(tabId) {
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-  event.target.classList.add('active');
-  const target = document.getElementById(tabId);
-  if (target) target.classList.add('active');
-}
-
-async function loadSessions() {
-  const data = await fetchJSON(API + '/api/v1/sessions');
-  const container = document.getElementById('sessionList');
-  if (!data || !data.data || !data.data.items || !data.data.items.length) {
-    container.innerHTML = `
-      <div class="session-item active">
-        <div class="session-id"><span>session_b1_municipal</span><span class="card-tag tag-solver">Active</span></div>
-        <div class="session-title">市政管网 B1 3井2管测试场景</div>
-        <div class="session-meta"><span>14 events</span><span>2026-08-14</span></div>
-      </div>
-    `;
-    return;
+  /* 规则树（真实 MunicipalRuleSet） */
+  const rt=await get('/api/v1/demo/rule-tree');
+  if(rt&&rt.rules){
+    $('ruleList').innerHTML=rt.rules.map(r=>`<div class="rule"><div class="rh"><span class="rid">${r.rule_key}</span><span class="rst">${r.self_test_match?'✓':'·'} ${r.enforcement||''}</span></div><div class="rd">${r.obstacle_category||''} · 净距 <b class="mono">${r.required_clearance_m}m</b>${r.clause?' · '+r.clause:''}</div></div>`).join('');
   }
-  container.innerHTML = data.data.items.map((s, idx) => `
-    <div class="session-item ${idx===0 ? 'active' : ''}" onclick="selectSession('${s.id}')">
-      <div class="session-id"><span>${(s.id||'').slice(0, 16)}</span><span class="card-tag tag-solver">${s.event_count||0} ev</span></div>
-      <div class="session-title">${s.title || '无标题会话'}</div>
-      <div class="session-meta"><span>${(s.last_active||'').slice(0,16)}</span><span>Fork /tree</span></div>
-    </div>
-  `).join('');
-}
-
-function selectSession(id) {
-  document.getElementById('currentSessionLabel').textContent = '会话: ' + id.slice(0, 16);
-}
-
-function approveAction(type) {
-  if (type === 'approve') {
-    alert('【HITL 审批通过】已发送审批指令，幂等键 k-924e，已推进至双宿主执行阶段。');
-  } else {
-    alert('【HITL 审批驳回】已终止当前批次，要求 Agent 重新调整坡度与管径参数。');
+  /* 插件能力 → 控制台下拉 */
+  const pl=await get('/api/v1/plugins');
+  if(pl&&pl.capabilities_map){
+    $('capSel').innerHTML=Object.keys(pl.capabilities_map).map(c=>`<sl-option value="${c}">${c}</sl-option>`).join('');
   }
-}
-
-function viewIR() {
-  document.querySelectorAll('.tab')[3].click();
-}
-
-class BIMSlotRegistry {
-  constructor() {
-    this.slots = [];
-    this.plugins = [];
-    this.caps = {};
-  }
-  async init() {
-    const data = await fetchJSON(API + '/api/v1/plugins');
-    if (data && data.active_plugins) {
-      this.plugins = data.active_plugins;
-      this.slots = data.ui_slots || [];
-      this.caps = data.capabilities_map || {};
-      this.render();
+  /* 自愈求解真实输出 → 3D 渲染数据 + 时间线注记 */
+  const mp=await get('/api/v1/demo/municipal-pipeline');
+  if(mp&&mp.nodes&&mp.nodes.length>=2){
+    NODES.length=0;SEGS.length=0;
+    mp.nodes.forEach(n=>NODES.push({id:n.node_id,x:n.x,y:n.y,ground:n.ground,invert:n.invert_z}));
+    (mp.segments||[]).forEach((s,i)=>{if(NODES[i+1])SEGS.push({a:NODES[i].id,b:NODES[i+1].id,dn:s.diameter_mm||400,slope:s.slope||0.003,len:s.length_m||0});});
+    if(NODES.length>=3){
+      const A=NODES[1],B=NODES[2];
+      HEALED_BEND.from=A.id;HEALED_BEND.to=B.id;
+      const dx=B.x-A.x,dy=B.y-A.y,L=Math.hypot(dx,dy)||1,px=-dy/L*8,py=dx/L*8;
+      HEALED_BEND.pts=[0,0.25,0.5,0.75,1].map(t=>[A.x+dx*t+(t>0&&t<1?px:0),A.y+dy*t+(t>0&&t<1?py:0)]);
+      /* 障碍物贴到自愈段旁，保持“碰撞→绕行”视觉叙事一致 */
+      OBST[0].x=(A.x+B.x)/2-px*0.8;OBST[0].y=(A.y+B.y)/2-py*0.8;
+      if(NODES.length>=4){OBST[1].x=NODES[3].x+6;OBST[1].y=NODES[3].y-8;}
+      /* 障碍物尺寸随管网跨度缩放（mock 与真实数据保持观感一致） */
+      const bxs=NODES.map(n=>n.x),bys=NODES.map(n=>n.y);
+      const bspan=Math.max(Math.max(...bxs)-Math.min(...bxs),Math.max(...bys)-Math.min(...bys),16);
+      OBST[0].w=bspan*0.3;OBST[0].d=bspan*0.2;OBST[0].h=2.2;OBST[0].clear=Math.max(1.5,bspan*0.05);
+      OBST[1].w=1.5;OBST[1].d=bspan*0.22;OBST[1].h=0.6;OBST[1].clear=1.2;
+      cam.tx=(NODES[0].x+NODES[NODES.length-1].x)/2;
+      cam.ty=(NODES[0].y+NODES[NODES.length-1].y)/2;
     }
-  }
-  render() {
-    // 1. 动态组装工作台标签页 (由 declared_slots 驱动)
-    const tabSlots = this.slots.filter(s => s.target_area === 'workbench' && s.slot_key.startsWith('workbench:tab.'));
-    const tabMap = {
-      'workbench:tab.viewport_3d': { id: 'tab-3d', label: '3D 视口' },
-      'workbench:tab.rules_tree': { id: 'tab-rules', label: 'GB 50289 规则树' },
-      'workbench:tab.spatial_graph': { id: 'tab-graph', label: '空间图谱 & 自愈' },
-      'workbench:tab.artifacts': { id: 'tab-artifacts', label: '交付工件' },
-      'workbench:tab.compiled_ir': { id: 'tab-ir', label: 'Compiled IR' },
-    };
-    const tabContainer = document.getElementById('workbenchTabs');
-    if (tabContainer && tabSlots.length) {
-      let tabsHtml = tabSlots.map((s, idx) => {
-        const info = tabMap[s.slot_key] || { id: 'tab-plugins', label: s.title };
-        return `<div class="tab ${idx===0 ? 'active' : ''}" onclick="switchTab('${info.id}')">${info.label}</div>`;
-      }).join('');
-      tabsHtml += `<div class="tab" onclick="switchTab('tab-plugins')">插件清单 (DSH Slots)</div>`;
-      tabContainer.innerHTML = tabsHtml;
+    if(mp.resolved_violations&&mp.resolved_violations.length){
+      const v=mp.resolved_violations[0];
+      TIMELINE[0].note=`${v.rule_id}：${v.description||'净距碰撞'}（要求 ${v.required}）`;
     }
-
-    // 2. 渲染插件清单面板
-    const container = document.getElementById('pluginListContainer');
-    if (container && this.plugins.length) {
-      container.innerHTML = this.plugins.map(p => `
-        <div class="rule-item">
-          <div class="rule-header">
-            <span class="rule-id">${p.plugin_id}</span>
-            <span class="badge-pass">${p.state.toUpperCase()}</span>
-          </div>
-          <div class="rule-desc">
-            <strong>${p.name}</strong> (v${p.version}) · ${p.description}<br>
-            <span style="color:var(--text-muted);">提供能力: ${(p.provides_capabilities||[]).join(', ')}</span><br>
-            <span style="color:var(--primary);">挂载插槽: ${(p.declared_slots||[]).map(s=>s.slot_key).join(', ')}</span>
-          </div>
-        </div>
-      `).join('');
-    }
-
-    // 3. 渲染能力调度下拉 (capabilities_map -> 插件)
-    const sel = document.getElementById('capSelect');
-    if (sel && this.caps && Object.keys(this.caps).length) {
-      sel.innerHTML = Object.entries(this.caps).map(([cap, pid]) =>
-        `<option value="${cap}">${cap}  ←  ${pid}</option>`
-      ).join('');
-    }
+    if(typeof mp.iterations_spent==='number'){TIMELINE[1].sub='iter '+(mp.iterations_spent-1);TIMELINE[2].sub='iter '+mp.iterations_spent;}
+    cam.tz=NODES.reduce((s,n)=>s+n.invert,0)/NODES.length;
+    renderTL();resetCam();draw();
+    $('hudStat').textContent=`${NODES.length} 井 · ${SEGS.length} 段 · DN${SEGS[0]?SEGS[0].dn:400}`;
+  }
+})();
+/* 能力控制台：真实 invoke（含 confirm 走 prompt 策略门） */
+async function invokeCap(){
+  const cap=$('capSel').value;
+  const out=document.querySelector('.cons-out');
+  out.textContent='invoke '+cap+' …';
+  try{
+    const r=await fetch('/api/v1/plugins/invoke',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({capability:cap,payload:{},confirm:true})});
+    const d=await r.json();
+    out.textContent=JSON.stringify(d,null,1).slice(0,2000);
+  }catch(e){out.textContent='invoke 失败：'+e;}
+}
+/* HITL 导出：真实 POST /api/v1/demo/export-blender */
+async function doExport(){
+  closeModal();
+  const b=$('approveBtn');b.disabled=true;b.textContent='执行中…';
+  $('tool3').style.display='';riseIn($('tool3'));$('tool3').classList.remove('closed');
+  $('tool3St').className='st run';$('tool3St').innerHTML='<span class="spin"></span>executing…';
+  try{
+    const r=await fetch('/api/v1/demo/export-blender',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true})});
+    const d=await r.json();
+    if(!r.ok)throw new Error((d.detail&&d.detail.error&&d.detail.error.message)||d.detail||r.status);
+    const rc=d.receipt||d;
+    $('tool3St').className='st ok';$('tool3St').textContent='✓ '+(rc.elapsed_ms??'—')+' ms · '+(rc.status||'completed');
+    $('tool3').classList.add('closed');
+    $('rcpt').innerHTML=`<b>交付回执 · receipt=${rc.status||'completed'}</b><br><span class="k">objects</span> ${rc.objects??'—'}&nbsp;&nbsp;<span class="k">output_bytes</span> ${rc.output_bytes??'—'}&nbsp;&nbsp;<span class="k">elapsed</span> ${rc.elapsed_ms??'—'} ms<br><span class="k">output</span> ${rc.output_path||'—'}<br><span class="k">plan_sha</span> ${String(rc.plan_sha256||'—').slice(0,16)}… · sidecar ↔ IR 哈希绑定`;
+    $('rcpt').style.display='';riseIn($('rcpt'));$('doneLine').style.display='';riseIn($('doneLine'),.1);
+    toast('交付完成：'+(rc.output_path||''));
+  }catch(e){
+    $('tool3St').className='st bad';$('tool3St').textContent='✗ '+e;
+    toast('导出被拦截或失败：'+e);
   }
 }
-
-async function invokeCapability() {
-  const sel = document.getElementById('capSelect');
-  const out = document.getElementById('capResult');
-  const payloadBox = document.getElementById('capPayload');
-  if (!sel || !sel.value) { if (out) out.textContent = '请先选择一个能力'; return; }
-  let payload = {};
-  const txt = (payloadBox.value || '').trim();
-  if (txt) {
-    try { payload = JSON.parse(txt); }
-    catch(e) { if (out) out.textContent = 'payload JSON 解析失败: ' + e.message; return; }
-  }
-  if (out) out.textContent = `调度中: ${sel.value} ...`;
-  const confirmBox = document.getElementById('capConfirm');
-  try {
-    const resp = await fetch(API + '/api/v1/plugins/invoke', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Request-ID': 'studio-invoke-' + Math.random().toString(36).slice(2) },
-      body: JSON.stringify({ capability: sel.value, payload, confirm: !!(confirmBox && confirmBox.checked) })
-    });
-    const data = await resp.json();
-    if (out) out.textContent = JSON.stringify(data, null, 2);
-    if (data && data.status === 'error' && typeof data.error === 'string' && data.error.includes('confirm=True')) {
-      if (out) out.textContent += '\n\n→ 该能力被 prompt 策略保护：勾选"确认执行"后重试。';
-    }
-  } catch(e) {
-    if (out) out.textContent = '调度失败: ' + e.message;
-  }
-}
-
-async function exportHost(endpoint, btnId, label) {
-  const btn = document.getElementById(btnId);
-  const status = document.getElementById('blendExportStatus');
-  const host = endpoint.includes('vectorworks') ? 'Vectorworks（须已运行并加载 runner）' : 'Blender 5.2 headless';
-  if (!confirm(`将启动真实 ${host} 执行受控写盘（prompt 策略已确认，Blender 约 10–30 秒 / VWX 取决于宿主）。继续？`)) return;
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ 执行中…'; }
-  if (status) status.textContent = `solver:self_healing → ${endpoint} 调度中…`;
-  try {
-    const resp = await fetch(API + endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Request-ID': 'studio-export-' + Math.random().toString(36).slice(2) },
-      body: JSON.stringify({ confirm: true })
-    });
-    const data = await resp.json();
-    if (data.status === 'success' && data.receipt) {
-      const r = data.receipt;
-      const size = r.output_bytes ? `${(r.output_bytes/1024).toFixed(0)} KB` : `${r.applied_operations} ops`;
-      const cnt = r.objects !== undefined ? `${r.objects} 对象` : `${r.confirmed_objects} 确认对象`;
-      if (status) status.textContent = `✓ ${r.status} | ${cnt} | ${size} | ${r.elapsed_ms} ms → ${r.output_path}`;
-      const deliver = document.getElementById('deliverCardText');
-      if (deliver) {
-        deliver.innerHTML = `✓ 真实产物已落盘: <strong>${r.output_path}</strong> (${cnt}, ${size}, ${r.elapsed_ms} ms)<br>回执 status=${r.status}, plan SHA ${String(r.plan_sha256 || '').slice(0, 12)}…; sidecar 与 IR 哈希绑定 (受控保存协议)。`;
-      }
-    } else {
-      if (status) status.textContent = '✗ ' + (typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
-    }
-  } catch(e) {
-    if (status) status.textContent = '✗ 调度失败: ' + e.message;
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = label; }
-  }
-}
-
-async function exportBlend() { return exportHost('/api/v1/demo/export-blender', 'btnExportBlend', '⬇ 导出真实 Blender .blend'); }
-async function exportVWX() { return exportHost('/api/v1/demo/export-vectorworks', 'btnExportVWX', '⬇ 导出真实 Vectorworks .vwx'); }
-
-const slotRegistry = new BIMSlotRegistry();
-
-function toggleWorkbench() {
-  const drawer = document.getElementById('workbenchDrawer');
-  const btn = document.getElementById('workbenchToggle');
-  if (!drawer) return;
-  drawer.classList.toggle('open');
-  if (btn) btn.textContent = drawer.classList.contains('open') ? '⇱ 收起工作台' : '⇱ 工作台';
-}
-function openWorkbenchTab(tabId) {
-  const drawer = document.getElementById('workbenchDrawer');
-  if (drawer && !drawer.classList.contains('open')) toggleWorkbench();
-  switchTab(tabId);
-}
-function toggleToolcall(headerEl) {
-  headerEl.parentElement.classList.toggle('open');
-}
-function appendUserMsg(text) {
-  const wrap = document.createElement('div');
-  wrap.className = 'msg-user';
-  const bubble = document.createElement('div');
-  bubble.className = 'msg-user-bubble';
-  bubble.textContent = text;
-  wrap.appendChild(bubble);
-  const stream = document.getElementById('streamContainer');
-  if (stream) stream.appendChild(wrap);
-  const sc = document.getElementById('threadScroll');
-  if (sc) sc.scrollTop = sc.scrollHeight;
-  return wrap;
-}
-function appendAgentNote(html) {
-  const turn = document.createElement('div');
-  turn.className = 'turn';
-  turn.innerHTML = '<div class="turn-agent-label">◆ openBIMAgent</div>' +
-    '<div class="artifact-card" style="font-size:12px; color:var(--text-secondary); line-height:1.6;">' + html + '</div>';
-  const stream = document.getElementById('streamContainer');
-  if (stream) stream.appendChild(turn);
-  const sc = document.getElementById('threadScroll');
-  if (sc) sc.scrollTop = sc.scrollHeight;
-  return turn;
-}
-function appendToolcallTurn(name) {
-  const turn = document.createElement('div');
-  turn.className = 'turn';
-  turn.innerHTML =
-    '<div class="turn-agent-label">◆ openBIMAgent · registry.invoke</div>' +
-    '<div class="toolcall open"><div class="toolcall-header">' +
-    '<span class="toolcall-caret">▾</span>' +
-    '<span class="toolcall-name">' + name + '</span>' +
-    '<span class="toolcall-status">running…</span></div>' +
-    '<div class="toolcall-body"><div class="tkv" style="font-size:12px;color:var(--text-secondary);"></div></div></div>';
-  const stream = document.getElementById('streamContainer');
-  if (stream) stream.appendChild(turn);
-  const sc = document.getElementById('threadScroll');
-  if (sc) sc.scrollTop = sc.scrollHeight;
-  return turn;
-}
-
-async function handleChat(text) {
-  text = (text || '').trim();
-  if (!text) return;
-  const input = document.querySelector('.chat-input');
-  if (input) input.value = '';
-  appendUserMsg(text);
-  const cmd = text.split(/\s+/)[0].toLowerCase();
-  if (cmd === '/tree' || cmd === '/graph') { openWorkbenchTab('tab-graph'); appendAgentNote('已打开 <b>空间图谱 & 自愈</b> 面板（真实自愈时间线 + 消融指标）。'); return; }
-  if (cmd === '/rules') { openWorkbenchTab('tab-rules'); appendAgentNote('已打开 <b>GB 50289 规则树</b>——12 条真实编译净距规则（经 rules:gb50289 编译，含自检样例）。'); return; }
-  if (cmd === '/ir') { openWorkbenchTab('tab-ir'); appendAgentNote('已打开 <b>Compiled IR</b> 视图。'); return; }
-  if (cmd === '/plugins' || cmd === '/capabilities') { openWorkbenchTab('tab-plugins'); appendAgentNote('已打开 <b>插件清单</b>（DSH Slots 视图，可用能力见 Live Capability Console）。'); return; }
-  if (cmd === '/sessions') { appendAgentNote('左侧为 Session JSONL 会话树（id/parentId 树结构，可回放）。'); return; }
-  if (cmd === '/export') { appendAgentNote('触发 Blender 受控导出（prompt 策略，浏览器确认后执行）…'); exportBlend(); return; }
-  // 默认: 真实经微内核调度自愈求解演示, 结果以工具调用块追加到线程
-  const turn = appendToolcallTurn('solver:self_healing');
-  const status = turn.querySelector('.toolcall-status');
-  const body = turn.querySelector('.tkv');
-  try {
-    const data = await fetchJSON(API + '/api/v1/demo/municipal-pipeline');
-    if (!data || data.status !== 'success') throw new Error((data && data.error) || '调度失败');
-    status.textContent = '✓ converged · ' + data.iterations_spent + ' iterations';
-    const totalLen = data.segments.reduce((a, s) => a + (s.length_m || 0), 0).toFixed(1);
-    body.innerHTML =
-      '演示语义：以内置 SH-2 场景真实执行 <code>registry.invoke("solver:self_healing")</code>。<br>' +
-      '收敛 <b>' + data.iterations_spent + '</b> 轮 · ' + data.nodes.length + ' 检查井 / ' + data.segments.length +
-      ' 管段 · 总长 ' + totalLen + ' m · 消除违规 ' + data.resolved_violations.length + ' 项。' +
-      '<br><span style="color:var(--text-muted);font-size:11px;">自然语言→任务规划的 LLM 链路属 M4 范围；当前对话入口真实调度确定性内核。</span>';
-  } catch (e) {
-    status.textContent = '✗ failed';
-    status.style.color = 'var(--accent-rose)';
-    body.textContent = String(e.message || e);
-  }
-}
-
-async function loadAll() {
-  await loadSessions();
-  await slotRegistry.init();
-  await loadSelfHealingDemo();
-  await loadRuleTree();
-  await loadRuntimeInfo();
-}
-
-function toggleSettings(ev) {
-  ev && ev.stopPropagation();
-  const pop = document.getElementById('settingsPopover');
-  if (pop) pop.classList.toggle('open');
-}
-document.addEventListener('click', (ev) => {
-  const pop = document.getElementById('settingsPopover');
-  const footer = document.querySelector('.sidebar-footer');
-  if (pop && pop.classList.contains('open') && footer && !footer.contains(ev.target)) {
-    pop.classList.remove('open');
-  }
-});
-
-async function loadRuntimeInfo() {
-  const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
-  const data = await fetchJSON(API + '/api/v1/demo/runtime-info');
-  if (!data || data.status !== 'success') { set('modelChipName', '模型未配置'); return; }
-  const m = data.llm;
-  set('modelChipName', m.configured ? m.model : '模型未配置');
-  set('cfgModel', m.configured ? m.model : '—');
-  set('cfgEndpoint', m.configured ? m.base_url : '—');
-  set('cfgStatus', m.configured ? '已配置 (key 仅存本地)' : '未配置 (config/llm_baseline.local.toml)');
-  set('cfgRuntime', data.registry.plugins + ' 插件 / ' + data.registry.capabilities + ' 能力');
-  set('cfgPolicies', data.registry.policies + ' 条 (含 cad_host:*.execute prompt)');
-}
-
-function fillExecutionFlowCards(data) {
-  const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
-  set('flowObstacle', '合成障碍 @(' + (data.resolved_violations && data.resolved_violations.length ? data.resolved_violations[0].location_xy.join(',') : '—') + ')');
-  set('flowConverged', data.converged ? '✅ 收敛' : '❌ 未收敛');
-  set('flowIterations', data.iterations_spent + ' 轮');
-  set('flowTopology', data.nodes.length + ' 井 / ' + data.segments.length + ' 段');
-  set('flowResolved', data.resolved_violations.length + ' 项');
-  const totalLen = data.segments.reduce((a, s) => a + (s.length_m || 0), 0);
-  set('flowLength', totalLen.toFixed(1) + ' m');
-  const det = document.getElementById('flowViolationDetail');
-  if (det) {
-    det.innerHTML = (data.resolved_violations || []).map(v =>
-      `✓ ${v.rule_id}: ${v.description} (要求 ${v.required} / 实测 ${v.actual})`
-    ).join('<br>') || '首轮无规则违规';
-  }
-}
-
-async function loadRuleTree() {
-  const meta = document.getElementById('ruleTreeMeta');
-  const list = document.getElementById('ruleTreeList');
-  const data = await fetchJSON(API + '/api/v1/demo/rule-tree');
-  if (!data || data.status !== 'success') {
-    if (meta) meta.textContent = '规则集加载失败: ' + (data && data.error ? data.error : '网络错误');
-    return;
-  }
-  if (meta) {
-    meta.textContent = `MunicipalRuleSet v${data.protocol_version} (编译器 v${data.compiler_version}) · ${data.total_rules} 条可执行净距规则 · canonical ${data.canonical_sha256.slice(0, 12)}… · 全部携带编译期自检样例`;
-  }
-  if (!list) return;
-  list.innerHTML = data.rules.map(r => {
-    const badge = r.enforcement === 'production'
-      ? '<span class="badge-pass">PRODUCTION</span>'
-      : '<span class="card-tag tag-hitl">REVIEW</span>';
-    const cat = { building: '建(构)筑物', water: '给水管', gas: '燃气管', telecom: '通信管线', power: '电力管线' }[r.obstacle_category] || r.obstacle_category;
-    return `<div class="rule-item">
-      <div class="rule-header">
-        <span class="rule-id">${r.rule_key}</span>
-        ${badge}
-      </div>
-      <div class="rule-desc">${cat}(${r.obstacle_kind}) 水平净距要求 <strong>${r.required_clearance_m} m</strong> · ${r.standard_id} ${r.clause}${r.table ? ' 表 ' + r.table : ''} · 自检样例 ${r.self_test_match}✓/${r.self_test_not_match}✗</div>
-    </div>`;
-  }).join('');
-}
-
-async function loadSelfHealingDemo() {
-  const data = await fetchJSON(API + '/api/v1/demo/municipal-pipeline');
-  if (!data || data.status !== 'success') {
-    const badge = document.getElementById('healingBadge');
-    if (badge) { badge.textContent = 'DEMO UNAVAILABLE'; badge.classList.remove('badge-pass'); }
-    return;
-  }
-  fillExecutionFlowCards(data);
-  const badge = document.getElementById('healingBadge');
-  const body = document.getElementById('healingTimeline');
-  if (badge) {
-    badge.textContent = (data.converged ? 'CONVERGED' : 'NOT CONVERGED') + ' (实测 轮次 ' + data.iterations_spent + ')';
-  }
-  if (body && data.timeline) {
-    const lines = data.timeline.map(t =>
-      `• 第 ${t.iteration} 轮: route=${t.route_status}, 违规 ${t.rule_fail_count} 项${t.converged ? ' → ✅ 收敛' : ''}`
-    );
-    (data.resolved_violations || []).forEach(v => {
-      lines.push(`• 已消解冲突: ${v.rule_id} @ (${v.location_xy[0]},${v.location_xy[1]}) — ${v.description}`);
-    });
-    lines.push('• 以上为真实求解器运行结果，经微内核 registry.invoke 调度，零人工干预');
-    body.innerHTML = lines.join('<br>');
-  }
-}
-
-// Three.js 3D WebGL Pipe Visualizer (真实 Compiled IR 驱动, 失败回落演示几何)
-function buildRealScene3D(scene, demo) {
-  const S = 60 / Math.max(
-    Math.max(...demo.nodes.map(n => n.x)) - Math.min(...demo.nodes.map(n => n.x)),
-    Math.max(...demo.nodes.map(n => n.y)) - Math.min(...demo.nodes.map(n => n.y)),
-    1
-  );
-  const cx = demo.nodes.reduce((a, n) => a + n.x, 0) / demo.nodes.length;
-  const cy = demo.nodes.reduce((a, n) => a + n.y, 0) / demo.nodes.length;
-  const zBase = Math.min(...demo.nodes.map(n => n.invert_z)) - 0.5;
-  const VS = 5.0; // 垂直夸张系数
-  const mapXZ = (x, y) => new THREE.Vector3((x - cx) * S, 0, (y - cy) * S);
-  const zScene = z => (z - zBase) * VS;
-
-  // 检查井: invert → ground 圆柱
-  const mhMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.3, metalness: 0.2 });
-  demo.nodes.forEach(n => {
-    const ground = (n.ground != null) ? n.ground : n.invert_z + 1.0;
-    const h = Math.max((ground - n.invert_z) * VS, 1.0);
-    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, h, 16), mhMat);
-    const p = mapXZ(n.x, n.y);
-    mesh.position.set(p.x, zScene(n.invert_z) + h / 2, p.z);
-    scene.add(mesh);
-  });
-
-  // 管段: centerline 逐段圆柱 (真实折线路径)
-  const pipeMat = new THREE.MeshStandardMaterial({ color: 0x10b981, roughness: 0.4, metalness: 0.5 });
-  demo.segments.forEach(s => {
-    const r = Math.max((s.diameter_mm / 1000 / 2) * S, 0.3);
-    for (let i = 0; i < s.points.length - 1; i++) {
-      const a = s.points[i], b = s.points[i + 1];
-      const pa = mapXZ(a.x, a.y); pa.y = zScene(a.z);
-      const pb = mapXZ(b.x, b.y); pb.y = zScene(b.z);
-      const dir = new THREE.Vector3().subVectors(pb, pa);
-      const len = dir.length();
-      if (len <= 0.01) continue;
-      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 12), pipeMat);
-      mesh.position.copy(pa).add(dir.clone().multiplyScalar(0.5));
-      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
-      scene.add(mesh);
-    }
-  });
-}
-
-function buildFallbackScene3D(scene) {
-  const mhMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.3, metalness: 0.2 });
-  const mhGeo = new THREE.CylinderGeometry(1.8, 1.8, 8, 16);
-  const mhPositions = [
-    new THREE.Vector3(-25, 4, -10),
-    new THREE.Vector3(0, 3.8, -5),
-    new THREE.Vector3(25, 3.5, 10)
-  ];
-  mhPositions.forEach((pos) => {
-    const mesh = new THREE.Mesh(mhGeo, mhMat);
-    mesh.position.copy(pos);
-    scene.add(mesh);
-  });
-  const pipeMat = new THREE.MeshStandardMaterial({ color: 0x10b981, roughness: 0.4, metalness: 0.5 });
-  for (let i = 0; i < mhPositions.length - 1; i++) {
-    const p1 = mhPositions[i].clone(); p1.y -= 2;
-    const p2 = mhPositions[i + 1].clone(); p2.y -= 2;
-    const dir = new THREE.Vector3().subVectors(p2, p1);
-    const len = dir.length();
-    const pipeGeo = new THREE.CylinderGeometry(0.9, 0.9, len, 16);
-    const pipeMesh = new THREE.Mesh(pipeGeo, pipeMat);
-    pipeMesh.position.copy(p1).add(dir.multiplyScalar(0.5));
-    pipeMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
-    scene.add(pipeMesh);
-  }
-}
-
-async function init3D() {
-  const container = document.getElementById('viewport3d');
-  if (!container || typeof THREE === 'undefined') return;
-
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x080c14);
-
-  const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
-  camera.position.set(30, 40, 60);
-
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setSize(container.clientWidth, container.clientHeight);
-  container.appendChild(renderer.domElement);
-
-  const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
-  scene.add(ambientLight);
-  const dirLight = new THREE.DirectionalLight(0x38bdf8, 0.9);
-  dirLight.position.set(20, 50, 20);
-  scene.add(dirLight);
-
-  const gridHelper = new THREE.GridHelper(80, 20, 0x1e293b, 0x0f172a);
-  gridHelper.position.y = 0;
-  scene.add(gridHelper);
-
-  const demo = await fetchJSON(API + '/api/v1/demo/municipal-pipeline');
-  if (demo && demo.status === 'success') {
-    buildRealScene3D(scene, demo);
-    const overlay = document.getElementById('viewportOverlay');
-    if (overlay) {
-      overlay.textContent = `Live Compiled IR · ${demo.nodes.length} 检查井 · ${demo.segments.length} 管段 · 自愈 ${demo.iterations_spent} 轮收敛 (registry.invoke 实测)`;
-    }
-  } else {
-    buildFallbackScene3D(scene);
-  }
-
-  camera.lookAt(0, 0, 0);
-
-  let angle = 0;
-  function animate() {
-    requestAnimationFrame(animate);
-    angle += 0.003;
-    camera.position.x = 65 * Math.sin(angle);
-    camera.position.z = 65 * Math.cos(angle);
-    camera.lookAt(0, 2, 0);
-    renderer.render(scene, camera);
-  }
-  animate();
-}
-
-window.addEventListener('load', () => {
-  loadAll();
-  setTimeout(init3D, 200);
-});
 </script>
 
 </body>
-</html>"""
+</html>
+"""
 
 
 def add_web_ui(app: FastAPI) -> None:
+    """挂载 /static 静态资源（vendor 组件库）并注册 / 工作台页面。"""
+    if _STATIC_DIR.is_dir():
+        app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="web-ui-static")
+
     @app.get("/", include_in_schema=False)
     async def _web_ui(request: Request) -> HTMLResponse:
         return HTMLResponse(content=PAGE, status_code=200)

@@ -94,10 +94,11 @@ Ruff 静态检查：All checks passed!
 
 ## 6. 未完成债务与唯一下一动作
 
-- **2026-09-02 审查修复（待提交）**：pyproject 补 `lxml>=4.9` 运行时依赖声明（此前靠 dev 传递依赖，`--no-dev` 安装会在 deliver 阶段 ImportError）；清理 dialects/dispatch/events/slots/store/loop 的过期 TODO 与 docstring；web_ui.py VLM 评分区加 DEMO 演示值标注（对齐 benchmark 数据诚信契约）。
-- **仓库卫生（处理中）**：`docs/学术材料/`、`开题报告.*`、`architecture.*`、`outputs/` 曾被 git 跟踪（ignore 规则添加前入库），已决定"停止跟踪 + 重写历史"；已推送历史中仍存在，处理进度见 git 记录。
+- **2026-09-02 UI 集成收官（方案 L）**：`web_ui.py` 已由"Codex × 3D"终版替换（Shoelace 组件 + Franken shadcn zinc 皮肤 + Motion 动效；1540 行旧三栏巨石下线）。库文件 vendor 到 `src/openbimagent/server/static/vendor/`（120 文件 1.6MB，MIT），`/static` 挂载，**完全离线**。页尾接线脚本消费真实端点：demo/municipal-pipeline（真实 nodes/segments 驱动 canvas 3D 渲染 + 动态取景）、rule-tree、runtime-info、sessions、plugins/invoke、export-blender（HITL confirm=true 走策略门）。旧原型 A–H 已清理，ui/ 保留方案 I/J/K/L 与装配脚本 `scratch/build_web_ui.py`。
+- **2026-09-02 审查修复（已提交）**：pyproject 补 `lxml>=4.9`；清理过期 TODO/docstring；VLM 评分区加 DEMO 水印。
+- **仓库卫生（已完成）**：`docs/学术材料/`、`开题报告.*`、`architecture.*`、`outputs/` 经 filter-repo 从全部历史清除并强推；本地文件保留且被 gitignore；权威备份 `scratch/git-backup/pre-rewrite-20260902.bundle`。
 - **已知风险（未修）**：`fastapi_app.py` 演示 app 的 `/api/v1/plugins/invoke` 与 export 端点无鉴权（confirm 仅为 body 布尔值）；绑 127.0.0.1 使用风险可控，**勿绑 0.0.0.0 暴露**。生产鉴权待 M2 后续落地（`authentication.py` 目前仅契约类）。
 - **运维备注**：VW runner 侧"未响应"为脚本线程被轮询循环占用的预期形态，实测待命 5.5h 零错误；runner 已具备固定 IPC 根 + 心跳 + 文件日志。
-- **前端状态**：以 §1 为准——中栏执行流/规则树/3D 视口/自愈时间线已接真实数据，唯 VLM 六维评分区为演示值（已加 DEMO 水印）。
+- **前端状态**：新工作台全部区块接真实数据（VLM 评分演示值已剔除出交付叙述）；Three.js 依赖随旧 UI 移除，3D 视口为自绘 canvas 渲染器。
 - **论文侧**：B10 LLM 超时 ×3 与 LLM 行多次运行方差待写入 limitations；execpolicy 吸收可作 rule-driven 可验证性论据。
-- **唯一下一动作**：① 全部改动推送远程（本地领先 origin/main 7 个提交）；② 论文正文写作（素材已备齐：docs/学术材料/实验数据与limitations草稿_2026-08-23.md，LLM 行已升级为 n=3 均值±标准差 60.0±0.0 / 7105±330ms / 10447±294 tok）。
+- **唯一下一动作**：论文正文写作（素材已备齐：docs/学术材料/实验数据与limitations草稿_2026-08-23.md，LLM 行已升级为 n=3 均值±标准差 60.0±0.0 / 7105±330ms / 10447±294 tok）。
