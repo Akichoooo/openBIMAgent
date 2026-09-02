@@ -284,9 +284,8 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
   <div class="sb-sec">进行中</div>
   <div class="sb-list" id="sessList"></div>
   <div class="sb-foot">
-    <div class="hosts">
-      <div class="host"><span class="dot g"></span>Blender 5.2</div>
-      <div class="host"><span class="dot g"></span>VW 2024</div>
+    <div class="hosts" id="hostChips">
+      <div class="host"><span class="dot" style="background:var(--ink3)"></span>宿主状态探测中…</div>
     </div>
     <button class="mchip" onclick="toggleSettings(event)"><span class="dot g"></span><span class="nm">gpt-5.6-terra</span><span class="car">▾</span></button>
   </div>
@@ -584,35 +583,6 @@ const TIMELINE=[
   {st:'on',  lb:'膨胀半径·重路由', sub:'iter 1', note:'膨胀障碍半径 ceil(2.5/分辨率) → A* 重寻路'},
   {st:'ok',  lb:'收敛', sub:'iter 2', note:'净距 3.1m ✓ · 覆土 1.42m ✓ · 12 条规则全过'},
 ];
-const RULES=[
-  ['MU-CLEAR-001','建(构)筑物水平净距 ≥ 2.5m','2.5m'],['MU-CLEAR-002','给水管与污水管水平净距','1.5m'],
-  ['MU-CLEAR-003','再生水管净距','0.5m'],['MU-CLEAR-004','排水管净距','0.8m'],
-  ['MU-CLEAR-005','给水 d≤200 / d>200 分级净距','1.0/1.5m'],['MU-CLEAR-006','燃气管五档压力净距','1.0–2.0m'],
-  ['MU-CLEAR-007','直埋电力电缆净距','0.5m'],['MU-CLEAR-008','通信管线净距','1.0m'],
-  ['MU-COVER-001','最小覆土深度（车行道下）','0.7m'],['MU-COVER-002','冰冻线以下覆土','按地区'],
-  ['MU-SLOPE-001','DN400 最小坡度','0.003'],['MU-SLOPE-002','最大流速约束','5 m/s'],
-];
-const PLUGINS=[
-  ['plugin.core.municipal_utility','四大确定性求解器 + 自愈算法','solver:*'],
-  ['plugin.core.rule_compliance','GB 50289-2016 规则核验与证据','rules:*'],
-  ['plugin.host.blender_mcp','Blender 5.2 几何构建 / 渲染','cad_host:blender'],
-  ['plugin.host.vectorworks_mcp','Vectorworks 2024 施工图 VWX','cad_host:vw'],
-  ['plugin.engine.spatial_graph','3D 空间图谱与 DAG 核验','spatial:*'],
-  ['plugin.core.session_store','JSONL 会话树与检查点','session:*'],
-  ['plugin.example.echo','外部插件发现（manifest 约定）','echo:*'],
-];
-const IR_JSON=`{
-  "schema_version": "v1.0", "system": "wastewater",
-  "nodes": [ MH-01…MH-06 (x, y, rim_z, invert_z) × 6 ],
-  "segments": [
-    { "id": "SEG-02", "from": "MH-02", "to": "MH-03",
-      "dn": 400, "slope": 0.003,
-      "centerline": [[28,2],[36,10.5],[48,12.5],[55,6]],
-      "note": "self-healed reroute: clearance 3.1m ≥ 2.5m" }
-  ],
-  "canonical_hash": "e9296294eb35eb22…a90588c7"
-}`;
-
 /* ================================================================
    视口渲染器（零依赖 canvas 3D：轨道相机 + 垂直夸大）
    ================================================================ */
@@ -893,51 +863,8 @@ function playTimeline(){
 const $=id=>document.getElementById(id);
 function toggleTool(h){const t=h.parentElement,wasClosed=t.classList.contains('closed');t.classList.toggle('closed');if(wasClosed)expandIn(t.querySelector('.tool-b'));}
 function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
-async function runTurn(){
-  /* tool1 running → done */
-  await sleep(900);
-  $('tool1Live').innerHTML='<span class="k">status&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>iter 0：MU-CLEAR-001 碰撞（净距 1.6m）→ 膨胀半径重路由…';
-  playTimeline();
-  await sleep(1800);
-  $('tool1Live').innerHTML='<span class="k">status&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>iter 2：<span class="ok">converged</span> · 净距 3.1m ✓';
-  await sleep(700);
-  $('tool1St').className='st ok';$('tool1St').textContent='✓ 2.9s · converged';
-  $('tool1').classList.add('closed');
-  $('tool1Body').insertAdjacentHTML('beforeend',
-    `<div><span class="k">result&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>converged=<span class="ok">true</span> · iterations=2 · nodes=6 · segments=5</div>
-     <div><span class="k">resolved&nbsp;&nbsp;&nbsp;</span><span class="bad">MU-CLEAR-001</span> 2.5m 净距违规 → <span class="ok">3.1m 合规</span>（A* 绕行）</div>`);
-  /* tool2 */
-  $('tool2').style.display='';riseIn($('tool2'));$('tool2St').className='st run';$('tool2St').innerHTML='<span class="spin"></span>running…';
-  await sleep(1100);
-  $('tool2St').className='st ok';$('tool2St').textContent='✓ 0.8s · 12/12 pass';
-  $('artIR').style.display='';riseIn($('artIR'));
-  await sleep(600);
-  /* HITL */
-  $('hitl').style.display='';riseIn($('hitl'));$('hitl').scrollIntoView({behavior:'smooth',block:'nearest'});
-}
-function replayAll(){
-  ['tool2','artIR','hitl','tool3','rcpt','doneLine'].forEach(i=>$(i).style.display='none');
-  const t1=$('tool1');t1.classList.remove('closed');
-  $('tool1St').className='st run';$('tool1St').innerHTML='<span class="spin"></span>running…';
-  $('tool1Live').innerHTML='<span class="k">status&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>A* 网格寻路中…';
-  const extra=$('tool1Body').querySelectorAll('div:nth-child(n+4)');extra.forEach(e=>e.remove());
-  $('approveBtn').disabled=false;$('approveBtn').textContent='批准导出';
-  runTurn();
-}
 function askConfirm(){$('modalMask').classList.add('show');popIn($('modalMask').querySelector('.modal'));}
 function closeModal(){$('modalMask').classList.remove('show');}
-async function doExport(){
-  closeModal();
-  const b=$('approveBtn');b.disabled=true;b.textContent='执行中…';
-  $('tool3').style.display='';riseIn($('tool3'));$('tool3').classList.remove('closed');
-  $('tool3St').className='st run';$('tool3St').innerHTML='<span class="spin"></span>executing…';
-  await sleep(1500);
-  $('tool3St').className='st ok';$('tool3St').textContent='✓ 2,187 ms · completed';
-  $('tool3').classList.add('closed');
-  $('rcpt').style.display='';riseIn($('rcpt'));$('doneLine').style.display='';riseIn($('doneLine'),.1);
-  $('rcpt').scrollIntoView({behavior:'smooth',block:'nearest'});
-  toast('交付完成：m3_invoke_e2e.blend（22 对象 · 120KB）');
-}
 function rejectExport(){
   $('hitl').innerHTML='<div class="hd"><span class="tag">HITL</span><span style="color:var(--red)">已拒绝 · 策略门拦截，未执行任何写盘</span></div>';
   toast('已拒绝导出（决策回执已记入会话树）');
@@ -950,15 +877,7 @@ function pickCmd(c){slash.classList.remove('show');ta.value='';
   if(c==='/rules')openInspector('rules');
   else if(c==='/ir')openInspector('ir');
   else if(c==='/export')askConfirm();
-  else if(c==='/solve'){replayAll();toast('重新调度 solver:self_healing');}
-}
-function sendMsg(){
-  const v=ta.value.trim();if(!v)return;ta.value='';slash.classList.remove('show');
-  const sc=$('thScroll');
-  sc.insertAdjacentHTML('beforeend',`<div class="msg-you"></div><div class="agentline">收到「${v.replace(/</g,'&lt;')}」。<span class="dim">原型态：真实集成时此处走 registry.invoke 调度并追加工具块。</span></div>`);
-  sc.querySelectorAll('.msg-you')[sc.querySelectorAll('.msg-you').length-1].textContent=v;
-  const kids=sc.children;riseIn(kids[kids.length-2]);riseIn(kids[kids.length-1],.08);
-  sc.scrollTop=sc.scrollHeight;
+  else if(c==='/solve'){ta.value='重新调度自愈求解器';sendMsg();}
 }
 /* panel & tabs */
 function threadMode(m){$('thread').classList.toggle('ins-mode',m==='insp');$('tabConv').classList.toggle('on',m==='conv');$('tabInsp').classList.toggle('on',m==='insp');}
@@ -974,19 +893,6 @@ document.addEventListener('click',e=>{if(!$('setPop').contains(e.target))$('setP
 /* toast */
 let toastTm;
 function toast(m){const t=$('toastEl');t.textContent=m;t.classList.add('show');clearTimeout(toastTm);toastTm=setTimeout(()=>t.classList.remove('show'),2200);}
-/* sessions list */
-const SESS=[
-  ['g','DN400 污水重力管 · 6 井 5 段','现在 · converged',1],
-  ['g','高程冲突场景 T4 核验','2h 前 · 12/12 pass',0],
-  ['y','B10 · 102 节点复杂管网','昨天 · LLM 行超时 ×3',0],
-  ['g','Edo 赛博街区 · 资产装配','3 天前 · 已交付',0],
-  ['b','单体资产 Hero · G6 双宿主','3 天前 · blend+vwx',0],
-];
-$('sessList').innerHTML=SESS.map(s=>`<div class="sess${s[3]?' on':''}"><span class="dot ${s[0]}"></span><div><div class="tt">${s[1]}</div><div class="meta">${s[2]}</div></div></div>`).join('');
-/* rules & plugins */
-$('ruleList').innerHTML=RULES.map(r=>`<div class="rule"><div class="rh"><span class="rid">${r[0]}</span><span class="rst">✓ pass</span></div><div class="rd">${r[1]} · 阈值 <b class="mono">${r[2]}</b></div></div>`).join('');
-$('plgList').innerHTML=PLUGINS.map(p=>`<div class="plg"><div class="pid">${p[0]} <span style="color:var(--grn);font-size:9.5px">ACTIVE</span></div><div class="pds">${p[1]} · 能力前缀 <span class="mono" style="color:var(--acc)">${p[2]}</span></div></div>`).join('');
-$('irPre').textContent=IR_JSON;
 /* init（支持 #plan / #prof / #step2 直达深链，便于审核截图） */
 const h=location.hash;
 if(h.includes('plan'))setView('plan',document.querySelector('#viewSeg [data-v=plan]'));
@@ -1000,8 +906,10 @@ staggerIn('.sess');staggerIn('#thScroll > *');
 /* ================================================================
    集成态功能接线（真实端点，非演示）：运行 / 会话 / 设置 / 上传 / 调度 / 导出
    ================================================================ */
+window.__WB_TOKEN="__WB_TOKEN__"; /* 服务启动时由 add_web_ui 注入真实 token（config/workbench.local.toml） */
 const _rid=()=>'wb-'+Math.random().toString(36).slice(2)+Date.now().toString(36);
-const _get=async u=>{try{const r=await fetch(u,{headers:{'X-Request-ID':_rid()}});return r.ok?await r.json():null;}catch(e){return null;}};
+const _H=(extra)=>({'Authorization':'Bearer '+(window.__WB_TOKEN||''),...extra});
+const _get=async u=>{try{const r=await fetch(u,{headers:_H({'X-Request-ID':_rid()})});return r.ok?await r.json():null;}catch(e){return null;}};
 const _esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 let _lastIR=null,_curSession=null,_pollTimer=null;
 
@@ -1031,6 +939,10 @@ function applyRealIR(mp){
   if(typeof mp.iterations_spent==='number'){TIMELINE[1].sub='iter '+(mp.iterations_spent-1);TIMELINE[2].sub='iter '+mp.iterations_spent;}
   renderTL();resetCam();draw();
   $('hudStat').textContent=`${NODES.length} 井 · ${SEGS.length} 段 · DN${SEGS[0]?SEGS[0].dn:400}`;
+  /* 🟡 审核修复：面包屑与 IR 查看器同步真实数据（不再死数据） */
+  const crumb=document.querySelector('.crumb b');if(crumb)crumb.textContent=`CompiledIR · ${NODES.length} 井 ${SEGS.length} 段 · DN${SEGS[0]?SEGS[0].dn:400}`;
+  const pill=document.querySelector('.st-top .pill');if(pill&&typeof mp.iterations_spent==='number')pill.innerHTML=`<span class="dot g"></span>${mp.converged?'已收敛':'未收敛'} · ${mp.iterations_spent} 轮迭代`;
+  $('irPre').textContent=JSON.stringify({schema_version:'v1.0',converged:mp.converged,iterations_spent:mp.iterations_spent,nodes:mp.nodes,segments:mp.segments,resolved_violations:mp.resolved_violations},null,1).slice(0,6000);
 }
 function downloadIR(){
   const blob=new Blob([JSON.stringify(_lastIR||{note:'尚无 IR 数据'},null,1)],{type:'application/json'});
@@ -1085,7 +997,7 @@ async function startRun(){
   if(!brief){toast('请填写工程指令');return;}
   $('runMask').classList.remove('show');
   try{
-    const r=await fetch('/api/v1/runs',{method:'POST',headers:{'Content-Type':'application/json','X-Request-ID':_rid()},body:JSON.stringify({brief,playbook:$('runPlaybook').value})});
+    const r=await fetch('/api/v1/runs',{method:'POST',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({brief,playbook:$('runPlaybook').value})});
     const d=await r.json();
     if(!r.ok){toast(d.error||('启动失败 '+r.status));return;}
     toast('任务已启动 · session '+d.session_id.slice(0,8));
@@ -1108,7 +1020,7 @@ function streamSession(sid){
 async function forkSession(sid,ev){
   ev&&ev.stopPropagation();
   try{
-    const r=await fetch(`/api/v1/sessions/${sid}/fork`,{method:'POST',headers:{'Content-Type':'application/json','X-Request-ID':_rid()},body:JSON.stringify({})});
+    const r=await fetch(`/api/v1/sessions/${sid}/fork`,{method:'POST',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({})});
     const d=await r.json();
     if(r.ok){toast('已创建分支会话');loadSessions(d.session_id);}
     else toast('分支失败：'+(d.error||r.status));
@@ -1143,6 +1055,20 @@ async function loadRuntimeInfo(){
   const pl=await _get('/api/v1/plugins');
   if(pl&&pl.capabilities_map){
     $('capSel').innerHTML=Object.keys(pl.capabilities_map).map(c=>`<option value="${c}">${c}</option>`).join('');
+    /* 🟡 审核修复：插件面板接真实清单（此前永远显示 mock） */
+    const byPlugin={};
+    Object.entries(pl.capabilities_map).forEach(([cap,pid])=>{(byPlugin[pid]=byPlugin[pid]||[]).push(cap);});
+    const policies=pl.capability_policies||[];
+    $('plgList').innerHTML=Object.entries(byPlugin).map(([pid,caps])=>
+      `<div class="plg"><div class="pid">${_esc(pid)} <span style="color:var(--grn);font-size:9.5px">ACTIVE</span></div>`+
+      `<div class="pds">${caps.length} 能力：<span class="mono" style="color:var(--acc)">${caps.map(_esc).join(' · ')}</span></div></div>`).join('')+
+      (policies.length?`<div class="plg"><div class="pid">capability_policies <span style="color:var(--amb);font-size:9.5px">${policies.length} 条策略</span></div><div class="pds mono" style="font-size:10px">${policies.map(p=>_esc(JSON.stringify(p)).slice(0,120)).join('<br>')}</div></div>`:'');
+  }
+  /* 宿主状态实探（🟡 审核修复：不再永远绿灯） */
+  const hs=await _get('/api/v1/hosts');
+  if(hs&&hs.hosts){
+    $('hostChips').innerHTML=hs.hosts.map(h=>
+      `<div class="host"><span class="dot ${h.connected===true?'g':''}" ${h.connected!==true?'style="background:var(--ink3)"':''}></span>${_esc(h.label)}</div>`).join('');
   }
   applyRealIR(await _get('/api/v1/demo/municipal-pipeline'));
   loadUploads();
@@ -1178,7 +1104,7 @@ async function saveSettings(){
   document.querySelectorAll('#provKeys input[data-env]').forEach(i=>{if(i.value.trim())pk[i.dataset.env]=i.value.trim();});
   if(Object.keys(pk).length)body.provider_keys=pk;
   try{
-    const r=await fetch('/api/v1/settings/llm',{method:'PUT',headers:{'Content-Type':'application/json','X-Request-ID':_rid()},body:JSON.stringify(body)});
+    const r=await fetch('/api/v1/settings/llm',{method:'PUT',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify(body)});
     const d=await r.json();
     if(r.ok&&d.status==='success'){
       toast('设置已保存（llm_baseline.local.toml · key 已入环境/.env）');
@@ -1192,7 +1118,7 @@ async function saveSettings(){
 $('fileInput').addEventListener('change',async e=>{
   for(const f of e.target.files){
     try{
-      const r=await fetch('/api/v1/uploads?name='+encodeURIComponent(f.name),{method:'POST',headers:{'Content-Type':'application/octet-stream','X-Request-ID':_rid()},body:f});
+      const r=await fetch('/api/v1/uploads?name='+encodeURIComponent(f.name),{method:'POST',headers:_H({'Content-Type':'application/octet-stream','X-Request-ID':_rid()}),body:f});
       const d=await r.json();
       if(r.ok&&d.status==='success'){
         toast(`已上传：${d.item.name}（${d.item.size} B）`);
@@ -1221,7 +1147,7 @@ async function invokeCap(){
   try{payload=JSON.parse(document.querySelector('.cons textarea').value||'{}');}catch(e){out.textContent='payload JSON 解析失败：'+e;return;}
   out.textContent='invoke '+cap+' …';
   try{
-    const r=await fetch('/api/v1/plugins/invoke',{method:'POST',headers:{'Content-Type':'application/json','X-Request-ID':_rid()},body:JSON.stringify({capability:cap,payload,confirm:true})});
+    const r=await fetch('/api/v1/plugins/invoke',{method:'POST',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({capability:cap,payload,confirm:true})});
     const d=await r.json();
     out.textContent=JSON.stringify(d,null,1).slice(0,2000);
   }catch(e){out.textContent='invoke 失败：'+e;}
@@ -1234,7 +1160,7 @@ async function doExport(){
   $('tool3').style.display='';riseIn($('tool3'));$('tool3').classList.remove('closed');
   $('tool3St').className='st run';$('tool3St').innerHTML='<span class="spin"></span>executing…';
   try{
-    const r=await fetch('/api/v1/demo/export-blender',{method:'POST',headers:{'Content-Type':'application/json','X-Request-ID':_rid()},body:JSON.stringify({confirm:true})});
+    const r=await fetch('/api/v1/demo/export-blender',{method:'POST',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({confirm:true})});
     const d=await r.json();
     if(!r.ok)throw new Error((d.detail&&d.detail.error&&d.detail.error.message)||d.detail||r.status);
     const rc=d.receipt||d;
@@ -1286,7 +1212,7 @@ async function decideApproval(id,decision){
   try{
     const instrEl=$('instr-'+id);
     const instr=instrEl&&instrEl.value.trim();
-    const r=await fetch(`/api/v1/approvals/${id}/decide`,{method:'POST',headers:{'Content-Type':'application/json','X-Request-ID':_rid()},body:JSON.stringify({decision,actor:'human:web-operator',...(instr?{instruction:instr}:{})})});
+    const r=await fetch(`/api/v1/approvals/${id}/decide`,{method:'POST',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({decision,actor:'human:web-operator',...(instr?{instruction:instr}:{})})});
     const card=$('appr-'+id);
     if(r.ok&&card){
       card.innerHTML=`<div class="hd"><span class="tag">审批门</span><span style="color:${decision==='approved'?'var(--grn)':'var(--red)'}">${decision==='approved'?'✓ 已批准':'✕ 已拒绝'} · 决策回执已落 session</span></div>`;
@@ -1349,11 +1275,15 @@ async function sendMsg(){
 """
 
 
-def add_web_ui(app: FastAPI) -> None:
-    """挂载 /static 静态资源（vendor 组件库）并注册 / 工作台页面。"""
+def add_web_ui(app: FastAPI, token: str | None = None) -> None:
+    """挂载 /static 静态资源（vendor 组件库）并注册 / 工作台页面。
+
+    token 注入所伺服页面（window.__WB_TOKEN），前端变更请求据此携带 Bearer
+    （对齐 server/auth.py 守卫；token 不出现在任何 API 响应体中）。
+    """
     if _STATIC_DIR.is_dir():
         app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="web-ui-static")
 
     @app.get("/", include_in_schema=False)
     async def _web_ui(request: Request) -> HTMLResponse:
-        return HTMLResponse(content=PAGE, status_code=200)
+        return HTMLResponse(content=PAGE.replace("__WB_TOKEN__", token or ""), status_code=200)

@@ -29,6 +29,7 @@ from openbimagent.server.web_ui import add_web_ui
 from openbimagent.server.workbench_io import add_workbench_io
 from openbimagent.server.runs import add_runs
 from openbimagent.server.approvals import add_approvals
+from openbimagent.server.auth import add_auth
 
 M2_FASTAPI_APP_TITLE = "openBIMAgent M2 Read-Only API"
 M2_FASTAPI_APP_VERSION = "0.1"
@@ -94,7 +95,11 @@ def build_m2_readonly_app(
     )
     if sessions_dir is not None:
         add_sse_endpoint(app, sessions_dir=sessions_dir, budget=sse_budget)
-    add_web_ui(app)
+    from openbimagent.server.auth import load_or_create_token
+
+    workbench_token = load_or_create_token()
+    add_auth(app, workbench_token)
+    add_web_ui(app, token=workbench_token)
     add_workbench_io(app)
     add_runs(app)
     add_approvals(app)
@@ -436,10 +441,16 @@ def build_m2_readonly_app(
         include_in_schema=False,
     )
     async def _readonly_gateway(request: Request) -> Response:
+        headers = _request_headers_to_m2(request)
+        # 🔵 审核修复：只读 GET 缺 X-Request-ID 时自动兜底补全（变更方法仍强制由客户端提供，保幂等语义）
+        if request.method in ("GET", "HEAD") and not any(h.name.lower() == "x-request-id" for h in headers):
+            import uuid as _uuid
+
+            headers = (*headers, M2HttpHeader(name="X-Request-ID", value=f"gw-{_uuid.uuid4().hex[:16]}"))
         m2_request = M2ReadonlyHttpRequest(
             method=request.method,
             target=request.url.path + (f"?{request.url.query}" if request.url.query else ""),
-            headers=_request_headers_to_m2(request),
+            headers=headers,
             body_size=_body_size(request),
         )
         m2_response: M2ReadonlyHttpResponse = adapter.dispatch(m2_request)

@@ -15,6 +15,7 @@ def client(tmp_path_factory: pytest.TempPathFactory) -> TestClient:
     tmp = tmp_path_factory.mktemp("approvals")
     import os
 
+    os.environ["OPENBIMAGENT_WORKBENCH_TOKEN"] = "test-wb-token"
     os.environ["OPENBIMAGENT_SESSIONS_DIR"] = str(tmp / "sessions")
     from openbimagent.server.fastapi_app import build_demo_app
 
@@ -22,6 +23,7 @@ def client(tmp_path_factory: pytest.TempPathFactory) -> TestClient:
         def request(self, method: str, url: str, **kwargs):  # type: ignore[override]
             headers = dict(kwargs.pop("headers", {}) or {})
             headers.setdefault("X-Request-ID", f"test-{uuid.uuid4().hex[:16]}")
+            headers.setdefault("Authorization", "Bearer test-wb-token")
             return super().request(method, url, headers=headers, **kwargs)
 
     yield _RidClient(build_demo_app())

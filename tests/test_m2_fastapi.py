@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 from fastapi.testclient import TestClient
+
+os.environ.setdefault("OPENBIMAGENT_WORKBENCH_TOKEN", "test-wb-token")
 from openbimagent.server.fastapi_app import build_m2_readonly_app
 from openbimagent.server.readonly_http import M2ReadonlyHttpAdapter
 from openbimagent.server.service import M2ReadOnlyService
@@ -27,14 +31,17 @@ def _app() -> TestClient:
         artifact_lookup=lambda _: None,
     )
     adapter = M2ReadonlyHttpAdapter(service)
-    return TestClient(build_m2_readonly_app(adapter))
+    client = TestClient(build_m2_readonly_app(adapter))
+    client.headers["Authorization"] = "Bearer test-wb-token"
+    return client
 
 
-def test_health_requires_correlation_id() -> None:
+def test_health_without_correlation_id_gets_gateway_fallback() -> None:
+    """🔵 网关兜底：只读 GET 缺 X-Request-ID 时自动补全（外部调试不再 400）；变更方法仍严格。"""
     client = _app()
     resp = client.get("/api/v1/health")
-    assert resp.status_code == 400
-    assert resp.json()["ok"] is False
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
 
 
 def test_health_with_correlation_id() -> None:
@@ -236,6 +243,7 @@ def test_module_level_demo_app_entry() -> None:
     from openbimagent.server.fastapi_app import app
 
     client = TestClient(app)
+    client.headers["Authorization"] = "Bearer test-wb-token"
     assert client.get("/healthz").status_code == 200
     assert client.get("/readyz").json()["status"] == "ready"
     assert client.get("/api/v1/plugins").json()["plugin_count"] >= 7

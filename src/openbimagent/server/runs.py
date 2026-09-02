@@ -93,6 +93,14 @@ _ARCHIVE_FILES = (
 )
 
 
+def _archive_root(pack: Path) -> Path:
+    """归档根目录：OPENBIMAGENT_ARCHIVE_DIR 覆盖（测试沙箱）→ <root>/<pack>/；缺省 <pack>/assets/auto_archive/。"""
+    override = os.environ.get("OPENBIMAGENT_ARCHIVE_DIR")
+    if override:
+        return Path(override) / pack.name
+    return pack / "assets" / "auto_archive"
+
+
 def _archive_run_artifacts(playbook: Path, session_id: str, brief: str) -> None:
     """P2 素材积累：交付工件只增不改地归档进 Domain Pack assets/auto_archive/<session>/。
 
@@ -103,7 +111,7 @@ def _archive_run_artifacts(playbook: Path, session_id: str, brief: str) -> None:
 
     out_dir = _REPO_ROOT / "out"
     pack = playbook.parent
-    archive_root = pack / "assets" / "auto_archive"
+    archive_root = _archive_root(pack)
     dest_dir = archive_root / session_id
     copied: list[dict[str, Any]] = []
     for name in _ARCHIVE_FILES:
@@ -268,7 +276,7 @@ def add_runs(app: FastAPI) -> None:
     async def list_archive() -> dict:
         items: list[dict[str, Any]] = []
         for playbook in {p for p in _PLAYBOOKS.values()}:
-            index_path = playbook.parent / "assets" / "auto_archive" / "index.json"
+            index_path = _archive_root(playbook.parent) / "index.json"
             if not index_path.is_file():
                 continue
             try:

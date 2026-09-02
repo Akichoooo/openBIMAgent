@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture()
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    monkeypatch.setenv("OPENBIMAGENT_WORKBENCH_TOKEN", "test-wb-token")
     monkeypatch.setenv("OPENBIMAGENT_LLM_BASELINE", str(tmp_path / "llm_baseline.local.toml"))
     monkeypatch.setenv("OPENBIMAGENT_UPLOADS_DIR", str(tmp_path / "uploads"))
     monkeypatch.setenv("OPENBIMAGENT_ENV_FILE", str(tmp_path / ".env"))
@@ -24,7 +25,9 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
         monkeypatch.delenv(key, raising=False)
     from openbimagent.server.fastapi_app import build_demo_app
 
-    return TestClient(build_demo_app())
+    client = TestClient(build_demo_app())
+    client.headers["Authorization"] = "Bearer test-wb-token"
+    return client
 
 
 def test_get_settings_unconfigured(client: TestClient) -> None:
@@ -94,3 +97,21 @@ def test_upload_and_list(client: TestClient, tmp_path: Path) -> None:
 
 def test_upload_empty_rejected(client: TestClient) -> None:
     assert client.post("/api/v1/uploads?name=x.bin").status_code == 400
+
+
+def test_mutation_requires_bearer_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """🔴 审核修复验证：变更端点无 Bearer token → 401；携带 → 放行；GET 保持开放。"""
+    monkeypatch.setenv("OPENBIMAGENT_WORKBENCH_TOKEN", "test-wb-token")
+    monkeypatch.setenv("OPENBIMAGENT_LLM_BASELINE", str(tmp_path / "b.toml"))
+    monkeypatch.setenv("OPENBIMAGENT_UPLOADS_DIR", str(tmp_path / "up"))
+    monkeypatch.setenv("OPENBIMAGENT_ENV_FILE", str(tmp_path / ".env"))
+    from openbimagent.server.fastapi_app import build_demo_app
+
+    anon = TestClient(build_demo_app())
+    assert anon.put("/api/v1/settings/llm", json={"model": "x"}).status_code == 401
+    assert anon.post("/api/v1/uploads?name=x.bin", content=b"1").status_code == 401
+    assert anon.post("/api/v1/runs", json={"brief": "x"}).status_code == 401
+    assert anon.post("/api/v1/approvals/t/decide", json={"decision": "approved"}).status_code == 401
+    # GET 只读端点保持开放（M2 只读语义不变）
+    assert anon.get("/api/v1/settings/llm").status_code == 200
+    assert anon.get("/api/v1/hosts").status_code == 200

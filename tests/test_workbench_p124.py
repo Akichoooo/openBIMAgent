@@ -21,13 +21,16 @@ REPO = Path(__file__).resolve().parents[1]
 @pytest.fixture(scope="module")
 def client(tmp_path_factory: pytest.TempPathFactory) -> TestClient:
     tmp = tmp_path_factory.mktemp("p124")
+    os.environ["OPENBIMAGENT_WORKBENCH_TOKEN"] = "test-wb-token"
     os.environ["OPENBIMAGENT_SESSIONS_DIR"] = str(tmp / "sessions")
+    os.environ["OPENBIMAGENT_ARCHIVE_DIR"] = str(tmp / "archive")
     from openbimagent.server.fastapi_app import build_demo_app
 
     class _RidClient(TestClient):
         def request(self, method: str, url: str, **kwargs):  # type: ignore[override]
             headers = dict(kwargs.pop("headers", {}) or {})
             headers.setdefault("X-Request-ID", f"test-{uuid.uuid4().hex[:16]}")
+            headers.setdefault("Authorization", "Bearer test-wb-token")
             return super().request(method, url, headers=headers, **kwargs)
 
     yield _RidClient(build_demo_app())
@@ -58,11 +61,11 @@ def test_municipal_reaches_deliver_gate(client: TestClient, municipal_run: str) 
     assert "approval_requested" in customs, "应触达审批门（deliver）"
 
 
-def test_archive_written(client: TestClient, municipal_run: str) -> None:
-    archive = REPO / "domain_packs" / "municipal_utility" / "assets" / "auto_archive" / municipal_run
+def test_archive_written(client: TestClient, municipal_run: str, tmp_path: Path) -> None:
+    root = Path(os.environ["OPENBIMAGENT_ARCHIVE_DIR"]) / "municipal_utility"
+    archive = root / municipal_run
     assert archive.is_dir(), f"归档目录缺失: {archive}"
-    index = REPO / "domain_packs" / "municipal_utility" / "assets" / "auto_archive" / "index.json"
-    entries = json.loads(index.read_text(encoding="utf-8"))
+    entries = json.loads((root / "index.json").read_text(encoding="utf-8"))
     assert any(e["session_id"] == municipal_run for e in entries)
     # 端点可见
     data = client.get("/api/v1/archive").json()

@@ -103,4 +103,5 @@ Ruff 静态检查：All checks passed!
 - **运维备注**：VW runner 侧"未响应"为脚本线程被轮询循环占用的预期形态，实测待命 5.5h 零错误；runner 已具备固定 IPC 根 + 心跳 + 文件日志。
 - **前端状态**：新工作台全部区块接真实数据（VLM 评分演示值已剔除出交付叙述）；Three.js 依赖随旧 UI 移除，3D 视口为自绘 canvas 渲染器。
 - **论文侧**：B10 LLM 超时 ×3 与 LLM 行多次运行方差待写入 limitations；execpolicy 吸收可作 rule-driven 可验证性论据。
+- **2026-09-03 独立审核四项修复（已验证）**：🔴 控制面鉴权——`server/auth.py` Bearer token 守卫（/api/v1/** 变更方法 401，GET 开放；token 自动生成 `config/workbench.local.toml`（gitignored）或 `OPENBIMAGENT_WORKBENCH_TOKEN` 覆盖；页面注入 `window.__WB_TOKEN`，前端全请求携带）；🟡 前端清污——删除原型假函数 runTurn/replayAll/假 sendMsg/假 doExport 与 mock SESS/PLUGINS/RULES/IR_JSON，irPre/插件面板/面包屑/宿主芯片全部接真实端点（宿主=Blender TCP 实探，VW 未探测如实灰显），/solve 斜杠命令改真实调度；🟡 归档沙箱——`OPENBIMAGENT_ARCHIVE_DIR` 覆盖，test_workbench_p124 改 tmp 不再污染仓库；🔵 网关兜底——只读 GET 缺 X-Request-ID 自动补全（test_health 断言同步更新）。全量 1084 passed。
 - **唯一下一动作**：论文正文写作（素材已备齐：docs/学术材料/实验数据与limitations草稿_2026-08-23.md，LLM 行已升级为 n=3 均值±标准差 60.0±0.0 / 7105±330ms / 10447±294 tok）。

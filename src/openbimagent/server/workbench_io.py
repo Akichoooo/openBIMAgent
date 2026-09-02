@@ -187,6 +187,24 @@ def add_workbench_io(app: FastAPI) -> None:
         except (json.JSONDecodeError, OSError):
             return {"status": "success", "usage": None}
 
+    @app.get("/api/v1/hosts", summary="CAD 宿主连接状态（Blender TCP 实探；VW 外部 runner 未探测如实标注）", tags=["Workbench"])
+    async def hosts_status() -> dict:
+        import socket
+
+        blender_ok = False
+        try:
+            with socket.create_connection(("127.0.0.1", 9876), timeout=0.4):
+                blender_ok = True
+        except OSError:
+            blender_ok = False
+        return {
+            "status": "success",
+            "hosts": [
+                {"id": "blender", "label": "Blender MCP · 127.0.0.1:9876", "connected": blender_ok},
+                {"id": "vectorworks", "label": "Vectorworks IPC（外部 runner，未探测）", "connected": None},
+            ],
+        }
+
     @app.post("/api/v1/uploads", summary="上传附件（原始字节流；sha256 manifest 落盘）", tags=["Workbench"])
     async def upload_file(request: Request) -> JSONResponse:
         data = await request.body()
