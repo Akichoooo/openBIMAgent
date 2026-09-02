@@ -3,6 +3,11 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>openBIMAgent · 方案 I（Codex × 3D 视口）</title>
+<!-- Motion（motion.dev，MIT）CDN 动效引擎；离线时自动降级为即时呈现，不影响任何功能 -->
+<script type="module">
+  import { animate, stagger } from 'https://cdn.jsdelivr.net/npm/motion@latest/+esm';
+  window.__M = { animate, stagger };
+</script>
 <style>
 /* ============ tokens ============ */
 :root{
@@ -330,7 +335,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     <div class="agentline">收到。调度 <span class="dim mono">solver:self_healing</span> 生成确定性几何，再由规则集核验。<span class="dim">全程经微内核策略门，写盘前会请求确认。</span></div>
 
     <div class="tool" id="tool1">
-      <div class="tool-h" onclick="this.parentElement.classList.toggle('closed')">
+      <div class="tool-h" onclick="toggleTool(this)">
         <span class="ic solver">Σ</span>
         <span class="nm">solver:self_healing</span>
         <span class="st run" id="tool1St"><span class="spin"></span>running…</span>
@@ -344,7 +349,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     </div>
 
     <div class="tool closed" id="tool2" style="display:none">
-      <div class="tool-h" onclick="this.parentElement.classList.toggle('closed')">
+      <div class="tool-h" onclick="toggleTool(this)">
         <span class="ic rules">✓</span>
         <span class="nm">rules:gb50289.verify</span>
         <span class="st" id="tool2St"></span>
@@ -378,7 +383,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     </div>
 
     <div class="tool closed" id="tool3" style="display:none">
-      <div class="tool-h" onclick="this.parentElement.classList.toggle('closed')">
+      <div class="tool-h" onclick="toggleTool(this)">
         <span class="ic host">⬡</span>
         <span class="nm">cad_host:blender.execute</span>
         <span class="st" id="tool3St"></span>
@@ -492,6 +497,16 @@ plan_sha256: 7ac1…9f · objects: 22</pre>
 <div class="toast" id="toastEl"></div>
 
 <script>
+/* ================================================================
+   Motion 动效辅助（motion.dev；未加载时零降级——直接呈现）
+   ================================================================ */
+const M=()=>window.__M;
+const EASE_OUT=[.22,1,.36,1]; /* shadcn 系常用缓出曲线 */
+function riseIn(el,delay=0){const m=M();if(!m||!el)return;m.animate(el,{opacity:[0,1],y:[12,0]},{duration:.38,delay,easing:EASE_OUT});}
+function popIn(el){const m=M();if(!m||!el)return;m.animate(el,{opacity:[0,1],scale:[.96,1]},{duration:.22,easing:EASE_OUT});}
+function expandIn(el){const m=M();if(!m||!el)return;const h=el.scrollHeight;m.animate(el,{height:[0,h+'px'],opacity:[0,1]},{duration:.28,easing:EASE_OUT});}
+function staggerIn(sel){const m=M();if(!m)return;const els=document.querySelectorAll(sel);if(els.length)m.animate(els,{opacity:[0,1],x:[-10,0]},{duration:.3,delay:m.stagger(.06),easing:EASE_OUT});}
+
 /* ================================================================
    数据（取自 /api/v1/demo/municipal-pipeline 真实口径的实测值）
    ================================================================ */
@@ -814,7 +829,9 @@ function playTimeline(){
 /* ================================================================
    线程交互（演示流式回合）
    ================================================================ */
+/* thread interactions */
 const $=id=>document.getElementById(id);
+function toggleTool(h){const t=h.parentElement,wasClosed=t.classList.contains('closed');t.classList.toggle('closed');if(wasClosed)expandIn(t.querySelector('.tool-b'));}
 function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
 async function runTurn(){
   /* tool1 running → done */
@@ -830,13 +847,13 @@ async function runTurn(){
     `<div><span class="k">result&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>converged=<span class="ok">true</span> · iterations=2 · nodes=6 · segments=5</div>
      <div><span class="k">resolved&nbsp;&nbsp;&nbsp;</span><span class="bad">MU-CLEAR-001</span> 2.5m 净距违规 → <span class="ok">3.1m 合规</span>（A* 绕行）</div>`);
   /* tool2 */
-  $('tool2').style.display='';$('tool2St').className='st run';$('tool2St').innerHTML='<span class="spin"></span>running…';
+  $('tool2').style.display='';riseIn($('tool2'));$('tool2St').className='st run';$('tool2St').innerHTML='<span class="spin"></span>running…';
   await sleep(1100);
   $('tool2St').className='st ok';$('tool2St').textContent='✓ 0.8s · 12/12 pass';
-  $('artIR').style.display='';
+  $('artIR').style.display='';riseIn($('artIR'));
   await sleep(600);
   /* HITL */
-  $('hitl').style.display='';$('hitl').scrollIntoView({behavior:'smooth',block:'nearest'});
+  $('hitl').style.display='';riseIn($('hitl'));$('hitl').scrollIntoView({behavior:'smooth',block:'nearest'});
 }
 function replayAll(){
   ['tool2','artIR','hitl','tool3','rcpt','doneLine'].forEach(i=>$(i).style.display='none');
@@ -847,17 +864,17 @@ function replayAll(){
   $('approveBtn').disabled=false;$('approveBtn').textContent='批准导出';
   runTurn();
 }
-function askConfirm(){$('modalMask').classList.add('show');}
+function askConfirm(){$('modalMask').classList.add('show');popIn($('modalMask').querySelector('.modal'));}
 function closeModal(){$('modalMask').classList.remove('show');}
 async function doExport(){
   closeModal();
   const b=$('approveBtn');b.disabled=true;b.textContent='执行中…';
-  $('tool3').style.display='';$('tool3').classList.remove('closed');
+  $('tool3').style.display='';riseIn($('tool3'));$('tool3').classList.remove('closed');
   $('tool3St').className='st run';$('tool3St').innerHTML='<span class="spin"></span>executing…';
   await sleep(1500);
   $('tool3St').className='st ok';$('tool3St').textContent='✓ 2,187 ms · completed';
   $('tool3').classList.add('closed');
-  $('rcpt').style.display='';$('doneLine').style.display='';
+  $('rcpt').style.display='';riseIn($('rcpt'));$('doneLine').style.display='';riseIn($('doneLine'),.1);
   $('rcpt').scrollIntoView({behavior:'smooth',block:'nearest'});
   toast('交付完成：m3_invoke_e2e.blend（22 对象 · 120KB）');
 }
@@ -880,6 +897,7 @@ function sendMsg(){
   const sc=$('thScroll');
   sc.insertAdjacentHTML('beforeend',`<div class="msg-you"></div><div class="agentline">收到「${v.replace(/</g,'&lt;')}」。<span class="dim">原型态：真实集成时此处走 registry.invoke 调度并追加工具块。</span></div>`);
   sc.querySelectorAll('.msg-you')[sc.querySelectorAll('.msg-you').length-1].textContent=v;
+  const kids=sc.children;riseIn(kids[kids.length-2]);riseIn(kids[kids.length-1],.08);
   sc.scrollTop=sc.scrollHeight;
 }
 /* panel & tabs */
@@ -891,7 +909,7 @@ function openInspector(p){
 }
 function focusViewport(){toast('视口：拖拽旋转 · 滚轮缩放 · Shift+拖拽平移');}
 /* settings */
-function toggleSettings(e){e.stopPropagation();$('setPop').classList.toggle('show');}
+function toggleSettings(e){e.stopPropagation();const p=$('setPop');p.classList.toggle('show');if(p.classList.contains('show'))popIn(p);}
 document.addEventListener('click',e=>{if(!$('setPop').contains(e.target))$('setPop').classList.remove('show');});
 /* toast */
 let toastTm;
@@ -915,6 +933,8 @@ if(h.includes('plan'))setView('plan',document.querySelector('#viewSeg [data-v=pl
 else if(h.includes('prof'))setView('prof',document.querySelector('#viewSeg [data-v=prof]'));
 const hm=h.match(/step(\d)/);if(hm){tlStep=+hm[1];bendT=[0,0.5,1][tlStep];}
 renderTL();resize();runTurn();
+/* 入场动效：会话列表逐条滑入 + 线程首批元素依次升起（Motion 未加载时自动跳过） */
+staggerIn('.sess');staggerIn('#thScroll > *');
 </script>
 </body>
 </html>

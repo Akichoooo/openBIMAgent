@@ -14,6 +14,7 @@
 - **检查器**：规则树 12 条 / Compiled IR / 插件清单 + 能力调度控制台，右栏内切换不占新空间
 - **数据诚信**：VLM 评分等演示值显式标注「演示值」，与 benchmark 的 measured/provenance 契约对齐
 - 深链：`#plan` / `#prof` / `#step2` 可直达指定视图与时间线步骤（审核截图用）
+- **动效**：引入 [Motion](https://motion.dev/)（MIT，CDN ESM）驱动微交互——会话列表 stagger 滑入、工具块展开高度动画、卡片/弹层 scale-fade、消息 rise-in；**离线时自动降级为即时呈现**（不联网也能完整使用，迁入 web_ui.py 时可把 motion.js vendor 到本地）
 - 审核截图：`scratch/ui-review/shot1.png`（3D+线程）、`shot_plan.png`（平面）、`shot_prof.png`（纵断面）
 
 **审核建议**：打开后等首轮流式回合跑完（约 5s，自动播放自愈动画），然后 ① 拖转 3D 视口 ② 点「批准导出」走 HITL 全链路 ③ 切平面/纵断面 ④ 右栏切「检查器」看规则树。
