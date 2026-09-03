@@ -35,7 +35,7 @@ M3 VW 通路 = PASS（真机验收 2026-08-23:1 passed in 8.22s;m3_registry_e2e.
 ```text
 分支：main
 HEAD：以 `git rev-parse HEAD` 实测为准
-全仓测试：1066 passed, 6 skipped, 2 warnings（2026-09-02 实测；6 skipped 为 opt-in 真机/真 LLM 测试，由 OPENBIMAGENT_RUN_REAL_* 环境变量门控，默认不跑）
+全仓测试：1088 passed, 6 skipped, 2 warnings（2026-09-03 实测；6 skipped 为 opt-in 真机/真 LLM 测试，由 OPENBIMAGENT_RUN_REAL_* 环境变量门控，默认不跑）
 代码规范：Ruff check 100% checks passed
 手动测试：参考根目录下 MANUAL_TESTING_GUIDE.md
 ```
@@ -105,4 +105,5 @@ Ruff 静态检查：All checks passed!
 - **论文侧**：B10 LLM 超时 ×3 与 LLM 行多次运行方差待写入 limitations；execpolicy 吸收可作 rule-driven 可验证性论据。
 - **2026-09-03 独立审核四项修复（已验证）**：🔴 控制面鉴权——`server/auth.py` Bearer token 守卫（/api/v1/** 变更方法 401，GET 开放；token 自动生成 `config/workbench.local.toml`（gitignored）或 `OPENBIMAGENT_WORKBENCH_TOKEN` 覆盖；页面注入 `window.__WB_TOKEN`，前端全请求携带）；🟡 前端清污——删除原型假函数 runTurn/replayAll/假 sendMsg/假 doExport 与 mock SESS/PLUGINS/RULES/IR_JSON，irPre/插件面板/面包屑/宿主芯片全部接真实端点（宿主=Blender TCP 实探，VW 未探测如实灰显），/solve 斜杠命令改真实调度；🟡 归档沙箱——`OPENBIMAGENT_ARCHIVE_DIR` 覆盖，test_workbench_p124 改 tmp 不再污染仓库；🔵 网关兜底——只读 GET 缺 X-Request-ID 自动补全（test_health 断言同步更新）。全量 1084 passed。
 - **2026-09-03 架构评审六缺陷处置（全部落地）**：① Trace"自进化"正名+闭环——术语修正为"不可变事件溯源与设计资产增量沉淀"（docs/architecture/LIMITATIONS.md），归档反哺实装：新任务检索 Top-3 相似交付注入会话首条用户消息（runs.py `_retrieve_exemplars`，机制=In-Context Retrieval，非权重更新）；② SCAD 语义断层/③ 宿主强耦合/⑤ 规则泛化天花板 → 三项结构性边界写入 LIMITATIONS.md（L1/L2/L3，论文 Limitation 表述建议）；④ 并发死局破解——有界多并发（`OPENBIMAGENT_MAX_CONCURRENT_RUNS` 默认 2，超额 409；每运行独占 `out/runs/<sid>/`）+ 审批票据落盘 `out/pending_approvals.json`（重启后列为 expired，批准 410、拒绝作废，`OPENBIMAGENT_PENDING_APPROVALS` 可覆盖）；⑥ 视口流式生长——`GET /api/v1/runs/artifact`（白名单+sha256+mtime），前端运行中轮询 sha，变化即重渲染 CompiledUtilityIR。新增 `tests/test_runs_p456.py`（4 测）。全量 1088 passed。
+- **2026-09-03 终审通过（独立多轮复验）**：两轮处置（24bb77e 鉴权与前端去伪 / 538aa24 六缺陷）经独立审核全量复验确认真实通过，无新增缺陷项。成熟度矩阵更新：Agent Core 95% / 市政专项 95% / SCAD 环 85% / 多 MCP 85% / Trace 资产沉淀 85% / Web 控制台 88%。测试基线：**1088 passed, 6 skipped**。系统已达论文写作与答辩演示状态。
 - **唯一下一动作**：论文正文写作（素材已备齐：docs/学术材料/实验数据与limitations草稿_2026-08-23.md，LLM 行已升级为 n=3 均值±标准差 60.0±0.0 / 7105±330ms / 10447±294 tok）。
