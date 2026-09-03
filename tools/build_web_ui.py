@@ -226,10 +226,26 @@ function applyCompiledIR(ir){
 /* ---------- 初始装载 ---------- */
 async function loadRuntimeInfo(){
   const ri=await _get('/api/v1/demo/runtime-info');
-  if(ri&&ri.llm&&ri.llm.model){document.querySelectorAll('.mchip .nm,.mdl').forEach(e=>{e.textContent=ri.llm.model;});}
+  /* 模型名只落在 composer 的 .mdl 芯片上（侧栏模型行已删，切换/管理走芯片下拉与设置） */
+  if(ri&&ri.llm&&ri.llm.model){document.querySelectorAll('.mdl').forEach(e=>{e.textContent=ri.llm.model+' ▾';});}
+}
+/* ---------- 宿主状态（P0-3 supervisor；渲染进设置弹层 #hostSettings，侧栏芯片已删） ---------- */
+async function refreshHosts(){
+  const el=$('hostSettings');if(!el)return;
+  const hs=await _get('/api/v1/hosts');
+  if(!hs||!hs.hosts){el.innerHTML='<div style="font-size:11px;color:var(--ink3)">读取失败</div>';return;}
+  el.innerHTML=hs.hosts.map(h=>{
+    const color=h.state==='up'?'var(--grn)':h.state==='restarting'?'var(--amb)':h.state==='external'?'var(--ink3)':'var(--red)';
+    return `<div class="rule"><div class="rh"><span class="rid"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;background:${color}"></span>${_esc(h.label)}</span>`+
+      `<span class="rst">${_esc(h.state)}${h.restart_count?` · 重启×${h.restart_count}`:''}</span></div>`+
+      (h.detail?`<div class="rd">${_esc(h.detail)}</div>`:'')+
+      (h.id==='blender'&&h.state==='down'&&h.restartable?`<div style="margin-top:4px"><button class="chip" onclick="restartHost('blender')">重启（有界退避）</button></div>`:'')+
+      `</div>`;
+  }).join('');
 }
 (async function bootstrapReal(){
   loadRuntimeInfo();
+  refreshHosts();
   const rt=await _get('/api/v1/demo/rule-tree');
   if(rt&&rt.rules){
     $('ruleList').innerHTML=rt.rules.map(r=>`<div class="rule"><div class="rh"><span class="rid">${r.rule_key}</span><span class="rst">${r.self_test_match?'✓':'·'} ${r.enforcement||''}</span></div><div class="rd">${r.obstacle_category||''} · 净距 <b class="mono">${r.required_clearance_m}m</b>${r.clause?' · '+r.clause:''}</div></div>`).join('');
@@ -246,15 +262,7 @@ async function loadRuntimeInfo(){
       `<div class="pds">${caps.length} 能力：<span class="mono" style="color:var(--acc)">${caps.map(_esc).join(' · ')}</span></div></div>`).join('')+
       (policies.length?`<div class="plg"><div class="pid">capability_policies <span style="color:var(--amb);font-size:9.5px">${policies.length} 条策略</span></div><div class="pds mono" style="font-size:10px">${policies.map(p=>_esc(JSON.stringify(p)).slice(0,120)).join('<br>')}</div></div>`:'');
   }
-  /* 宿主状态实探（🟡 审核修复：不再永远绿灯；P0-3 supervisor 状态机 + 有界重启） */
-  const hs=await _get('/api/v1/hosts');
-  if(hs&&hs.hosts){
-    $('hostChips').innerHTML=hs.hosts.map(h=>
-      `<div class="host"><span class="dot ${h.connected===true?'g':''}" ${h.connected!==true?'style="background:var(--ink3)"':''}></span>${_esc(h.label)}`+
-      (h.state==='restarting'?` <span style="color:var(--amb);font-size:10px">restarting…</span>`:'')+
-      (h.id==='blender'&&h.state==='down'&&h.restartable?` <a href="javascript:restartHost('blender')" style="color:var(--acc);font-size:10px">重启</a>`:'')+
-      `</div>`).join('');
-  }
+  /* 宿主状态改由 refreshHosts() 渲染进设置弹层（侧栏底部芯片已随布局收敛删除） */
   applyRealIR(await _get('/api/v1/demo/municipal-pipeline'));
   loadUploads();
   const items=await loadSessions();
@@ -285,6 +293,7 @@ async function loadSettings(){
   const ts=await _get('/api/v1/toolset');
   if(ts&&ts.current)$('setToolset').value=ts.current;
   loadMemory();
+  refreshHosts();
 }
 /* ---------- 长期记忆（P0-4：读取免费；写入走 prompt 策略门 confirm 语义） ---------- */
 async function loadMemory(){
@@ -303,6 +312,40 @@ async function recordMemory(){
     else toast('写入被拒：'+(d.error||r.status));
   }catch(e){toast('写入失败：'+e);}
 }
+
+/* ---------- Composer 模型芯片：点击=切换（真实 models.toml 清单）+「管理模型」进设置（对齐 ZCode） ---------- */
+async function toggleModelMenu(e){
+  e&&e.stopPropagation();
+  const m=$('mdlMenu');
+  if(m.classList.contains('show')){m.classList.remove('show');return;}
+  const d=await _get('/api/v1/settings/models');
+  if(!d){toast('模型清单读取失败');return;}
+  const cur=d.current||'';
+  const rows=(d.models||[]).map(mm=>
+    `<div class="sl" onclick="switchModel('${_esc(mm.name)}')">`+
+    `<span class="c" style="font:11px var(--mono)">${_esc(mm.name)}</span>`+
+    `<span class="d">${_esc(mm.provider)}${(mm.capabilities||[]).includes('vision')?' · vision':''}</span>`+
+    (mm.name===cur?'<span style="margin-left:auto;color:var(--grn)">✓ 当前</span>':'')+
+    `</div>`).join('');
+  m.innerHTML=(rows||'<div class="sl"><span class="d">models.toml 无可用模型</span></div>')+
+    `<div class="sl" style="border-top:1px solid var(--line)" onclick="$('mdlMenu').classList.remove('show');toggleSettings()">`+
+    `<span class="c">管理模型</span><span class="d">API key / base_url 在设置中配置</span></div>`;
+  m.classList.add('show');
+  popIn(m);
+}
+async function switchModel(name){
+  $('mdlMenu').classList.remove('show');
+  try{
+    const r=await fetch('/api/v1/settings/llm',{method:'PUT',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({model:name})});
+    const d=await r.json();
+    if(r.ok&&d.status==='success'){toast('已切换基线模型：'+name);loadRuntimeInfo();}
+    else toast('切换失败：'+(d.error||r.status));
+  }catch(e){toast('切换失败：'+e);}
+}
+document.addEventListener('click',e=>{
+  const m=$('mdlMenu');
+  if(m&&m.classList.contains('show')&&!m.contains(e.target)&&e.target.id!=='mdlChip')m.classList.remove('show');
+});
 async function saveSettings(){
   const body={model:$('setModel').value.trim(),base_url:$('setBase').value.trim()};
   if($('setKey').value.trim())body.api_key=$('setKey').value.trim();
@@ -556,21 +599,13 @@ async function restartHost(id){
     if(r.ok&&d.status==='success')toast('已发起重启：'+d.host.id+'（退避拉起中，稍后自动刷新状态）');
     else toast('重启被拒：'+(d.error||r.status));
   }catch(e){toast('重启失败：'+e);}
-  setTimeout(async()=>{  /* 退避窗口后刷新宿主状态 */
-    const hs=await _get('/api/v1/hosts');
-    if(hs&&hs.hosts){
-      $('hostChips').innerHTML=hs.hosts.map(h=>
-        `<div class="host"><span class="dot ${h.connected===true?'g':''}" ${h.connected!==true?'style="background:var(--ink3)"':''}></span>${_esc(h.label)}`+
-        (h.state==='restarting'?` <span style="color:var(--amb);font-size:10px">restarting…</span>`:'')+
-        (h.id==='blender'&&h.state==='down'&&h.restartable?` <a href="javascript:restartHost('blender')" style="color:var(--acc);font-size:10px">重启</a>`:'')+
-        `</div>`).join('');
-    }
-  },4000);
+  setTimeout(refreshHosts,4000);  /* 退避窗口后刷新宿主状态 */
 }
-/* 深链直达（审核/演示）：#skills 打开技能库；#recall=关键词 触发 FTS5 检索（延迟执行，避免被首轮会话渲染覆盖） */
+/* 深链直达（审核/演示）：#skills 打开技能库；#recall=关键词 触发 FTS5 检索；#settings 打开设置（延迟执行，避免被首轮会话渲染覆盖） */
 setTimeout(()=>{
   if(location.hash.includes('skills'))listSkills();
   const _rc=location.hash.match(/recall=([^&]+)/);if(_rc)doRecall(decodeURIComponent(_rc[1]));
+  if(location.hash.includes('settings'))toggleSettings();
 },900);
 </script>
 """

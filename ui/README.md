@@ -1,8 +1,14 @@
-# openBIMAgent UI（方案 J 已集成上线 · 功能打通 · 2026-09-03 Agent Core 增强）
+# openBIMAgent UI（方案 J 已集成上线 · 功能打通 · 2026-09-03 Agent Core 增强 + 布局收敛）
 
 **终版 = `prototype-j-franken.html`（方案 J），已迁入 `src/openbimagent/server/web_ui.py`，全部功能接真实端点（非演示）。**
 
 启动：`uv run uvicorn openbimagent.server.fastapi_app:app --host 127.0.0.1 --port 8000` → 打开 http://127.0.0.1:8000/
+
+## 布局原则（2026-09-03 收敛，对齐 ZCode/Codex 的"页面=任务态、设置=配置态"分工）
+
+- **页面（高频任务态）**：单侧栏（新任务 + 会话列表 + 底部设置入口）、中央 3D 视口（建模展示）、右侧对话/检查器、composer 模型芯片（点击=切换 models.toml 清单，「管理模型」跳设置）
+- **设置弹层（低频配置态）**：LLM 基线/API key、Provider Keys、工具集预设、长期记忆、CAD 宿主状态（supervisor 状态卡 + 有界重启按钮）
+- **已删除**：左侧图标栏（低频入口并入任务栏/检查器/设置）、侧栏底部模型行与宿主芯片（分别挪进 composer 下拉与设置页）、`setPop` 假数据弹层（假模型列表/假绿灯连接，原型残留）、视口时间线大播放键（与「自愈回放」chip 重复；时间线保留为只读收敛状态条）
 
 ## 功能打通清单（本轮新增，均有测试）
 
@@ -27,6 +33,7 @@
 | **宿主 Supervisor（P0-3）** | `GET /api/v1/hosts` · `POST /hosts/{id}/restart` | 侧栏宿主芯片真实状态（up/down/restarting/external）；Blender down 且配置 exe/cmd 时显示「重启」（有界退避）；VW 恒 external 不伪探测 |
 | **工具集预设（P0-3）** | `GET/PUT /api/v1/toolset` | 设置弹层切换 minimal（仅 solver）/modeling/full；清单可见面 + invoke 调用门双层过滤 |
 | **长期记忆（P0-4）** | `GET /api/v1/memory` · `POST /memory/record` | 设置弹层查看 MEMORY/USER 末 N 条；写入弹确认（prompt 策略门 confirm 语义），片段注入新任务上下文 |
+| **模型切换（composer）** | `GET /api/v1/settings/models` · `PUT /settings/llm` | composer 模型芯片点击出下拉：models.toml 真实清单（provider/vision 标注 + 当前 ✓），点选即切基线模型；「管理模型」跳设置弹层配 key/base_url |
 
 端点实现：`src/openbimagent/server/workbench_io.py`（设置/上传/宿主/工具集/记忆/技能）、`src/openbimagent/server/runs.py`（运行/事件/检索/归档）、`src/openbimagent/server/approvals.py`（审批中心）；测试：`tests/test_workbench_io.py` + `tests/test_runs.py` + `tests/test_approvals.py` + `tests/test_skills.py` + `tests/test_session_search.py` + `tests/test_host_supervisor.py` + `tests/test_memory.py`，均 tmp 隔离不碰真实配置。
 

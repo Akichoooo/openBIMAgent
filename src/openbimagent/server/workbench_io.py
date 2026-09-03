@@ -173,6 +173,30 @@ def add_workbench_io(app: FastAPI) -> None:
                 pass  # .env 持久化失败不影响进程内即时生效
         return JSONResponse(content=_settings_payload())
 
+    @app.get(
+        "/api/v1/settings/models",
+        summary="可切换模型清单（config/models.toml 声明）+ 当前基线模型（composer 下拉数据源）",
+        tags=["Workbench"],
+    )
+    async def list_switchable_models() -> dict:
+        from openbimagent.providers.registry import DEFAULT_CONFIG_PATH, ModelRegistry
+
+        try:
+            registry = ModelRegistry.load(DEFAULT_CONFIG_PATH)
+            models = [
+                {"name": name, "provider": m.provider, "capabilities": list(m.capabilities)}
+                for name, m in sorted(registry.models.items())
+            ]
+            error = None
+        except Exception as exc:  # noqa: BLE001 — models.toml 缺失/非法不致命，前端退化为仅显示当前模型
+            models, error = [], str(exc)
+        return {
+            "status": "success",
+            "models": models,
+            "current": _read_baseline_raw().get("model"),
+            "error": error,
+        }
+
     @app.get("/api/v1/uploads", summary="上传附件清单（manifest 索引）", tags=["Workbench"])
     async def list_uploads() -> dict:
         return {"status": "success", "items": _read_upload_index(_uploads_dir())}
