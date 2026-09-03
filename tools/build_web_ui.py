@@ -31,7 +31,7 @@ def _cut(start: str, end: str, keep_end: bool = True) -> None:
 # 假流式回合/重放/假导出/假发送（bootstrap 提供真实版本）
 _cut("async function runTurn()", "function askConfirm")
 _cut("async function doExport(){", "function rejectExport")
-_cut("function sendMsg(){\n  const v=ta.value.trim();if(!v)return;ta.value='';slash.classList.remove('show');\n  const sc=$('thScroll');", "/* panel & tabs */")
+_cut("function sendMsg(){\n  const v=ta.value.trim();if(!v)return;ta.value='';slash.classList.remove('show');\n  const sc=$('thScroll');", "/* panel & tabs")
 # mock 会话/规则/插件/IR 死数据与同步写入
 _cut("/* sessions list */", "/* init（支持 #plan / #prof / #step2 直达深链，便于审核截图） */")
 _cut("const RULES=[", "/* ================================================================\n   视口渲染器")
@@ -114,12 +114,52 @@ function downloadIR(){
 }
 
 /* ---------- 会话列表（真实） + 事件渲染 ---------- */
+/* playbook 文件夹分组 + 单行会话 + 悬浮详情卡（ZCode 项目折叠/图5 语义；折叠态 localStorage 持久化） */
+const _PLAYBOOK_NAMES={'municipal_utility':'市政管网','single_asset_hero':'单体资产','edo_cyberpunk_district':'Edo 街区'};
+function _foldState(){try{return JSON.parse(localStorage.getItem('wb_folders')||'{}');}catch(e){return{};}}
+function toggleFolder(key){
+  const st=_foldState();st[key]=!st[key];localStorage.setItem('wb_folders',JSON.stringify(st));
+  const f=document.querySelector(`.fold[data-fold="${key}"]`);
+  const b=document.querySelector(`.fold-body[data-fold="${key}"]`);
+  if(f)f.classList.toggle('closed',!!st[key]);if(b)b.classList.toggle('closed',!!st[key]);
+}
+function sessHoverShow(el,sid){
+  const h=$('sessHover');if(!h)return;
+  const r=el.getBoundingClientRect();
+  h.innerHTML=`<div class="ht">${_esc(el.dataset.title||sid)}</div>`+
+    `<div class="hr"><span class="k">项目</span>${_esc(el.dataset.pname||'未分组')}</div>`+
+    `<div class="hr"><span class="k">更新</span>${_esc((el.dataset.active||'').slice(0,19).replace('T',' '))}</div>`+
+    `<div class="hr"><span class="k">事件</span>${_esc(el.dataset.count||'0')} 条 · <span class="k">session</span> ${sid.slice(0,8)}</div>`;
+  h.style.display='block';
+  const x=Math.min(r.right+10,window.innerWidth-300);
+  h.style.left=x+'px';h.style.top=Math.max(8,Math.min(r.top,window.innerHeight-150))+'px';
+}
+function sessHoverHide(){const h=$('sessHover');if(h)h.style.display='none';}
 async function loadSessions(selectId){
   const ss=await _get('/api/v1/sessions');
   const items=ss&&ss.ok&&ss.data?ss.data.items:[];
   const list=$('sessList');
-  if(!items.length){list.innerHTML='<div style="padding:8px 12px;font-size:11px;color:var(--ink3)">暂无会话 · 点「新任务」真跑一次</div>';return;}
-  list.innerHTML=items.map((s,i)=>`<div class="sess${(selectId?s.session_id===selectId:i===0)?' on':''}" data-sid="${s.session_id}" onclick="loadSessionEvents('${s.session_id}',this)"><span class="dot g"></span><div><div class="tt">${_esc(s.title||s.session_id)}</div><div class="meta">${(s.last_active||'').slice(0,16).replace('T',' ')} · ${s.event_count||0} 事件</div></div><span class="forkbtn" title="从此会话分支（/tree fork）" onclick="forkSession('${s.session_id}',event)">⑂</span></div>`).join('');
+  if(!items.length){list.innerHTML='<div style="padding:8px 12px;font-size:11px;color:var(--ink3)">暂无会话 · 点「新任务」真跑一次</div>';return items;}
+  /* 按 playbook 分组成可折叠文件夹 */
+  const groups={};
+  for(const s of items){const k=s.playbook||'';(groups[k]=groups[k]||[]).push(s);}
+  const st=_foldState();
+  const keys=Object.keys(groups).sort((a,b)=>(a==='')-(b==='')||a.localeCompare(b));
+  let html='';
+  for(const k of keys){
+    const pname=k?(_PLAYBOOK_NAMES[k]||k):'未分组';
+    const closed=!!st[k||'__none__'];
+    html+=`<div class="fold${closed?' closed':''}" data-fold="${_esc(k||'__none__')}" onclick="toggleFolder('${k||'__none__'}')"><span class="chev">▾</span><span style="color:var(--ink3)">▤</span>${_esc(pname)}<span class="cnt">${groups[k].length}</span></div>`;
+    html+=`<div class="fold-body${closed?' closed':''}" data-fold="${_esc(k||'__none__')}">`+
+      groups[k].map((s,i)=>{
+        const on=selectId?s.session_id===selectId:(k===keys[0]&&i===0);
+        return `<div class="sess${on?' on':''}" data-sid="${s.session_id}" data-title="${_esc(s.title||s.session_id)}" data-pname="${_esc(pname)}" data-active="${_esc(s.last_active||'')}" data-count="${s.event_count||0}" `+
+          `onclick="loadSessionEvents('${s.session_id}',this)" onmouseenter="sessHoverShow(this,'${s.session_id}')" onmouseleave="sessHoverHide()">`+
+          `<span class="dot g"></span><div class="tt" title="${_esc(s.title||s.session_id)}">${_esc(s.title||s.session_id)}</div>`+
+          `<span class="forkbtn" title="从此会话分支（/tree fork）" onclick="forkSession('${s.session_id}',event)">⑂</span></div>`;
+      }).join('')+`</div>`;
+  }
+  list.innerHTML=html;
   return items;
 }
 const _KEEP=['welcomeLine','tool2','artIR','hitl','tool3','rcpt','doneLine'];
@@ -274,12 +314,27 @@ async function refreshHosts(){
 })();
 
 /* ---------- 设置：ZCode 式全屏设置页（左分区导航 + 右内容独立滚动，Esc/✕ 恒可关） ---------- */
-const _SET_SECTIONS={models:'模型与 API',toolset:'工具集预设',memory:'记忆',skills:'技能',hosts:'CAD 宿主',mcp:'MCP 服务器'};
+const _SET_SECTIONS={models:'模型与 API',toolset:'工具集预设',memory:'记忆',skills:'技能',mcp:'MCP 服务器',
+  rules:'规则树',plugins:'插件与能力',ir:'IR 查看',uploads:'上传',usage:'用量',archive:'归档'};
 function setSection(name){
   document.querySelectorAll('#setMask .setnav-it').forEach(b=>b.classList.toggle('on',b.dataset.sec===name));
   document.querySelectorAll('#setMask [data-setsec]').forEach(s=>s.style.display=s.dataset.setsec===name?'':'none');
   const t=$('setTitle');if(t&&_SET_SECTIONS[name])t.textContent=_SET_SECTIONS[name];
 }
+/* 检查器入口（线程内「在检查器查看」、斜杠命令、chips）→ 打开设置页对应「数据与审查」分区 */
+function openSettingsAt(sec){
+  const p=$('setMask');
+  if(!p.classList.contains('show'))toggleSettings();
+  setSection(_SET_SECTIONS[sec]?sec:'rules');
+  if(sec==='usage')loadUsage();
+  if(sec==='archive')loadArchive();
+  if(sec==='uploads')loadUploads();
+}
+/* 侧栏折叠（Ctrl+B；与右栏折叠同一图标语义） */
+function toggleSidebar(){const s=$('sidebar');if(s)s.classList.toggle('collapsed');}
+document.addEventListener('keydown',e=>{
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='b'){e.preventDefault();toggleSidebar();}
+});
 function toggleSettings(e){
   e&&e.stopPropagation();
   const p=$('setMask');
@@ -293,17 +348,9 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Escape'){const p=$('setMask');if(p&&p.classList.contains('show'))p.classList.remove('show');}
 });
 async function loadSettings(){
-  const d=await _get('/api/v1/settings/llm');
-  if(!d)return;
-  $('setModel').value=d.baseline.model||'';
-  $('setBase').value=d.baseline.base_url||'';
-  $('setKey').value='';
-  $('setKeyState').textContent=d.baseline.api_key_set?'●已配置（留空则保留）':'○未设置';
-  $('provKeys').innerHTML=d.provider_keys.map(p=>
-    `<label class="fl">${p.env} <span class="fk" style="color:${p.key_set?'var(--grn)':'var(--ink3)'}">${p.key_set?'●已配置':'○未设置'}</span>`+
-    `<input type="password" class="fin" data-env="${p.env}" placeholder="（留空不修改）" autocomplete="off"></label>`).join('');
   const ts=await _get('/api/v1/toolset');
   if(ts&&ts.current)$('setToolset').value=ts.current;
+  loadProviders();
   loadMemory();
   refreshHosts();
   /* 技能与 MCP 服务器（只读清单区） */
@@ -323,6 +370,65 @@ async function loadSettings(){
       :'<div style="font-size:11px;color:var(--ink3)">未挂载第三方 MCP server（配置 OPENBIMAGENT_MCP_SERVERS env JSON 后重启生效）</div>';
   }
 }
+/* ---------- 模型设置：provider 制（左 provider 列表 + 右详情：Base URL / API Key / 模型列表） ---------- */
+let _providers=[],_curProv=null;
+async function loadProviders(selectProv){
+  const d=await _get('/api/v1/settings/models');
+  if(!d)return;
+  _providers=d.providers||[];
+  const cur=d.current||'';
+  const list=$('provList');
+  if(!_providers.length){list.innerHTML='<div style="font-size:11px;color:var(--ink3)">models.toml 不可用</div>';return;}
+  list.innerHTML=_providers.map(p=>{
+    const hasCur=p.models.some(m=>m.name===cur);
+    return `<div class="prov-it${_curProv===p.name?' on':''}" data-prov="${_esc(p.name)}" onclick="renderProvDetail('${_esc(p.name)}')">`+
+      `<span class="dot" style="background:${p.key_set?'var(--grn)':'var(--ink3)'}"></span>`+
+      `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_esc(p.name)}</span>`+
+      (hasCur?'<span class="cur" style="color:var(--grn);font-size:9.5px">当前</span>':'')+
+      `<span class="cnt">${p.models.length}</span></div>`;
+  }).join('');
+  renderProvDetail(selectProv||_curProv||_providers[0].name);
+}
+function renderProvDetail(name){
+  _curProv=name;
+  document.querySelectorAll('#provList .prov-it').forEach(e=>e.classList.toggle('on',e.dataset.prov===name));
+  const p=_providers.find(x=>x.name===name);
+  const el=$('provDetail');
+  if(!p){el.innerHTML='<div style="font-size:11px;color:var(--ink3)">provider 不存在</div>';return;}
+  el.innerHTML=
+    `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><b style="font-size:13.5px">${_esc(p.name)}</b>`+
+    `<span style="font:9.5px var(--mono);color:${p.key_set?'var(--grn)':'var(--amb)'}">${p.key_set?'●已启用（key 在环境）':'○ key 未配置'}</span></div>`+
+    `<label class="fl">Base URL<input class="fin" value="${_esc(p.base_url)}" readonly title="models.toml 声明（共享配置，设置页只读）"></label>`+
+    `<label class="fl">API 格式<input class="fin" value="${_esc(p.type||'openai-compatible')} (/chat/completions)" readonly></label>`+
+    `<label class="fl">API Key <span class="fk" style="color:${p.key_set?'var(--grn)':'var(--ink3)'}">${p.key_set?'●已配置（留空则保留）':'○未设置'}</span> <span style="font:9px var(--mono);color:var(--ink3)">${_esc(p.api_key_env)}</span>`+
+    `<input type="password" class="fin" id="provKeyInput" placeholder="（留空不修改）" autocomplete="off"></label>`+
+    `<div class="row" style="margin:6px 0 12px"><button class="m-no" onclick="saveProvKey()">保存 Key（写进程环境 + .env）</button></div>`+
+    `<div class="sp-t">模型列表（点「设为基线」= composer 当前模型；base_url/key 随 provider 自动接入）</div>`+
+    (p.models.length?p.models.map(m=>{
+      const caps=(m.capabilities||[]).join('/');
+      return `<div class="prov-mdl"><span>${_esc(m.name)}</span>`+
+        (m.context_window?`<span style="font-size:9.5px;color:var(--ink3)">${m.context_window>=1000000?(m.context_window/1000000)+'M':Math.round(m.context_window/1000)+'K'}</span>`:'')+
+        `<span class="caps">${_esc(caps)}</span>`+
+        `<button class="chip" style="flex:none" onclick="setBaseline('${_esc(m.name)}')">设为基线</button></div>`;
+    }).join(''):'<div style="font-size:11px;color:var(--ink3);margin-top:6px">该 provider 在 models.toml 中无模型</div>');
+}
+async function saveProvKey(){
+  const p=_providers.find(x=>x.name===_curProv);if(!p)return;
+  const v=$('provKeyInput').value.trim();
+  if(!v){toast('请输入 API Key（留空不修改）');return;}
+  const r=await fetch('/api/v1/settings/llm',{method:'PUT',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({provider_keys:{[p.api_key_env]:v}})});
+  const d=await r.json();
+  if(r.ok&&d.status==='success'){toast(p.api_key_env+' 已保存（进程环境即时生效）');$('provKeyInput').value='';loadProviders(_curProv);}
+  else toast('保存失败：'+(d.error||r.status));
+}
+async function setBaseline(model){
+  const r=await fetch('/api/v1/settings/llm',{method:'PUT',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({model})});
+  const d=await r.json();
+  if(r.ok&&d.status==='success'){
+    toast(d.warning||('基线模型已切换：'+model));
+    loadRuntimeInfo();loadProviders(_curProv);
+  }else toast('切换失败：'+(d.error||r.status));
+}
 /* ---------- 长期记忆（P0-4：读取免费；写入走 prompt 策略门 confirm 语义） ---------- */
 async function loadMemory(){
   const d=await _get('/api/v1/memory');if(!d)return;
@@ -341,7 +447,7 @@ async function recordMemory(){
   }catch(e){toast('写入失败：'+e);}
 }
 
-/* ---------- Composer 模型芯片：点击=切换（真实 models.toml 清单）+「管理模型」进设置（对齐 ZCode） ---------- */
+/* ---------- Composer 模型芯片：点击=两级菜单（provider ▸ 模型，对齐 ZCode 图2）+「管理模型」进设置 ---------- */
 async function toggleModelMenu(e){
   e&&e.stopPropagation();
   const m=$('mdlMenu');
@@ -349,15 +455,22 @@ async function toggleModelMenu(e){
   const d=await _get('/api/v1/settings/models');
   if(!d){toast('模型清单读取失败');return;}
   const cur=d.current||'';
-  const rows=(d.models||[]).map(mm=>
-    `<div class="sl" onclick="switchModel('${_esc(mm.name)}')">`+
-    `<span class="c" style="font:11px var(--mono)">${_esc(mm.name)}</span>`+
-    `<span class="d">${_esc(mm.provider)}${(mm.capabilities||[]).includes('vision')?' · vision':''}</span>`+
-    (mm.name===cur?'<span style="margin-left:auto;color:var(--grn)">✓ 当前</span>':'')+
-    `</div>`).join('');
+  const rows=(d.providers||[]).filter(p=>p.models.length).map(p=>{
+    const hasCur=p.models.some(x=>x.name===cur);
+    const sub=p.models.map(x=>
+      `<div class="sl" onclick="switchModel('${_esc(x.name)}')">`+
+      `<span class="c" style="font:11px var(--mono)">${_esc(x.name)}</span>`+
+      (x.name===cur?'<span style="margin-left:auto;color:var(--grn)">✓</span>':'')+
+      `</div>`).join('');
+    return `<div class="sl sub"><span class="c">${_esc(p.name)}</span>`+
+      `<span class="d" style="color:${p.key_set?'var(--grn)':'var(--ink3)'}">${p.key_set?'●':'○'}</span>`+
+      (hasCur?'<span style="color:var(--grn)">✓</span>':'')+
+      `<span style="margin-left:auto;color:var(--ink3)">›</span>`+
+      `<div class="sl-menu">${sub}</div></div>`;
+  }).join('');
   m.innerHTML=(rows||'<div class="sl"><span class="d">models.toml 无可用模型</span></div>')+
     `<div class="sl" style="border-top:1px solid var(--line)" onclick="$('mdlMenu').classList.remove('show');toggleSettings()">`+
-    `<span class="c">管理模型</span><span class="d">API key / base_url 在设置中配置</span></div>`;
+    `<span class="c">管理模型</span><span class="d">provider key / 模型列表在设置中配置</span></div>`;
   m.classList.add('show');
   popIn(m);
 }
@@ -366,7 +479,7 @@ async function switchModel(name){
   try{
     const r=await fetch('/api/v1/settings/llm',{method:'PUT',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({model:name})});
     const d=await r.json();
-    if(r.ok&&d.status==='success'){toast('已切换基线模型：'+name);loadRuntimeInfo();}
+    if(r.ok&&d.status==='success'){toast(d.warning||('已切换基线模型：'+name));loadRuntimeInfo();}
     else toast('切换失败：'+(d.error||r.status));
   }catch(e){toast('切换失败：'+e);}
 }
@@ -374,26 +487,14 @@ document.addEventListener('click',e=>{
   const m=$('mdlMenu');
   if(m&&m.classList.contains('show')&&!m.contains(e.target)&&e.target.id!=='mdlChip')m.classList.remove('show');
 });
-async function saveSettings(){
-  const body={model:$('setModel').value.trim(),base_url:$('setBase').value.trim()};
-  if($('setKey').value.trim())body.api_key=$('setKey').value.trim();
-  const pk={};
-  document.querySelectorAll('#provKeys input[data-env]').forEach(i=>{if(i.value.trim())pk[i.dataset.env]=i.value.trim();});
-  if(Object.keys(pk).length)body.provider_keys=pk;
+/* ---------- 工具集预设：选中即生效（无需保存按钮） ---------- */
+async function saveToolset(name){
   try{
-    const r=await fetch('/api/v1/settings/llm',{method:'PUT',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify(body)});
-    const d=await r.json();
-    if(r.ok&&d.status==='success'){
-      const ts=$('setToolset').value;
-      const tr=await fetch('/api/v1/toolset',{method:'PUT',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({name:ts})});
-      const td=await tr.json().catch(()=>({}));
-      toast(tr.ok?'设置已保存（llm_baseline.local.toml · 工具集='+ts+'）':'LLM 已保存，工具集切换失败：'+(td.error||tr.status));
-      $('setMask').classList.remove('show');
-      loadRuntimeInfo();
-    }else toast('保存失败：'+(d.error||r.status));
-  }catch(e){toast('保存失败：'+e);}
+    const r=await fetch('/api/v1/toolset',{method:'PUT',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({name})});
+    const d=await r.json().catch(()=>({}));
+    toast(r.ok?('工具集已切换：'+name+'（清单+invoke 双层即时生效）'):('切换失败：'+(d.error||r.status)));
+  }catch(e){toast('切换失败：'+e);}
 }
-
 /* ---------- 上传：真实落盘 out/uploads/ ---------- */
 $('fileInput').addEventListener('change',async e=>{
   for(const f of e.target.files){

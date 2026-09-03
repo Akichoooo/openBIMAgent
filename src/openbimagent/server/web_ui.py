@@ -73,22 +73,39 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 
 /* 2. sidebar */
 .sidebar{width:248px;flex:none;background:var(--bg1);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
-.sb-h{padding:14px 14px 10px;display:flex;align-items:center;gap:8px}
+.sidebar.collapsed{display:none}
+.sb-h{padding:12px 12px 8px;display:flex;align-items:center;gap:8px}
 .sb-h .t{font-weight:650;font-size:13.5px}
 .sb-h .v{font:10px var(--mono);color:var(--ink2);border:1px solid var(--line);border-radius:5px;padding:1px 5px}
+.sb-toggle{width:26px;height:26px;flex:none;display:flex;align-items:center;justify-content:center;border:1px solid var(--line2);border-radius:7px;background:var(--bg2);color:var(--ink2);cursor:pointer}
+.sb-toggle:hover{background:var(--bg3);color:var(--ink)}
+.sb-toggle svg{width:14px;height:14px}
 .newtask{margin:2px 12px 10px;display:flex;align-items:center;gap:8px;padding:8px 11px;border:1px solid var(--line2);border-radius:var(--r);color:var(--ink);font-size:12.5px;transition:background .12s}
 .newtask:hover{background:var(--bg3)}
 .newtask kbd{margin-left:auto;font:10px var(--mono);color:var(--ink2);border:1px solid var(--line);border-radius:4px;padding:1px 5px}
 .sb-sec{padding:4px 16px 6px;font:10.5px var(--mono);letter-spacing:.08em;color:var(--ink3);text-transform:uppercase}
 .sb-list{flex:1;overflow-y:auto;padding:0 8px 8px}
-.sess{display:flex;gap:9px;padding:8px 10px;border-radius:8px;cursor:pointer;align-items:flex-start}
+/* playbook 文件夹分组（ZCode 项目折叠语义；折叠态 localStorage 持久化） */
+.fold{display:flex;align-items:center;gap:6px;padding:7px 8px 4px;font:11px var(--mono);color:var(--ink2);cursor:pointer;user-select:none}
+.fold:hover{color:var(--ink)}
+.fold .chev{font-size:9px;color:var(--ink3);transition:transform .15s}
+.fold.closed .chev{transform:rotate(-90deg)}
+.fold .cnt{margin-left:auto;font-size:9.5px;color:var(--ink3)}
+.fold-body.closed{display:none}
+/* 会话单行（标题超长截断；详情走悬浮卡，不占行） */
+.sess{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;cursor:pointer}
 .sess:hover{background:var(--bg2)}
 .sess.on{background:var(--bg3)}
-.sess .dot{margin-top:6px}
-.sess .tt{font-size:12.5px;line-height:1.35}
+.sess .dot{flex:none}
+.sess .tt{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .sess .meta{font:10.5px var(--mono);color:var(--ink3);margin-top:2px}
 .forkbtn{margin-left:auto;color:var(--ink3);font-size:12px;padding:2px 6px;border-radius:6px;flex:none}
 .forkbtn:hover{background:var(--bg3);color:var(--acc)}
+/* 会话悬浮详情卡（图5 语义：项目/状态/更新时间悬浮展示） */
+#sessHover{position:fixed;z-index:70;display:none;min-width:210px;max-width:280px;background:var(--bg3);border:1px solid var(--line2);border-radius:10px;box-shadow:0 14px 44px rgba(0,0,0,.5);padding:10px 12px;font-size:11.5px;color:var(--ink2);pointer-events:none}
+#sessHover .ht{font-size:12.5px;color:var(--ink);font-weight:600;margin-bottom:5px;word-break:break-all}
+#sessHover .hr{display:flex;gap:7px;margin-top:3px;font:10.5px var(--mono)}
+#sessHover .hr .k{color:var(--ink3)}
 .sb-foot{border-top:1px solid var(--line);padding:10px 12px;display:flex;flex-direction:column;gap:8px}
 .hosts{display:flex;gap:6px}
 .host{flex:1;display:flex;align-items:center;gap:6px;font:10.5px var(--mono);color:var(--ink2);border:1px solid var(--line);border-radius:7px;padding:5px 8px}
@@ -96,6 +113,23 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .mchip:hover{background:var(--bg3)}
 .mchip .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mchip .car{margin-left:auto;color:var(--ink3)}
+/* provider 双栏（ZCode 模型设置：左 provider 列表 + 右详情） */
+.prov-wrap{display:flex;gap:14px;min-height:280px}
+.prov-list{width:180px;flex:none;display:flex;flex-direction:column;gap:3px}
+.prov-it{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;cursor:pointer;font-size:12.5px;border:1px solid transparent}
+.prov-it:hover{background:var(--bg2)}
+.prov-it.on{background:var(--bg3);border-color:var(--line2)}
+.prov-it .dot{width:7px;height:7px;border-radius:50%;flex:none}
+.prov-it .cnt{margin-left:auto;font:9.5px var(--mono);color:var(--ink3)}
+.prov-detail{flex:1;min-width:0;border:1px solid var(--line);border-radius:10px;padding:14px;background:var(--bg1)}
+.prov-mdl{display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;margin-top:6px;font:12px var(--mono)}
+.prov-mdl .caps{margin-left:auto;font-size:9.5px;color:var(--ink3)}
+.prov-mdl .cur{color:var(--grn);font-size:10px}
+/* composer 模型两级菜单（provider ▸ 模型） */
+#mdlMenu{overflow:visible;min-width:230px}
+.sl.sub{position:relative}
+.sl-menu{display:none;position:absolute;left:calc(100% - 2px);top:-6px;min-width:210px;background:var(--bg3);border:1px solid var(--line2);border-radius:10px;box-shadow:0 14px 44px rgba(0,0,0,.5);overflow:hidden;z-index:45}
+.sl.sub:hover>.sl-menu{display:block}
 
 /* 3. stage */
 .stage{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--bg)}
@@ -288,10 +322,12 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 <!-- ================= 1. icon rail（已删除：低频功能全部并入任务栏/检查器/设置，对标 ZCode 单侧栏） ================= -->
 
 <!-- ================= 2. sidebar ================= -->
-<aside class="sidebar">
-  <div class="sb-h"><span class="t">任务</span><span class="v">v3.4</span></div>
+<aside class="sidebar" id="sidebar">
+  <div class="sb-h">
+    <button class="sb-toggle" onclick="toggleSidebar()" title="切换侧边栏 Ctrl+B"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9.5 4v16"/></svg></button>
+    <span class="t">任务</span>
+  </div>
   <button class="newtask" onclick="newTaskModal()"><svg width="13" height="13" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>新任务<kbd>⌘K</kbd></button>
-  <div class="sb-sec">进行中</div>
   <div class="sb-list" id="sessList"></div>
   <div class="sb-foot">
     <button class="mchip" onclick="toggleSettings(event)" title="设置：模型与 API · 工具集 · 宿主 · 记忆"><svg width="13" height="13" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 00-.14-1.4l2.1-1.63-2-3.46-2.48 1a7 7 0 00-2.42-1.4L13.7 2h-3.4l-.36 2.6a7 7 0 00-2.42 1.4l-2.48-1-2 3.46L5.14 10.6A7 7 0 005 12c0 .48.05.94.14 1.4l-2.1 1.63 2 3.46 2.48-1a7 7 0 002.42 1.4l.36 2.6h3.4l.36-2.6a7 7 0 002.42-1.4l2.48 1 2-3.46-2.1-1.63c.09-.46.14-.92.14-1.4z"/></svg><span class="nm">设置</span></button>
@@ -309,7 +345,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       <button data-v="plan" onclick="setView('plan',this)">平面</button>
       <button data-v="prof" onclick="setView('prof',this)">纵断面</button>
     </div>
-    <button class="ghostbtn" onclick="toggleThread()" id="thToggle"><svg width="13" height="13" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="1.8" stroke-linecap="round"><path d="M21 12a8 8 0 01-8 8H4l2-3a8 8 0 1115-5z"/></svg>对话</button>
+    <button class="ghostbtn" onclick="toggleThread()" id="thToggle" title="切换对话面板"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M14.5 4v16"/></svg></button>
   </div>
 
   <div class="viewport">
@@ -340,10 +376,9 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 <!-- ================= 4. thread ================= -->
 <section class="thread" id="thread">
   <div class="th-tabs">
-    <button class="th-tab on" id="tabConv" onclick="threadMode('conv')">对话<span class="bdg">流式</span></button>
-    <button class="th-tab" id="tabInsp" onclick="threadMode('insp')">检查器</button>
+    <span class="th-tab on" id="tabConv">对话<span class="bdg">流式</span></span>
     <div class="sp"></div>
-    <button class="collapse-th" onclick="toggleThread()" title="收起面板">⟨</button>
+    <button class="collapse-th" onclick="toggleThread()" title="折叠对话面板"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M14.5 4v16"/></svg></button>
   </div>
 
   <!-- conversation -->
@@ -409,43 +444,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     <div class="agentline" id="doneLine" style="display:none">已交付。<span class="dim">右侧视口为本次 IR 的真实几何回放：红色为初始碰撞路径，绿色为自愈绕行。VLM 六维评分为 <b style="color:var(--amb)">演示值</b>，未计入证据包。</span></div>
   </div>
 
-  <!-- inspector -->
-  <div class="insp" id="insp">
-    <div data-pane="rules">
-      <div class="insp-sec-t">规则树 · GB 50289-2016（12 条 · 自检 33/33）</div>
-      <div id="ruleList"></div>
-    </div>
-    <div data-pane="ir" style="display:none">
-      <div class="insp-sec-t">CompiledUtilityIR v1（不可变 · 哈希寻址）</div>
-      <pre class="irpre" id="irPre"></pre>
-    </div>
-    <div data-pane="plugins" style="display:none">
-      <div class="insp-sec-t">微内核插件 · 7 个 ACTIVE / 16 能力 / 2 策略</div>
-      <div id="plgList"></div>
-      <div class="insp-sec-t" style="margin-top:12px">能力调度控制台</div>
-      <div class="cons">
-        <select id="capSel">
-          <option>solver:self_healing</option><option>solver:grid_route</option><option>solver:hydraulic</option>
-          <option>rules:gb50289.verify</option><option>cad_host:blender.execute</option><option>cad_host:vectorworks.execute</option>
-        </select>
-        <textarea placeholder='payload JSON（可选）'>{}</textarea>
-        <button onclick="invokeCap()" class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground">运行（经 registry.invoke）</button>
-        <div class="cons-out">prompt 策略能力需勾选「确认执行」· 满载 503 + -32001 背压</div>
-      </div>
-    </div>
-    <div data-pane="uploads" style="display:none">
-      <div class="insp-sec-t">上传附件（真实落盘 out/uploads/ · sha256 manifest）</div>
-      <div id="uplList"><div class="rd" style="color:var(--ink3);font-size:11px">加载中…</div></div>
-    </div>
-    <div data-pane="usage" style="display:none">
-      <div class="insp-sec-t">LLM 用量与成本（out/usage_summary.json 真实数据）</div>
-      <div id="usageBody"><div style="font-size:11px;color:var(--ink3)">加载中…</div></div>
-    </div>
-    <div data-pane="archive" style="display:none">
-      <div class="insp-sec-t">Domain Pack 素材归档（每次交付只增不改 · 越用越好第一步）</div>
-      <div id="archiveBody"><div style="font-size:11px;color:var(--ink3)">加载中…</div></div>
-    </div>
-  </div>
+  <!-- inspector（已迁入设置页「数据与审查」分区：规则树/插件/IR/上传/用量/归档；openInspector(p) 改开设置对应区） -->
 
   <!-- composer -->
   <div class="composer">
@@ -525,8 +524,14 @@ plan_sha256: 7ac1…9f · objects: 22</pre>
       <button class="setnav-it" data-sec="memory" onclick="setSection('memory')">记忆</button>
       <button class="setnav-it" data-sec="skills" onclick="setSection('skills')">技能</button>
       <div class="setnav-grp">连接</div>
-      <button class="setnav-it" data-sec="hosts" onclick="setSection('hosts')">CAD 宿主</button>
       <button class="setnav-it" data-sec="mcp" onclick="setSection('mcp')">MCP 服务器</button>
+      <div class="setnav-grp">数据与审查</div>
+      <button class="setnav-it" data-sec="rules" onclick="setSection('rules')">规则树</button>
+      <button class="setnav-it" data-sec="plugins" onclick="setSection('plugins')">插件与能力</button>
+      <button class="setnav-it" data-sec="ir" onclick="setSection('ir')">IR 查看</button>
+      <button class="setnav-it" data-sec="uploads" onclick="setSection('uploads')">上传</button>
+      <button class="setnav-it" data-sec="usage" onclick="setSection('usage')">用量</button>
+      <button class="setnav-it" data-sec="archive" onclick="setSection('archive')">归档</button>
       <div style="flex:1"></div>
       <div class="setnav-grp" style="padding-bottom:8px">Esc 关闭</div>
     </aside>
@@ -534,21 +539,16 @@ plan_sha256: 7ac1…9f · objects: 22</pre>
       <div class="sethead"><h3 id="setTitle">模型与 API</h3><button class="setclose" onclick="toggleSettings()" title="关闭 (Esc)">✕</button></div>
       <div class="setbody">
         <section data-setsec="models">
-          <p class="setdesc">基线写入 <code>config/llm_baseline.local.toml</code>；provider key 写入进程环境并持久化 <code>.env</code>（均 gitignored，key 只写不回显）。composer 模型芯片可快速切换。</p>
-          <div class="sp-t">LLM 基线</div>
-          <label class="fl">模型<input id="setModel" class="fin" placeholder="gpt-5.6-terra"></label>
-          <label class="fl">Base URL<input id="setBase" class="fin" placeholder="https://…/v1"></label>
-          <label class="fl">API Key <span class="fk" id="setKeyState"></span><input id="setKey" type="password" class="fin" placeholder="（留空则不修改）" autocomplete="off"></label>
-          <div class="sp-t">管道角色 Provider Keys</div>
-          <div id="provKeys"><div style="font-size:11px;color:var(--ink3)">加载中…</div></div>
-          <div class="row" style="margin-top:14px">
-            <button class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground" onclick="saveSettings()">保存设置</button>
+          <p class="setdesc">provider = Base URL + API Key + 多模型（models.toml 声明，key 只写不回显）。点左侧 provider → 右侧管理 key 与模型；「设为基线」即 composer 当前模型（基线写 <code>config/llm_baseline.local.toml</code>，base_url/key 自动随 provider 接入）。</p>
+          <div class="prov-wrap">
+            <div class="prov-list" id="provList"><div style="font-size:11px;color:var(--ink3)">加载中…</div></div>
+            <div class="prov-detail" id="provDetail"><div style="font-size:11px;color:var(--ink3)">选择左侧 provider 查看模型与配置</div></div>
           </div>
         </section>
         <section data-setsec="toolset" style="display:none">
           <p class="setdesc">能力面收敛：过滤 <code>/api/v1/plugins</code> 清单可见面 + <code>invoke</code> 调用门（被滤能力 403）。即时生效，无需保存。</p>
           <label class="fl">工具集预设
-            <select id="setToolset" class="fin">
+            <select id="setToolset" class="fin" onchange="saveToolset(this.value)">
               <option value="full">full · 全部能力</option>
               <option value="modeling">modeling · solver + cad_host</option>
               <option value="minimal">minimal · 仅 solver（不触宿主写盘）</option>
@@ -571,19 +571,53 @@ plan_sha256: 7ac1…9f · objects: 22</pre>
           <p class="setdesc">SKILL.md 技能库（渐进披露：上下文只见目录，调用才给正文）。调用与候选批准在对话线程 <code>/skills</code> 面板操作。</p>
           <div id="setSkillsList"><div style="font-size:11px;color:var(--ink3)">加载中…</div></div>
         </section>
-        <section data-setsec="hosts" style="display:none">
-          <p class="setdesc">CAD 宿主 supervisor 状态机（Blender TCP 实探 + 有界退避重启；Vectorworks 为外部 runner，恒 external 不伪探测）。</p>
-          <div id="hostSettings"><div style="font-size:11px;color:var(--ink3)">加载中…</div></div>
-        </section>
         <section data-setsec="mcp" style="display:none">
-          <p class="setdesc">第三方 MCP server 经环境变量 <code>OPENBIMAGENT_MCP_SERVERS</code>（JSON）配置，重启后挂载为 <code>mcp:&lt;server&gt;:&lt;tool&gt;</code> 能力，默认 prompt 策略门（fail-closed）。</p>
+          <p class="setdesc">CAD 宿主即 MCP 连接：Blender MCP（TCP 实探 + supervisor 有界退避重启）；Vectorworks 为外部 IPC runner（恒 external 不伪探测）。第三方 MCP server 经 <code>OPENBIMAGENT_MCP_SERVERS</code> env JSON 挂载，默认 prompt 策略门。</p>
+          <div class="sp-t">内置宿主</div>
+          <div id="hostSettings"><div style="font-size:11px;color:var(--ink3)">加载中…</div></div>
+          <div class="sp-t" style="margin-top:12px">第三方 MCP server</div>
           <div id="setMcpList"><div style="font-size:11px;color:var(--ink3)">加载中…</div></div>
+        </section>
+        <section data-setsec="rules" style="display:none">
+          <div class="insp-sec-t">规则树 · GB 50289-2016（12 条 · 自检 33/33）</div>
+          <div id="ruleList"></div>
+        </section>
+        <section data-setsec="plugins" style="display:none">
+          <div class="insp-sec-t">微内核插件 · 能力清单与策略门</div>
+          <div id="plgList"></div>
+          <div class="insp-sec-t" style="margin-top:12px">能力调度控制台</div>
+          <div class="cons">
+            <select id="capSel">
+              <option>solver:self_healing</option><option>solver:grid_route</option><option>solver:hydraulic</option>
+              <option>rules:gb50289.verify</option><option>cad_host:blender.execute</option><option>cad_host:vectorworks.execute</option>
+            </select>
+            <textarea placeholder='payload JSON（可选）'>{}</textarea>
+            <button onclick="invokeCap()" class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground">运行（经 registry.invoke）</button>
+            <div class="cons-out">prompt 策略能力需勾选「确认执行」· 满载 503 + -32001 背压</div>
+          </div>
+        </section>
+        <section data-setsec="ir" style="display:none">
+          <div class="insp-sec-t">CompiledUtilityIR v1（不可变 · 哈希寻址）</div>
+          <pre class="irpre" id="irPre"></pre>
+        </section>
+        <section data-setsec="uploads" style="display:none">
+          <div class="insp-sec-t">上传附件（真实落盘 out/uploads/ · sha256 manifest）</div>
+          <div id="uplList"><div class="rd" style="color:var(--ink3);font-size:11px">加载中…</div></div>
+        </section>
+        <section data-setsec="usage" style="display:none">
+          <div class="insp-sec-t">LLM 用量与成本（out/usage_summary.json 真实数据）</div>
+          <div id="usageBody"><div style="font-size:11px;color:var(--ink3)">加载中…</div></div>
+        </section>
+        <section data-setsec="archive" style="display:none">
+          <div class="insp-sec-t">Domain Pack 素材归档（每次交付只增不改 · 越用越好第一步）</div>
+          <div id="archiveBody"><div style="font-size:11px;color:var(--ink3)">加载中…</div></div>
         </section>
       </div>
     </div>
   </div>
 </div>
 <input type="file" id="fileInput" style="display:none" multiple>
+<div id="sessHover"></div>
 <script>
 /* ================================================================
    Motion 动效辅助（motion.dev；未加载时零降级——直接呈现）
@@ -921,13 +955,10 @@ function pickCmd(c){slash.classList.remove('show');ta.value='';
   else if(c==='/export')askConfirm();
   else if(c==='/solve'){ta.value='重新调度自愈求解器';sendMsg();}
 }
-/* panel & tabs */
-function threadMode(m){$('thread').classList.toggle('ins-mode',m==='insp');$('tabConv').classList.toggle('on',m==='conv');$('tabInsp').classList.toggle('on',m==='insp');}
+/* panel & tabs（检查器已迁入设置页「数据与审查」；threadMode 保留 conv 语义防旧调用崩溃） */
+function threadMode(m){const t=$('thread');t.classList.remove('ins-mode');const tc=$('tabConv');if(tc)tc.classList.add('on');}
 function toggleThread(){const t=$('thread');t.style.width=t.style.width==='0px'?'':'0px';setTimeout(resize,200);}
-function openInspector(p){
-  $('thread').style.width='';threadMode('insp');
-  document.querySelectorAll('.insp [data-pane]').forEach(e=>e.style.display=e.dataset.pane===p?'':'none');
-}
+function openInspector(p){openSettingsAt(p);}
 function focusViewport(){toast('视口：拖拽旋转 · 滚轮缩放 · Shift+拖拽平移');}
 /* settings：真实实现（toggleSettings 开关 #setMask）由集成接线脚本提供；原型 setPop 版已随假数据一并删除 */
 /* toast */
@@ -991,12 +1022,52 @@ function downloadIR(){
 }
 
 /* ---------- 会话列表（真实） + 事件渲染 ---------- */
+/* playbook 文件夹分组 + 单行会话 + 悬浮详情卡（ZCode 项目折叠/图5 语义；折叠态 localStorage 持久化） */
+const _PLAYBOOK_NAMES={'municipal_utility':'市政管网','single_asset_hero':'单体资产','edo_cyberpunk_district':'Edo 街区'};
+function _foldState(){try{return JSON.parse(localStorage.getItem('wb_folders')||'{}');}catch(e){return{};}}
+function toggleFolder(key){
+  const st=_foldState();st[key]=!st[key];localStorage.setItem('wb_folders',JSON.stringify(st));
+  const f=document.querySelector(`.fold[data-fold="${key}"]`);
+  const b=document.querySelector(`.fold-body[data-fold="${key}"]`);
+  if(f)f.classList.toggle('closed',!!st[key]);if(b)b.classList.toggle('closed',!!st[key]);
+}
+function sessHoverShow(el,sid){
+  const h=$('sessHover');if(!h)return;
+  const r=el.getBoundingClientRect();
+  h.innerHTML=`<div class="ht">${_esc(el.dataset.title||sid)}</div>`+
+    `<div class="hr"><span class="k">项目</span>${_esc(el.dataset.pname||'未分组')}</div>`+
+    `<div class="hr"><span class="k">更新</span>${_esc((el.dataset.active||'').slice(0,19).replace('T',' '))}</div>`+
+    `<div class="hr"><span class="k">事件</span>${_esc(el.dataset.count||'0')} 条 · <span class="k">session</span> ${sid.slice(0,8)}</div>`;
+  h.style.display='block';
+  const x=Math.min(r.right+10,window.innerWidth-300);
+  h.style.left=x+'px';h.style.top=Math.max(8,Math.min(r.top,window.innerHeight-150))+'px';
+}
+function sessHoverHide(){const h=$('sessHover');if(h)h.style.display='none';}
 async function loadSessions(selectId){
   const ss=await _get('/api/v1/sessions');
   const items=ss&&ss.ok&&ss.data?ss.data.items:[];
   const list=$('sessList');
-  if(!items.length){list.innerHTML='<div style="padding:8px 12px;font-size:11px;color:var(--ink3)">暂无会话 · 点「新任务」真跑一次</div>';return;}
-  list.innerHTML=items.map((s,i)=>`<div class="sess${(selectId?s.session_id===selectId:i===0)?' on':''}" data-sid="${s.session_id}" onclick="loadSessionEvents('${s.session_id}',this)"><span class="dot g"></span><div><div class="tt">${_esc(s.title||s.session_id)}</div><div class="meta">${(s.last_active||'').slice(0,16).replace('T',' ')} · ${s.event_count||0} 事件</div></div><span class="forkbtn" title="从此会话分支（/tree fork）" onclick="forkSession('${s.session_id}',event)">⑂</span></div>`).join('');
+  if(!items.length){list.innerHTML='<div style="padding:8px 12px;font-size:11px;color:var(--ink3)">暂无会话 · 点「新任务」真跑一次</div>';return items;}
+  /* 按 playbook 分组成可折叠文件夹 */
+  const groups={};
+  for(const s of items){const k=s.playbook||'';(groups[k]=groups[k]||[]).push(s);}
+  const st=_foldState();
+  const keys=Object.keys(groups).sort((a,b)=>(a==='')-(b==='')||a.localeCompare(b));
+  let html='';
+  for(const k of keys){
+    const pname=k?(_PLAYBOOK_NAMES[k]||k):'未分组';
+    const closed=!!st[k||'__none__'];
+    html+=`<div class="fold${closed?' closed':''}" data-fold="${_esc(k||'__none__')}" onclick="toggleFolder('${k||'__none__'}')"><span class="chev">▾</span><span style="color:var(--ink3)">▤</span>${_esc(pname)}<span class="cnt">${groups[k].length}</span></div>`;
+    html+=`<div class="fold-body${closed?' closed':''}" data-fold="${_esc(k||'__none__')}">`+
+      groups[k].map((s,i)=>{
+        const on=selectId?s.session_id===selectId:(k===keys[0]&&i===0);
+        return `<div class="sess${on?' on':''}" data-sid="${s.session_id}" data-title="${_esc(s.title||s.session_id)}" data-pname="${_esc(pname)}" data-active="${_esc(s.last_active||'')}" data-count="${s.event_count||0}" `+
+          `onclick="loadSessionEvents('${s.session_id}',this)" onmouseenter="sessHoverShow(this,'${s.session_id}')" onmouseleave="sessHoverHide()">`+
+          `<span class="dot g"></span><div class="tt" title="${_esc(s.title||s.session_id)}">${_esc(s.title||s.session_id)}</div>`+
+          `<span class="forkbtn" title="从此会话分支（/tree fork）" onclick="forkSession('${s.session_id}',event)">⑂</span></div>`;
+      }).join('')+`</div>`;
+  }
+  list.innerHTML=html;
   return items;
 }
 const _KEEP=['welcomeLine','tool2','artIR','hitl','tool3','rcpt','doneLine'];
@@ -1151,12 +1222,27 @@ async function refreshHosts(){
 })();
 
 /* ---------- 设置：ZCode 式全屏设置页（左分区导航 + 右内容独立滚动，Esc/✕ 恒可关） ---------- */
-const _SET_SECTIONS={models:'模型与 API',toolset:'工具集预设',memory:'记忆',skills:'技能',hosts:'CAD 宿主',mcp:'MCP 服务器'};
+const _SET_SECTIONS={models:'模型与 API',toolset:'工具集预设',memory:'记忆',skills:'技能',mcp:'MCP 服务器',
+  rules:'规则树',plugins:'插件与能力',ir:'IR 查看',uploads:'上传',usage:'用量',archive:'归档'};
 function setSection(name){
   document.querySelectorAll('#setMask .setnav-it').forEach(b=>b.classList.toggle('on',b.dataset.sec===name));
   document.querySelectorAll('#setMask [data-setsec]').forEach(s=>s.style.display=s.dataset.setsec===name?'':'none');
   const t=$('setTitle');if(t&&_SET_SECTIONS[name])t.textContent=_SET_SECTIONS[name];
 }
+/* 检查器入口（线程内「在检查器查看」、斜杠命令、chips）→ 打开设置页对应「数据与审查」分区 */
+function openSettingsAt(sec){
+  const p=$('setMask');
+  if(!p.classList.contains('show'))toggleSettings();
+  setSection(_SET_SECTIONS[sec]?sec:'rules');
+  if(sec==='usage')loadUsage();
+  if(sec==='archive')loadArchive();
+  if(sec==='uploads')loadUploads();
+}
+/* 侧栏折叠（Ctrl+B；与右栏折叠同一图标语义） */
+function toggleSidebar(){const s=$('sidebar');if(s)s.classList.toggle('collapsed');}
+document.addEventListener('keydown',e=>{
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='b'){e.preventDefault();toggleSidebar();}
+});
 function toggleSettings(e){
   e&&e.stopPropagation();
   const p=$('setMask');
@@ -1170,17 +1256,9 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Escape'){const p=$('setMask');if(p&&p.classList.contains('show'))p.classList.remove('show');}
 });
 async function loadSettings(){
-  const d=await _get('/api/v1/settings/llm');
-  if(!d)return;
-  $('setModel').value=d.baseline.model||'';
-  $('setBase').value=d.baseline.base_url||'';
-  $('setKey').value='';
-  $('setKeyState').textContent=d.baseline.api_key_set?'●已配置（留空则保留）':'○未设置';
-  $('provKeys').innerHTML=d.provider_keys.map(p=>
-    `<label class="fl">${p.env} <span class="fk" style="color:${p.key_set?'var(--grn)':'var(--ink3)'}">${p.key_set?'●已配置':'○未设置'}</span>`+
-    `<input type="password" class="fin" data-env="${p.env}" placeholder="（留空不修改）" autocomplete="off"></label>`).join('');
   const ts=await _get('/api/v1/toolset');
   if(ts&&ts.current)$('setToolset').value=ts.current;
+  loadProviders();
   loadMemory();
   refreshHosts();
   /* 技能与 MCP 服务器（只读清单区） */
@@ -1200,6 +1278,65 @@ async function loadSettings(){
       :'<div style="font-size:11px;color:var(--ink3)">未挂载第三方 MCP server（配置 OPENBIMAGENT_MCP_SERVERS env JSON 后重启生效）</div>';
   }
 }
+/* ---------- 模型设置：provider 制（左 provider 列表 + 右详情：Base URL / API Key / 模型列表） ---------- */
+let _providers=[],_curProv=null;
+async function loadProviders(selectProv){
+  const d=await _get('/api/v1/settings/models');
+  if(!d)return;
+  _providers=d.providers||[];
+  const cur=d.current||'';
+  const list=$('provList');
+  if(!_providers.length){list.innerHTML='<div style="font-size:11px;color:var(--ink3)">models.toml 不可用</div>';return;}
+  list.innerHTML=_providers.map(p=>{
+    const hasCur=p.models.some(m=>m.name===cur);
+    return `<div class="prov-it${_curProv===p.name?' on':''}" data-prov="${_esc(p.name)}" onclick="renderProvDetail('${_esc(p.name)}')">`+
+      `<span class="dot" style="background:${p.key_set?'var(--grn)':'var(--ink3)'}"></span>`+
+      `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_esc(p.name)}</span>`+
+      (hasCur?'<span class="cur" style="color:var(--grn);font-size:9.5px">当前</span>':'')+
+      `<span class="cnt">${p.models.length}</span></div>`;
+  }).join('');
+  renderProvDetail(selectProv||_curProv||_providers[0].name);
+}
+function renderProvDetail(name){
+  _curProv=name;
+  document.querySelectorAll('#provList .prov-it').forEach(e=>e.classList.toggle('on',e.dataset.prov===name));
+  const p=_providers.find(x=>x.name===name);
+  const el=$('provDetail');
+  if(!p){el.innerHTML='<div style="font-size:11px;color:var(--ink3)">provider 不存在</div>';return;}
+  el.innerHTML=
+    `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><b style="font-size:13.5px">${_esc(p.name)}</b>`+
+    `<span style="font:9.5px var(--mono);color:${p.key_set?'var(--grn)':'var(--amb)'}">${p.key_set?'●已启用（key 在环境）':'○ key 未配置'}</span></div>`+
+    `<label class="fl">Base URL<input class="fin" value="${_esc(p.base_url)}" readonly title="models.toml 声明（共享配置，设置页只读）"></label>`+
+    `<label class="fl">API 格式<input class="fin" value="${_esc(p.type||'openai-compatible')} (/chat/completions)" readonly></label>`+
+    `<label class="fl">API Key <span class="fk" style="color:${p.key_set?'var(--grn)':'var(--ink3)'}">${p.key_set?'●已配置（留空则保留）':'○未设置'}</span> <span style="font:9px var(--mono);color:var(--ink3)">${_esc(p.api_key_env)}</span>`+
+    `<input type="password" class="fin" id="provKeyInput" placeholder="（留空不修改）" autocomplete="off"></label>`+
+    `<div class="row" style="margin:6px 0 12px"><button class="m-no" onclick="saveProvKey()">保存 Key（写进程环境 + .env）</button></div>`+
+    `<div class="sp-t">模型列表（点「设为基线」= composer 当前模型；base_url/key 随 provider 自动接入）</div>`+
+    (p.models.length?p.models.map(m=>{
+      const caps=(m.capabilities||[]).join('/');
+      return `<div class="prov-mdl"><span>${_esc(m.name)}</span>`+
+        (m.context_window?`<span style="font-size:9.5px;color:var(--ink3)">${m.context_window>=1000000?(m.context_window/1000000)+'M':Math.round(m.context_window/1000)+'K'}</span>`:'')+
+        `<span class="caps">${_esc(caps)}</span>`+
+        `<button class="chip" style="flex:none" onclick="setBaseline('${_esc(m.name)}')">设为基线</button></div>`;
+    }).join(''):'<div style="font-size:11px;color:var(--ink3);margin-top:6px">该 provider 在 models.toml 中无模型</div>');
+}
+async function saveProvKey(){
+  const p=_providers.find(x=>x.name===_curProv);if(!p)return;
+  const v=$('provKeyInput').value.trim();
+  if(!v){toast('请输入 API Key（留空不修改）');return;}
+  const r=await fetch('/api/v1/settings/llm',{method:'PUT',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({provider_keys:{[p.api_key_env]:v}})});
+  const d=await r.json();
+  if(r.ok&&d.status==='success'){toast(p.api_key_env+' 已保存（进程环境即时生效）');$('provKeyInput').value='';loadProviders(_curProv);}
+  else toast('保存失败：'+(d.error||r.status));
+}
+async function setBaseline(model){
+  const r=await fetch('/api/v1/settings/llm',{method:'PUT',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({model})});
+  const d=await r.json();
+  if(r.ok&&d.status==='success'){
+    toast(d.warning||('基线模型已切换：'+model));
+    loadRuntimeInfo();loadProviders(_curProv);
+  }else toast('切换失败：'+(d.error||r.status));
+}
 /* ---------- 长期记忆（P0-4：读取免费；写入走 prompt 策略门 confirm 语义） ---------- */
 async function loadMemory(){
   const d=await _get('/api/v1/memory');if(!d)return;
@@ -1218,7 +1355,7 @@ async function recordMemory(){
   }catch(e){toast('写入失败：'+e);}
 }
 
-/* ---------- Composer 模型芯片：点击=切换（真实 models.toml 清单）+「管理模型」进设置（对齐 ZCode） ---------- */
+/* ---------- Composer 模型芯片：点击=两级菜单（provider ▸ 模型，对齐 ZCode 图2）+「管理模型」进设置 ---------- */
 async function toggleModelMenu(e){
   e&&e.stopPropagation();
   const m=$('mdlMenu');
@@ -1226,15 +1363,22 @@ async function toggleModelMenu(e){
   const d=await _get('/api/v1/settings/models');
   if(!d){toast('模型清单读取失败');return;}
   const cur=d.current||'';
-  const rows=(d.models||[]).map(mm=>
-    `<div class="sl" onclick="switchModel('${_esc(mm.name)}')">`+
-    `<span class="c" style="font:11px var(--mono)">${_esc(mm.name)}</span>`+
-    `<span class="d">${_esc(mm.provider)}${(mm.capabilities||[]).includes('vision')?' · vision':''}</span>`+
-    (mm.name===cur?'<span style="margin-left:auto;color:var(--grn)">✓ 当前</span>':'')+
-    `</div>`).join('');
+  const rows=(d.providers||[]).filter(p=>p.models.length).map(p=>{
+    const hasCur=p.models.some(x=>x.name===cur);
+    const sub=p.models.map(x=>
+      `<div class="sl" onclick="switchModel('${_esc(x.name)}')">`+
+      `<span class="c" style="font:11px var(--mono)">${_esc(x.name)}</span>`+
+      (x.name===cur?'<span style="margin-left:auto;color:var(--grn)">✓</span>':'')+
+      `</div>`).join('');
+    return `<div class="sl sub"><span class="c">${_esc(p.name)}</span>`+
+      `<span class="d" style="color:${p.key_set?'var(--grn)':'var(--ink3)'}">${p.key_set?'●':'○'}</span>`+
+      (hasCur?'<span style="color:var(--grn)">✓</span>':'')+
+      `<span style="margin-left:auto;color:var(--ink3)">›</span>`+
+      `<div class="sl-menu">${sub}</div></div>`;
+  }).join('');
   m.innerHTML=(rows||'<div class="sl"><span class="d">models.toml 无可用模型</span></div>')+
     `<div class="sl" style="border-top:1px solid var(--line)" onclick="$('mdlMenu').classList.remove('show');toggleSettings()">`+
-    `<span class="c">管理模型</span><span class="d">API key / base_url 在设置中配置</span></div>`;
+    `<span class="c">管理模型</span><span class="d">provider key / 模型列表在设置中配置</span></div>`;
   m.classList.add('show');
   popIn(m);
 }
@@ -1243,7 +1387,7 @@ async function switchModel(name){
   try{
     const r=await fetch('/api/v1/settings/llm',{method:'PUT',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({model:name})});
     const d=await r.json();
-    if(r.ok&&d.status==='success'){toast('已切换基线模型：'+name);loadRuntimeInfo();}
+    if(r.ok&&d.status==='success'){toast(d.warning||('已切换基线模型：'+name));loadRuntimeInfo();}
     else toast('切换失败：'+(d.error||r.status));
   }catch(e){toast('切换失败：'+e);}
 }
@@ -1251,26 +1395,14 @@ document.addEventListener('click',e=>{
   const m=$('mdlMenu');
   if(m&&m.classList.contains('show')&&!m.contains(e.target)&&e.target.id!=='mdlChip')m.classList.remove('show');
 });
-async function saveSettings(){
-  const body={model:$('setModel').value.trim(),base_url:$('setBase').value.trim()};
-  if($('setKey').value.trim())body.api_key=$('setKey').value.trim();
-  const pk={};
-  document.querySelectorAll('#provKeys input[data-env]').forEach(i=>{if(i.value.trim())pk[i.dataset.env]=i.value.trim();});
-  if(Object.keys(pk).length)body.provider_keys=pk;
+/* ---------- 工具集预设：选中即生效（无需保存按钮） ---------- */
+async function saveToolset(name){
   try{
-    const r=await fetch('/api/v1/settings/llm',{method:'PUT',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify(body)});
-    const d=await r.json();
-    if(r.ok&&d.status==='success'){
-      const ts=$('setToolset').value;
-      const tr=await fetch('/api/v1/toolset',{method:'PUT',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({name:ts})});
-      const td=await tr.json().catch(()=>({}));
-      toast(tr.ok?'设置已保存（llm_baseline.local.toml · 工具集='+ts+'）':'LLM 已保存，工具集切换失败：'+(td.error||tr.status));
-      $('setMask').classList.remove('show');
-      loadRuntimeInfo();
-    }else toast('保存失败：'+(d.error||r.status));
-  }catch(e){toast('保存失败：'+e);}
+    const r=await fetch('/api/v1/toolset',{method:'PUT',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({name})});
+    const d=await r.json().catch(()=>({}));
+    toast(r.ok?('工具集已切换：'+name+'（清单+invoke 双层即时生效）'):('切换失败：'+(d.error||r.status)));
+  }catch(e){toast('切换失败：'+e);}
 }
-
 /* ---------- 上传：真实落盘 out/uploads/ ---------- */
 $('fileInput').addEventListener('change',async e=>{
   for(const f of e.target.files){

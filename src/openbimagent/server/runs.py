@@ -103,7 +103,7 @@ def _execute_run(brief: str, playbook: Path, session_id: str, enriched_context: 
         # 预建会话并写入标题（index.json 侧边栏数据源），pipeline 复用同一 session 文件
         from openbimagent.session.store import SessionStore
 
-        store = SessionStore(sessions_dir / f"{session_id}.jsonl", title=brief[:60] or session_id)
+        store = SessionStore(sessions_dir / f"{session_id}.jsonl", title=brief[:60] or session_id, playbook=playbook.parent.name)
         # 缺陷一修复：检索范例作为会话首条用户消息注入（In-Context Retrieval 注入会话上下文；
         # 读取会话历史的角色（clarify 续跑/后续 researcher）可消费；确定性模板路径不消费——如实记录）
         if enriched_context:

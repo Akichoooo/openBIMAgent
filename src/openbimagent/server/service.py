@@ -286,6 +286,7 @@ class M2ReadOnlyService:
         return {
             "session_id": session_id,
             "title": str(entry.get("title", "未命名会话"))[:500],
+            "playbook": str(entry.get("playbook") or ""),  # 侧边栏文件夹分组数据源
             "created_at": str(entry.get("created_at", "")),
             "last_active": str(entry.get("last_active", "")),
             "event_count": event_count,

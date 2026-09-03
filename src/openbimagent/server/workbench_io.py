@@ -148,10 +148,33 @@ def add_workbench_io(app: FastAPI) -> None:
             return JSONResponse(status_code=400, content={"status": "error", "error": "body 必须是 JSON 对象"})
 
         raw = _read_baseline_raw()
+        warning: str | None = None
         for field in ("model", "base_url", "api_key"):
             value = body.get(field)
             if isinstance(value, str) and value.strip():
                 raw[field] = value.strip()
+        # provider 联动：切 models.toml 声明的模型时，自动同步 provider base_url；
+        # provider 的 env key 已配置则一并接入基线（provider=URL+key+多模型 的 ZCode 语义）；
+        # env 缺 key 不静默——响应带 warning，由前端提示去设置页补 key
+        model_name = str(raw.get("model", "")).strip()
+        if model_name and "base_url" not in body:
+            try:
+                from openbimagent.providers.registry import DEFAULT_CONFIG_PATH, ModelRegistry
+
+                registry = ModelRegistry.load(DEFAULT_CONFIG_PATH)
+                declared = registry.models.get(model_name)
+                if declared is not None:
+                    provider = registry.providers.get(declared.provider)
+                    if provider is not None and getattr(provider, "base_url", ""):
+                        raw["base_url"] = str(provider.base_url).rstrip("/")
+                    key_env = getattr(provider, "api_key_env", "") if provider else ""
+                    env_key = os.environ.get(key_env, "") if key_env else ""
+                    if env_key:
+                        raw["api_key"] = env_key
+                    else:
+                        warning = f"provider {declared.provider} 的 {key_env or 'API key'} 未配置，切换后请在设置页补 key"
+            except Exception:  # noqa: BLE001 — models.toml 不可用时不阻断保存
+                pass
         for key, default in {"max_scenarios": 10, "repetitions": 3, "temperature": 0.0, "request_timeout_s": 60}.items():
             raw.setdefault(key, default)
         try:
@@ -171,11 +194,14 @@ def add_workbench_io(app: FastAPI) -> None:
                 _update_env_file(env_updates)
             except OSError:
                 pass  # .env 持久化失败不影响进程内即时生效
-        return JSONResponse(content=_settings_payload())
+        payload = _settings_payload()
+        if warning:
+            payload["warning"] = warning
+        return JSONResponse(content=payload)
 
     @app.get(
         "/api/v1/settings/models",
-        summary="可切换模型清单（config/models.toml 声明）+ 当前基线模型（composer 下拉数据源）",
+        summary="按 provider 分组的模型清单（config/models.toml；ZCode 式 provider ▸ 模型 两级切换数据源）",
         tags=["Workbench"],
     )
     async def list_switchable_models() -> dict:
@@ -183,16 +209,29 @@ def add_workbench_io(app: FastAPI) -> None:
 
         try:
             registry = ModelRegistry.load(DEFAULT_CONFIG_PATH)
-            models = [
-                {"name": name, "provider": m.provider, "capabilities": list(m.capabilities)}
-                for name, m in sorted(registry.models.items())
-            ]
+            providers = []
+            for pname, pconf in sorted(registry.providers.items()):
+                key_env = getattr(pconf, "api_key_env", "") or ""
+                providers.append(
+                    {
+                        "name": pname,
+                        "type": getattr(pconf, "type", ""),
+                        "base_url": getattr(pconf, "base_url", "") or "",
+                        "api_key_env": key_env,
+                        "key_set": bool(key_env and os.environ.get(key_env)),
+                        "models": [
+                            {"name": mname, "capabilities": list(m.capabilities), "context_window": m.context_window}
+                            for mname, m in sorted(registry.models.items())
+                            if m.provider == pname
+                        ],
+                    }
+                )
             error = None
         except Exception as exc:  # noqa: BLE001 — models.toml 缺失/非法不致命，前端退化为仅显示当前模型
-            models, error = [], str(exc)
+            providers, error = [], str(exc)
         return {
             "status": "success",
-            "models": models,
+            "providers": providers,
             "current": _read_baseline_raw().get("model"),
             "error": error,
         }
