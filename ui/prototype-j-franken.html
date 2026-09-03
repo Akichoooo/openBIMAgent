@@ -242,6 +242,25 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .fin{display:block;width:100%;margin-top:3px;background:var(--bg);border:1px solid var(--line2);border-radius:8px;color:var(--ink);font:11.5px var(--mono);padding:7px 9px;outline:none}
 .fin:focus{border-color:hsl(var(--primary) / .5)}
 .fk{font:9.5px var(--mono);color:var(--grn);margin-left:6px}
+/* 设置全屏页（ZCode 式：左分区导航 + 右内容独立滚动，关闭入口恒在） */
+.setpage{display:none;position:fixed;inset:0;background:var(--bg);z-index:90}
+.setpage.show{display:block}
+.setpage-in{display:flex;height:100%}
+.setnav{width:196px;flex:none;border-right:1px solid var(--line);padding:16px 10px;display:flex;flex-direction:column;gap:2px;background:var(--bg1)}
+.setnav-title{font-size:14px;font-weight:600;padding:0 10px 12px}
+.setnav-grp{font:9.5px var(--mono);color:var(--ink3);padding:14px 10px 4px;letter-spacing:.08em}
+.setnav-it{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;color:var(--ink2);cursor:pointer;font-size:12.5px;text-align:left;background:none;border:none;width:100%}
+.setnav-it:hover{background:var(--bg2);color:var(--ink)}
+.setnav-it.on{background:var(--bg3);color:var(--ink)}
+.setmain{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0}
+.sethead{display:flex;align-items:center;padding:14px 28px;border-bottom:1px solid var(--line)}
+.sethead h3{font-size:15px;font-weight:600}
+.setclose{margin-left:auto;width:30px;height:30px;border-radius:8px;border:1px solid var(--line2);background:var(--bg2);color:var(--ink2);cursor:pointer;font-size:13px}
+.setclose:hover{background:var(--bg3);color:var(--ink)}
+.setbody{flex:1;overflow-y:auto;padding:20px 28px;min-height:0}
+.setbody section{max-width:680px}
+.setdesc{font-size:12px;color:var(--ink2);line-height:1.65;margin-bottom:6px}
+.setdesc code{font:10px var(--mono);color:var(--amb)}
 #approveBtn:disabled{opacity:.5;cursor:default;pointer-events:none}
 @media (max-width:1180px){.sidebar{display:none}}
 </style>
@@ -478,39 +497,71 @@ plan_sha256: 7ac1…9f · objects: 22</pre>
 </div>
 
 <!-- 设置弹层（真实读写 /api/v1/settings/llm） -->
-<div class="modal-mask" id="setMask">
-  <div class="modal" style="width:460px">
-    <h3>设置 · 模型与 API</h3>
-    <p>基线写入 <code style="font:10px var(--mono);color:var(--amb)">config/llm_baseline.local.toml</code>；provider key 写入进程环境并持久化 <code style="font:10px var(--mono);color:var(--amb)">.env</code>（均 gitignored，key 只写不回显）。</p>
-    <div class="sp-t" style="margin-top:10px">LLM 基线</div>
-    <label class="fl">模型<input id="setModel" class="fin" placeholder="gpt-5.6-terra"></label>
-    <label class="fl">Base URL<input id="setBase" class="fin" placeholder="https://…/v1"></label>
-    <label class="fl">API Key <span class="fk" id="setKeyState"></span><input id="setKey" type="password" class="fin" placeholder="（留空则不修改）" autocomplete="off"></label>
-    <div class="sp-t" style="margin-top:10px">管道角色 Provider Keys</div>
-    <div id="provKeys"><div style="font-size:11px;color:var(--ink3)">加载中…</div></div>
-    <div class="sp-t" style="margin-top:10px">Agent 能力面</div>
-    <label class="fl">工具集预设（能力过滤：清单可见面 + invoke 调用门）
-      <select id="setToolset" class="fin">
-        <option value="full">full · 全部能力</option>
-        <option value="modeling">modeling · solver + cad_host</option>
-        <option value="minimal">minimal · 仅 solver（不触宿主写盘）</option>
-      </select>
-    </label>
-    <div class="sp-t" style="margin-top:10px">长期记忆（跨会话 · 写入需确认）</div>
-    <div id="memList" style="max-height:120px;overflow-y:auto;font:10.5px var(--mono);color:var(--ink2);background:var(--bg2);border:1px solid var(--line);border-radius:6px;padding:6px 8px">加载中…</div>
-    <div class="row" style="margin-top:6px">
-      <select id="memFile" class="fin" style="width:110px;flex:none">
-        <option value="memory">MEMORY</option>
-        <option value="user">USER</option>
-      </select>
-      <input id="memEntry" class="fin" style="flex:1" placeholder="新记忆条目（写入即持久化，需确认）">
-      <button class="m-no" onclick="recordMemory()">写入</button>
-    </div>
-    <div class="sp-t" style="margin-top:10px">CAD 宿主（supervisor 状态机 · 有界重启）</div>
-    <div id="hostSettings"><div style="font-size:11px;color:var(--ink3)">加载中…</div></div>
-    <div class="row">
-      <button class="m-no" onclick="$('setMask').classList.remove('show')">关闭</button>
-      <button class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground" style="flex:1" onclick="saveSettings()">保存设置</button>
+<div class="setpage" id="setMask">
+  <div class="setpage-in">
+    <aside class="setnav">
+      <div class="setnav-title">设置</div>
+      <button class="setnav-it on" data-sec="models" onclick="setSection('models')">模型与 API</button>
+      <div class="setnav-grp">AGENT 能力</div>
+      <button class="setnav-it" data-sec="toolset" onclick="setSection('toolset')">工具集预设</button>
+      <button class="setnav-it" data-sec="memory" onclick="setSection('memory')">记忆</button>
+      <button class="setnav-it" data-sec="skills" onclick="setSection('skills')">技能</button>
+      <div class="setnav-grp">连接</div>
+      <button class="setnav-it" data-sec="hosts" onclick="setSection('hosts')">CAD 宿主</button>
+      <button class="setnav-it" data-sec="mcp" onclick="setSection('mcp')">MCP 服务器</button>
+      <div style="flex:1"></div>
+      <div class="setnav-grp" style="padding-bottom:8px">Esc 关闭</div>
+    </aside>
+    <div class="setmain">
+      <div class="sethead"><h3 id="setTitle">模型与 API</h3><button class="setclose" onclick="toggleSettings()" title="关闭 (Esc)">✕</button></div>
+      <div class="setbody">
+        <section data-setsec="models">
+          <p class="setdesc">基线写入 <code>config/llm_baseline.local.toml</code>；provider key 写入进程环境并持久化 <code>.env</code>（均 gitignored，key 只写不回显）。composer 模型芯片可快速切换。</p>
+          <div class="sp-t">LLM 基线</div>
+          <label class="fl">模型<input id="setModel" class="fin" placeholder="gpt-5.6-terra"></label>
+          <label class="fl">Base URL<input id="setBase" class="fin" placeholder="https://…/v1"></label>
+          <label class="fl">API Key <span class="fk" id="setKeyState"></span><input id="setKey" type="password" class="fin" placeholder="（留空则不修改）" autocomplete="off"></label>
+          <div class="sp-t">管道角色 Provider Keys</div>
+          <div id="provKeys"><div style="font-size:11px;color:var(--ink3)">加载中…</div></div>
+          <div class="row" style="margin-top:14px">
+            <button class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground" onclick="saveSettings()">保存设置</button>
+          </div>
+        </section>
+        <section data-setsec="toolset" style="display:none">
+          <p class="setdesc">能力面收敛：过滤 <code>/api/v1/plugins</code> 清单可见面 + <code>invoke</code> 调用门（被滤能力 403）。即时生效，无需保存。</p>
+          <label class="fl">工具集预设
+            <select id="setToolset" class="fin">
+              <option value="full">full · 全部能力</option>
+              <option value="modeling">modeling · solver + cad_host</option>
+              <option value="minimal">minimal · 仅 solver（不触宿主写盘）</option>
+            </select>
+          </label>
+        </section>
+        <section data-setsec="memory" style="display:none">
+          <p class="setdesc">跨会话长期记忆（<code>memory/MEMORY.md</code> · <code>USER.md</code>，gitignored）。读取免费；写入走 prompt 策略门，逐条确认。片段自动注入新任务上下文。</p>
+          <div id="memList" style="max-height:280px;overflow-y:auto;font:10.5px var(--mono);color:var(--ink2);background:var(--bg2);border:1px solid var(--line);border-radius:6px;padding:8px 10px">加载中…</div>
+          <div class="row" style="margin-top:8px">
+            <select id="memFile" class="fin" style="width:110px;flex:none">
+              <option value="memory">MEMORY</option>
+              <option value="user">USER</option>
+            </select>
+            <input id="memEntry" class="fin" style="flex:1" placeholder="新记忆条目（写入即持久化，需确认）">
+            <button class="m-no" onclick="recordMemory()">写入</button>
+          </div>
+        </section>
+        <section data-setsec="skills" style="display:none">
+          <p class="setdesc">SKILL.md 技能库（渐进披露：上下文只见目录，调用才给正文）。调用与候选批准在对话线程 <code>/skills</code> 面板操作。</p>
+          <div id="setSkillsList"><div style="font-size:11px;color:var(--ink3)">加载中…</div></div>
+        </section>
+        <section data-setsec="hosts" style="display:none">
+          <p class="setdesc">CAD 宿主 supervisor 状态机（Blender TCP 实探 + 有界退避重启；Vectorworks 为外部 runner，恒 external 不伪探测）。</p>
+          <div id="hostSettings"><div style="font-size:11px;color:var(--ink3)">加载中…</div></div>
+        </section>
+        <section data-setsec="mcp" style="display:none">
+          <p class="setdesc">第三方 MCP server 经环境变量 <code>OPENBIMAGENT_MCP_SERVERS</code>（JSON）配置，重启后挂载为 <code>mcp:&lt;server&gt;:&lt;tool&gt;</code> 能力，默认 prompt 策略门（fail-closed）。</p>
+          <div id="setMcpList"><div style="font-size:11px;color:var(--ink3)">加载中…</div></div>
+        </section>
+      </div>
     </div>
   </div>
 </div>

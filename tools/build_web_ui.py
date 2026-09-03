@@ -273,13 +273,25 @@ async function refreshHosts(){
   else if(items&&items.length){loadSessionEvents(items[0].session_id,document.querySelector('#sessList .sess'));}
 })();
 
-/* ---------- 设置：真实读写 /api/v1/settings/llm ---------- */
+/* ---------- 设置：ZCode 式全屏设置页（左分区导航 + 右内容独立滚动，Esc/✕ 恒可关） ---------- */
+const _SET_SECTIONS={models:'模型与 API',toolset:'工具集预设',memory:'记忆',skills:'技能',hosts:'CAD 宿主',mcp:'MCP 服务器'};
+function setSection(name){
+  document.querySelectorAll('#setMask .setnav-it').forEach(b=>b.classList.toggle('on',b.dataset.sec===name));
+  document.querySelectorAll('#setMask [data-setsec]').forEach(s=>s.style.display=s.dataset.setsec===name?'':'none');
+  const t=$('setTitle');if(t&&_SET_SECTIONS[name])t.textContent=_SET_SECTIONS[name];
+}
 function toggleSettings(e){
   e&&e.stopPropagation();
+  const p=$('setMask');
+  if(p.classList.contains('show')){p.classList.remove('show');return;}
   loadSettings();
-  $('setMask').classList.add('show');
-  popIn($('setMask').querySelector('.modal'));
+  setSection('models');
+  p.classList.add('show');
+  const m=M();const box=p.querySelector('.setpage-in');if(m&&box)m.animate(box,{opacity:[0,1]},{duration:.18,easing:EASE_OUT});
 }
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){const p=$('setMask');if(p&&p.classList.contains('show'))p.classList.remove('show');}
+});
 async function loadSettings(){
   const d=await _get('/api/v1/settings/llm');
   if(!d)return;
@@ -294,6 +306,22 @@ async function loadSettings(){
   if(ts&&ts.current)$('setToolset').value=ts.current;
   loadMemory();
   refreshHosts();
+  /* 技能与 MCP 服务器（只读清单区） */
+  const sk=await _get('/api/v1/skills');
+  if(sk){
+    $('setSkillsList').innerHTML=sk.skills.length?
+      sk.skills.map(s=>`<div class="rule"><div class="rh"><span class="rid">${_esc(s.name)}</span><span class="rst">${_esc(s.source)}</span></div><div class="rd">${_esc(s.description)}</div></div>`).join('')+
+      (sk.candidates.length?`<div class="rd" style="margin-top:6px;color:var(--amb)">${sk.candidates.length} 个自蒸馏候选待批准（线程 /skills 面板操作）</div>`:'')
+      :'<div style="font-size:11px;color:var(--ink3)">无已生效技能</div>';
+  }
+  const plg=await _get('/api/v1/plugins');
+  if(plg&&plg.capabilities_map){
+    const ext={};
+    Object.entries(plg.capabilities_map).forEach(([cap,pid])=>{if(String(pid).startsWith('plugin.external.mcp.')){(ext[pid]=ext[pid]||[]).push(cap);}});
+    $('setMcpList').innerHTML=Object.keys(ext).length?
+      Object.entries(ext).map(([pid,caps])=>`<div class="rule"><div class="rh"><span class="rid">${_esc(pid.replace('plugin.external.mcp.',''))}</span><span class="rst">${caps.length} 工具</span></div><div class="rd mono" style="font-size:10px">${caps.map(_esc).join(' · ')}</div></div>`).join('')
+      :'<div style="font-size:11px;color:var(--ink3)">未挂载第三方 MCP server（配置 OPENBIMAGENT_MCP_SERVERS env JSON 后重启生效）</div>';
+  }
 }
 /* ---------- 长期记忆（P0-4：读取免费；写入走 prompt 策略门 confirm 语义） ---------- */
 async function loadMemory(){
