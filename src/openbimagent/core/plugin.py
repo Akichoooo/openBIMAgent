@@ -190,6 +190,16 @@ DEFAULT_CAPABILITY_POLICIES: tuple[CapabilityPolicyRule, ...] = (
         decision=CapabilityPolicyDecision.PROMPT,
         justification="真实 CAD 宿主受控写盘（VW 宿主 runner 执行 typed plan），需人工确认",
     ),
+    CapabilityPolicyRule(
+        pattern="memory:record",
+        decision=CapabilityPolicyDecision.PROMPT,
+        justification="写入跨会话长期记忆（MEMORY.md/USER.md 持久化），需人工确认",
+    ),
+    CapabilityPolicyRule(
+        pattern="mcp:*",
+        decision=CapabilityPolicyDecision.PROMPT,
+        justification="外部第三方 MCP server 工具（进程/网络面未知），fail-closed 需人工确认",
+    ),
 )
 
 
@@ -328,7 +338,18 @@ class PluginRegistry:
         if plugin is None or plugin.state != PluginLifecycleState.ACTIVE:
             raise RuntimeError(f"提供能力 '{capability}' 的插件 '{plugin_id}' 不可用 (state={getattr(plugin, 'state', None)})")
 
-        return plugin.invoke_capability(capability, *args, **kwargs)
+        # P1-2 hooks：pre_tool 可否决（fail-closed），post_tool 观测（成功/异常都触发）
+        from openbimagent.core.hooks import default_hook_bus
+
+        bus = default_hook_bus()
+        bus.check("pre_tool", capability=capability, plugin_id=plugin_id, confirm=confirm)
+        try:
+            result = plugin.invoke_capability(capability, *args, **kwargs)
+        except Exception as exc:
+            bus.emit("post_tool", capability=capability, plugin_id=plugin_id, error=str(exc))
+            raise
+        bus.emit("post_tool", capability=capability, plugin_id=plugin_id, result=type(result).__name__)
+        return result
 
     def get_plugin(self, plugin_id: str) -> BIMPlugin | None:
         """获取指定插件实例。"""
@@ -744,6 +765,36 @@ class MunicipalDirectPlugin(BIMPlugin):
         self.register_handler("solver:self_healing", _direct_no_healing)
 
 
+class MemoryPlugin(BIMPlugin):
+    """轻量记忆层插件（P0-4）：record 写长期记忆（prompt 策略门），recall 读取免费。"""
+
+    plugin_id = "plugin.core.memory"
+    name = "轻量记忆层"
+    version = "1.0.0"
+    description = "MEMORY.md/USER.md 追加式长期记忆；record 需人工确认，recall 读取自由"
+    provides_capabilities = (
+        "memory:record",
+        "memory:recall",
+    )
+
+    def setup(self, ctx: BIMPluginContext) -> None:
+        super().setup(ctx)
+        from openbimagent.core.memory import default_memory_store
+
+        def _record(file: str = "memory", entry: str = "") -> dict:
+            return default_memory_store().append(file, entry)
+
+        def _recall(max_entries: int = 8) -> dict:
+            store = default_memory_store()
+            return {
+                "memory": store.tail("memory", max_entries),
+                "user": store.tail("user", max_entries),
+            }
+
+        self.register_handler("memory:record", _record)
+        self.register_handler("memory:recall", _recall)
+
+
 def create_default_plugin_registry() -> PluginRegistry:
     """初始化装载所有核心系统插件与标准 Profiles（开启严格依赖校验）。"""
     registry = PluginRegistry()
@@ -756,6 +807,7 @@ def create_default_plugin_registry() -> PluginRegistry:
     registry.register(SpatialGraphPlugin(), check_dependencies=True)
     registry.register(AcademicBenchmarkPlugin(), check_dependencies=True)
     registry.register(MunicipalDirectPlugin(), check_dependencies=True)
+    registry.register(MemoryPlugin(), check_dependencies=True)
 
     # 2. 默认治理策略（Codex execpolicy prompt 语义；治理显式、最小化）
     registry.set_capability_policies(DEFAULT_CAPABILITY_POLICIES)

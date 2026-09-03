@@ -432,6 +432,8 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
         <div class="sl" onclick="pickCmd('/rules')"><span class="c">/rules</span><span class="d">打开 GB 50289 规则树</span></div>
         <div class="sl" onclick="pickCmd('/ir')"><span class="c">/ir</span><span class="d">查看 Compiled IR</span></div>
         <div class="sl" onclick="pickCmd('/export')"><span class="c">/export</span><span class="d">导出至 CAD 宿主（HITL）</span></div>
+        <div class="sl" onclick="pickCmd('/recall')"><span class="c">/recall</span><span class="d">会话全文检索（FTS5，用法 /recall 关键词）</span></div>
+        <div class="sl" onclick="pickCmd('/skills')"><span class="c">/skills</span><span class="d">技能库（SKILL.md 清单与调用）</span></div>
       </div>
       <div class="cmp-row">
         <button class="cbtn" title="上传附件（真实落盘）" onclick="$('fileInput').click()"><svg viewBox="0 0 24 24"><path d="M21 12l-8.5 8.5a5.5 5.5 0 01-7.8-7.8L13 4.4a3.7 3.7 0 015.2 5.2l-8.2 8.2a1.85 1.85 0 01-2.6-2.6L15 7.6"/></svg></button>
@@ -517,6 +519,24 @@ plan_sha256: 7ac1…9f · objects: 22</pre>
     <label class="fl">API Key <span class="fk" id="setKeyState"></span><input id="setKey" type="password" class="fin" placeholder="（留空则不修改）" autocomplete="off"></label>
     <div class="sp-t" style="margin-top:10px">管道角色 Provider Keys</div>
     <div id="provKeys"><div style="font-size:11px;color:var(--ink3)">加载中…</div></div>
+    <div class="sp-t" style="margin-top:10px">Agent 能力面</div>
+    <label class="fl">工具集预设（能力过滤：清单可见面 + invoke 调用门）
+      <select id="setToolset" class="fin">
+        <option value="full">full · 全部能力</option>
+        <option value="modeling">modeling · solver + cad_host</option>
+        <option value="minimal">minimal · 仅 solver（不触宿主写盘）</option>
+      </select>
+    </label>
+    <div class="sp-t" style="margin-top:10px">长期记忆（跨会话 · 写入需确认）</div>
+    <div id="memList" style="max-height:120px;overflow-y:auto;font:10.5px var(--mono);color:var(--ink2);background:var(--bg2);border:1px solid var(--line);border-radius:6px;padding:6px 8px">加载中…</div>
+    <div class="row" style="margin-top:6px">
+      <select id="memFile" class="fin" style="width:110px;flex:none">
+        <option value="memory">MEMORY</option>
+        <option value="user">USER</option>
+      </select>
+      <input id="memEntry" class="fin" style="flex:1" placeholder="新记忆条目（写入即持久化，需确认）">
+      <button class="m-no" onclick="recordMemory()">写入</button>
+    </div>
     <div class="row">
       <button class="m-no" onclick="$('setMask').classList.remove('show')">关闭</button>
       <button class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground" style="flex:1" onclick="saveSettings()">保存设置</button>

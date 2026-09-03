@@ -24,6 +24,7 @@ def ws(tmp_path_factory: pytest.TempPathFactory) -> Path:
 @pytest.fixture(scope="module")
 def client(ws: Path) -> TestClient:
     os.environ["OPENBIMAGENT_SESSIONS_DIR"] = str(ws / "sessions")
+    os.environ["OPENBIMAGENT_SKILLS_ROOT"] = str(ws / "skills")  # 蒸馏候选隔离，防污染仓库 skills/
     os.environ["OPENBIMAGENT_ARCHIVE_DIR"] = str(ws / "archive")
     os.environ["OPENBIMAGENT_PENDING_APPROVALS"] = str(ws / "pending.json")
     os.environ["OPENBIMAGENT_WORKBENCH_TOKEN"] = "test-wb-token"
@@ -41,6 +42,7 @@ def client(ws: Path) -> TestClient:
     yield c
     for key in (
         "OPENBIMAGENT_SESSIONS_DIR",
+        "OPENBIMAGENT_SKILLS_ROOT",
         "OPENBIMAGENT_ARCHIVE_DIR",
         "OPENBIMAGENT_PENDING_APPROVALS",
         "OPENBIMAGENT_WORKBENCH_TOKEN",

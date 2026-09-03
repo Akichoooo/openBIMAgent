@@ -133,8 +133,36 @@ def _execute_run(brief: str, playbook: Path, session_id: str, enriched_context: 
         _runs[session_id].update(active=False, done_at=datetime.now(timezone.utc).isoformat(), error=str(exc))
     finally:
         try:
-            _archive_run_artifacts(playbook, session_id, brief, out_dir)
-        except Exception:  # noqa: BLE001 — 归档失败不影响运行结论
+            entry = _archive_run_artifacts(playbook, session_id, brief, out_dir)
+            # P0-1 自蒸馏钩子：仅成功交付（有归档工件且无错误）才蒸馏 SKILL.md 候选；
+            # 候选落 skills/_candidates/，永不自动生效，须人工批准转正（fail-closed 人工门）
+            if entry and not _runs[session_id].get("error"):
+                from openbimagent.skills.registry import builtin_skills_root, distill_candidate
+
+                candidate = distill_candidate(
+                    builtin_skills_root(),
+                    session_id=session_id,
+                    brief=brief,
+                    playbook=playbook.parent.name,
+                    files=[f["name"] for f in entry["files"]],
+                    archived_at=entry["archived_at"],
+                )
+                if candidate is not None:
+                    _runs[session_id]["skill_candidate"] = candidate.name
+        except Exception:  # noqa: BLE001 — 归档/蒸馏失败不影响运行结论
+            pass
+        # P1-2 hooks：run_end 观测事件（无论成败必触发）
+        try:
+            from openbimagent.core.hooks import default_hook_bus
+
+            default_hook_bus().emit(
+                "run_end",
+                session_id=session_id,
+                playbook=playbook.parent.name,
+                error=_runs[session_id].get("error") or "",
+                done_at=_runs[session_id].get("done_at") or "",
+            )
+        except Exception:  # noqa: BLE001 — hooks 故障不影响运行结论
             pass
 
 
@@ -158,11 +186,12 @@ def _archive_root(pack: Path) -> Path:
     return pack / "assets" / "auto_archive"
 
 
-def _archive_run_artifacts(playbook: Path, session_id: str, brief: str, out_dir: Path) -> None:
+def _archive_run_artifacts(playbook: Path, session_id: str, brief: str, out_dir: Path) -> dict[str, Any] | None:
     """P2 素材积累：交付工件只增不改地归档进 Domain Pack assets/auto_archive/<session>/。
 
     设计：纯增量（不写回 knowledge/ 受信任规则）；目录经 .gitignore 忽略；
     index.json 记录每次归档（session/时间/文件清单/sha256），供 researcher 角色后续引用。
+    返回本次归档的 index 条目（无工件可归档时返回 None）。
     """
     import hashlib
 
@@ -179,7 +208,7 @@ def _archive_run_artifacts(playbook: Path, session_id: str, brief: str, out_dir:
         (dest_dir / name).write_bytes(data)
         copied.append({"name": name, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()})
     if not copied:
-        return
+        return None
     dest_dir.mkdir(parents=True, exist_ok=True)
     index_path = archive_root / "index.json"
     index: list[dict[str, Any]] = []
@@ -188,15 +217,15 @@ def _archive_run_artifacts(playbook: Path, session_id: str, brief: str, out_dir:
             index = json.loads(index_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             index = []
-    index.append(
-        {
-            "session_id": session_id,
-            "brief": brief[:120],
-            "archived_at": datetime.now(timezone.utc).isoformat(),
-            "files": copied,
-        }
-    )
+    entry = {
+        "session_id": session_id,
+        "brief": brief[:120],
+        "archived_at": datetime.now(timezone.utc).isoformat(),
+        "files": copied,
+    }
+    index.append(entry)
     index_path.write_text(json.dumps(index, ensure_ascii=False, indent=1), encoding="utf-8")
+    return entry
 
 
 def add_runs(app: FastAPI) -> None:
@@ -233,6 +262,18 @@ def add_runs(app: FastAPI) -> None:
                 enriched_context = (
                     f"{brief}\n\n[相似历史交付参考（系统自素材归档检索注入，仅供对齐口径，不得照抄坐标）]\n{lines}"
                 )
+            # P0-1 渐进披露：技能目录（仅 name/description，不含正文）注入上下文，供规划阶段按需调用
+            from openbimagent.skills.registry import default_skill_registry
+
+            skill_fragment = default_skill_registry().catalog_fragment()
+            if skill_fragment:
+                enriched_context = f"{enriched_context}\n\n{skill_fragment}"
+            # P0-4 记忆层：末 N 条长期记忆/用户画像注入（人工审批写入的偏好，非工程证据）
+            from openbimagent.core.memory import default_memory_store
+
+            memory_fragment = default_memory_store().prompt_fragment()
+            if memory_fragment:
+                enriched_context = f"{enriched_context}\n\n{memory_fragment}"
             _runs[session_id] = {
                 "active": True,
                 "session_id": session_id,
@@ -276,6 +317,14 @@ def add_runs(app: FastAPI) -> None:
         except OSError as exc:
             return JSONResponse(status_code=500, content={"status": "error", "error": f"读取失败: {exc}"})
         return JSONResponse(content={"status": "success", "session_id": safe, "events": events[-max(1, min(tail, 1000)):]})
+
+    @app.get("/api/v1/sessions/search", summary="会话全文检索（FTS5；返回可溯源 session/event/snippet）", tags=["Workbench"])
+    async def sessions_search(q: str, limit: int = 10) -> JSONResponse:
+        from openbimagent.session.search import default_search_index
+
+        index = default_search_index(_sessions_dir())
+        index.sync()
+        return JSONResponse(content={"status": "success", "query": q, "items": index.search(q, limit=limit)})
 
     @app.get(
         "/api/v1/sessions/{session_id}/events/stream",

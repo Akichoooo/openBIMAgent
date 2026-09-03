@@ -23,6 +23,7 @@ def client(tmp_path_factory: pytest.TempPathFactory) -> TestClient:
     tmp = tmp_path_factory.mktemp("p124")
     os.environ["OPENBIMAGENT_WORKBENCH_TOKEN"] = "test-wb-token"
     os.environ["OPENBIMAGENT_SESSIONS_DIR"] = str(tmp / "sessions")
+    os.environ["OPENBIMAGENT_SKILLS_ROOT"] = str(tmp / "skills")  # 蒸馏候选隔离，防污染仓库 skills/
     os.environ["OPENBIMAGENT_PENDING_APPROVALS"] = str(tmp / "pending.json")
     os.environ["OPENBIMAGENT_ARCHIVE_DIR"] = str(tmp / "archive")
     from openbimagent.server.fastapi_app import build_demo_app
@@ -36,6 +37,7 @@ def client(tmp_path_factory: pytest.TempPathFactory) -> TestClient:
 
     yield _RidClient(build_demo_app())
     os.environ.pop("OPENBIMAGENT_SESSIONS_DIR", None)
+    os.environ.pop("OPENBIMAGENT_SKILLS_ROOT", None)
 
 
 @pytest.fixture(scope="module")

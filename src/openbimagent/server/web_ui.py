@@ -450,6 +450,8 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
         <div class="sl" onclick="pickCmd('/rules')"><span class="c">/rules</span><span class="d">打开 GB 50289 规则树</span></div>
         <div class="sl" onclick="pickCmd('/ir')"><span class="c">/ir</span><span class="d">查看 Compiled IR</span></div>
         <div class="sl" onclick="pickCmd('/export')"><span class="c">/export</span><span class="d">导出至 CAD 宿主（HITL）</span></div>
+        <div class="sl" onclick="pickCmd('/recall')"><span class="c">/recall</span><span class="d">会话全文检索（FTS5，用法 /recall 关键词）</span></div>
+        <div class="sl" onclick="pickCmd('/skills')"><span class="c">/skills</span><span class="d">技能库（SKILL.md 清单与调用）</span></div>
       </div>
       <div class="cmp-row">
         <button class="cbtn" title="上传附件（真实落盘）" onclick="$('fileInput').click()"><svg viewBox="0 0 24 24"><path d="M21 12l-8.5 8.5a5.5 5.5 0 01-7.8-7.8L13 4.4a3.7 3.7 0 015.2 5.2l-8.2 8.2a1.85 1.85 0 01-2.6-2.6L15 7.6"/></svg></button>
@@ -535,6 +537,24 @@ plan_sha256: 7ac1…9f · objects: 22</pre>
     <label class="fl">API Key <span class="fk" id="setKeyState"></span><input id="setKey" type="password" class="fin" placeholder="（留空则不修改）" autocomplete="off"></label>
     <div class="sp-t" style="margin-top:10px">管道角色 Provider Keys</div>
     <div id="provKeys"><div style="font-size:11px;color:var(--ink3)">加载中…</div></div>
+    <div class="sp-t" style="margin-top:10px">Agent 能力面</div>
+    <label class="fl">工具集预设（能力过滤：清单可见面 + invoke 调用门）
+      <select id="setToolset" class="fin">
+        <option value="full">full · 全部能力</option>
+        <option value="modeling">modeling · solver + cad_host</option>
+        <option value="minimal">minimal · 仅 solver（不触宿主写盘）</option>
+      </select>
+    </label>
+    <div class="sp-t" style="margin-top:10px">长期记忆（跨会话 · 写入需确认）</div>
+    <div id="memList" style="max-height:120px;overflow-y:auto;font:10.5px var(--mono);color:var(--ink2);background:var(--bg2);border:1px solid var(--line);border-radius:6px;padding:6px 8px">加载中…</div>
+    <div class="row" style="margin-top:6px">
+      <select id="memFile" class="fin" style="width:110px;flex:none">
+        <option value="memory">MEMORY</option>
+        <option value="user">USER</option>
+      </select>
+      <input id="memEntry" class="fin" style="flex:1" placeholder="新记忆条目（写入即持久化，需确认）">
+      <button class="m-no" onclick="recordMemory()">写入</button>
+    </div>
     <div class="row">
       <button class="m-no" onclick="$('setMask').classList.remove('show')">关闭</button>
       <button class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground" style="flex:1" onclick="saveSettings()">保存设置</button>
@@ -1083,11 +1103,14 @@ async function loadRuntimeInfo(){
       `<div class="pds">${caps.length} 能力：<span class="mono" style="color:var(--acc)">${caps.map(_esc).join(' · ')}</span></div></div>`).join('')+
       (policies.length?`<div class="plg"><div class="pid">capability_policies <span style="color:var(--amb);font-size:9.5px">${policies.length} 条策略</span></div><div class="pds mono" style="font-size:10px">${policies.map(p=>_esc(JSON.stringify(p)).slice(0,120)).join('<br>')}</div></div>`:'');
   }
-  /* 宿主状态实探（🟡 审核修复：不再永远绿灯） */
+  /* 宿主状态实探（🟡 审核修复：不再永远绿灯；P0-3 supervisor 状态机 + 有界重启） */
   const hs=await _get('/api/v1/hosts');
   if(hs&&hs.hosts){
     $('hostChips').innerHTML=hs.hosts.map(h=>
-      `<div class="host"><span class="dot ${h.connected===true?'g':''}" ${h.connected!==true?'style="background:var(--ink3)"':''}></span>${_esc(h.label)}</div>`).join('');
+      `<div class="host"><span class="dot ${h.connected===true?'g':''}" ${h.connected!==true?'style="background:var(--ink3)"':''}></span>${_esc(h.label)}`+
+      (h.state==='restarting'?` <span style="color:var(--amb);font-size:10px">restarting…</span>`:'')+
+      (h.id==='blender'&&h.state==='down'&&h.restartable?` <a href="javascript:restartHost('blender')" style="color:var(--acc);font-size:10px">重启</a>`:'')+
+      `</div>`).join('');
   }
   applyRealIR(await _get('/api/v1/demo/municipal-pipeline'));
   loadUploads();
@@ -1116,6 +1139,26 @@ async function loadSettings(){
   $('provKeys').innerHTML=d.provider_keys.map(p=>
     `<label class="fl">${p.env} <span class="fk" style="color:${p.key_set?'var(--grn)':'var(--ink3)'}">${p.key_set?'●已配置':'○未设置'}</span>`+
     `<input type="password" class="fin" data-env="${p.env}" placeholder="（留空不修改）" autocomplete="off"></label>`).join('');
+  const ts=await _get('/api/v1/toolset');
+  if(ts&&ts.current)$('setToolset').value=ts.current;
+  loadMemory();
+}
+/* ---------- 长期记忆（P0-4：读取免费；写入走 prompt 策略门 confirm 语义） ---------- */
+async function loadMemory(){
+  const d=await _get('/api/v1/memory');if(!d)return;
+  const rows=[...d.memory.map(l=>['M',l]),...d.user.map(l=>['U',l])];
+  $('memList').innerHTML=rows.length?rows.map(([k,l])=>`<div><span style="color:${k==='M'?'var(--acc)':'var(--amb)'}">[${k}]</span> ${_esc(l)}</div>`).join('')
+    :'<div style="color:var(--ink3)">暂无长期记忆（写入需逐条确认，文件存 memory/）</div>';
+}
+async function recordMemory(){
+  const entry=$('memEntry').value.trim();if(!entry){toast('记忆条目不能为空');return;}
+  if(!confirm(`确认写入长期记忆（跨会话持久化）？\n\n${entry}`))return;
+  try{
+    const r=await fetch('/api/v1/memory/record',{method:'POST',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({entry,file:$('memFile').value,confirm:true})});
+    const d=await r.json();
+    if(r.ok&&d.status==='success'){$('memEntry').value='';toast('记忆已写入（'+d.recorded.file+'）');loadMemory();}
+    else toast('写入被拒：'+(d.error||r.status));
+  }catch(e){toast('写入失败：'+e);}
 }
 async function saveSettings(){
   const body={model:$('setModel').value.trim(),base_url:$('setBase').value.trim()};
@@ -1127,7 +1170,10 @@ async function saveSettings(){
     const r=await fetch('/api/v1/settings/llm',{method:'PUT',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify(body)});
     const d=await r.json();
     if(r.ok&&d.status==='success'){
-      toast('设置已保存（llm_baseline.local.toml · key 已入环境/.env）');
+      const ts=$('setToolset').value;
+      const tr=await fetch('/api/v1/toolset',{method:'PUT',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({name:ts})});
+      const td=await tr.json().catch(()=>({}));
+      toast(tr.ok?'设置已保存（llm_baseline.local.toml · 工具集='+ts+'）':'LLM 已保存，工具集切换失败：'+(td.error||tr.status));
       $('setMask').classList.remove('show');
       loadRuntimeInfo();
     }else toast('保存失败：'+(d.error||r.status));
@@ -1272,6 +1318,7 @@ async function loadArchive(){
 /* ---------- Composer：普通文本 → 真实调度自愈求解器并追加回合 ---------- */
 async function sendMsg(){
   const v=ta.value.trim();if(!v)return;ta.value='';slash.classList.remove('show');
+  if(v.startsWith('/recall')){doRecall(v.slice(7).trim());return;}
   const sc=$('thScroll');
   sc.insertAdjacentHTML('beforeend',`<div class="msg-you"></div>`+
     `<div class="tool"><div class="tool-h" onclick="toggleTool(this)"><span class="ic solver">Σ</span><span class="nm">solver:self_healing</span>`+
@@ -1297,6 +1344,91 @@ async function sendMsg(){
     $('dynSt').className='st bad';$('dynSt').textContent='✗ '+e.message;
   }
 }
+
+/* ---------- 斜杠命令补全：/recall（FTS5 检索）与 /skills（技能库） ---------- */
+function pickCmd(c){slash.classList.remove('show');ta.value='';
+  if(c==='/rules')openInspector('rules');
+  else if(c==='/ir')openInspector('ir');
+  else if(c==='/export')askConfirm();
+  else if(c==='/solve'){ta.value='重新调度自愈求解器';sendMsg();}
+  else if(c==='/recall'){ta.value='/recall ';ta.focus();toast('输入 /recall 关键词 检索历史会话（FTS5）');}
+  else if(c==='/skills'){listSkills();}
+}
+async function doRecall(q){
+  const sc=$('thScroll');
+  if(!q){toast('用法：/recall 关键词');return;}
+  sc.insertAdjacentHTML('beforeend','<div class="msg-you"></div>');
+  const msgs=sc.querySelectorAll('.msg-you');msgs[msgs.length-1].textContent='/recall '+q;
+  const d=await _get('/api/v1/sessions/search?q='+encodeURIComponent(q)+'&limit=8');
+  const hits=(d&&d.items)||[];
+  sc.insertAdjacentHTML('beforeend',
+    `<div class="agentline">会话全文检索「${_esc(q)}」：<b>${hits.length}</b> 条命中（FTS5 · 可溯源）</div>`+
+    hits.map(h=>`<div class="tool"><div class="tool-b">`+
+      `<div><span class="k">session</span> <code>${h.session_id.slice(0,8)}</code> · ${(h.ts||'').slice(0,16).replace('T',' ')} · ${_esc(h.type||'')}</div>`+
+      `<div style="margin:3px 0">${_esc(h.snippet||'')}</div>`+
+      `<div><a href="javascript:loadSessionEvents('${h.session_id}')" style="color:var(--acc)">打开会话 →</a></div>`+
+    `</div></div>`).join(''));
+  sc.scrollTop=sc.scrollHeight;
+}
+async function listSkills(){
+  const d=await _get('/api/v1/skills');if(!d)return;
+  threadMode('conv');
+  const sc=$('thScroll');
+  sc.insertAdjacentHTML('beforeend',
+    `<div class="agentline">技能库（SKILL.md · 渐进披露）：<b>${d.skills.length}</b> 个已生效 · <b>${d.candidates.length}</b> 个待批准候选</div>`+
+    d.skills.map(s=>`<div class="tool"><div class="tool-h" onclick="toggleTool(this)"><span class="ic skill">✦</span><span class="nm">${_esc(s.name)}</span>`+
+      `<span class="st ok">${_esc(s.source)}</span><span class="car">▾</span></div>`+
+      `<div class="tool-b"><div>${_esc(s.description)}${s.when_to_use?`<div><span class="k">适用</span> ${_esc(s.when_to_use)}</div>`:''}</div>`+
+      `<div style="margin-top:5px"><button class="chip" onclick="invokeSkill('${_esc(s.name)}')">调用（披露正文）</button></div></div></div>`).join('')+
+    (d.candidates.length?`<div class="agentline" style="color:var(--amb)">自蒸馏候选（fail-closed：须人工批准才生效）</div>`+
+      d.candidates.map(c=>`<div class="tool"><div class="tool-b"><div><code>${_esc(c)}</code></div>`+
+        `<div style="margin-top:5px"><button class="chip" onclick="approveSkill('${_esc(c)}')">批准转正</button></div></div></div>`).join(''):''));
+  sc.scrollTop=sc.scrollHeight;
+}
+async function invokeSkill(name){
+  try{
+    const r=await fetch('/api/v1/skills/invoke',{method:'POST',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({name})});
+    const d=await r.json();
+    if(!r.ok||d.status!=='success'){toast('调用失败：'+(d.error||r.status));return;}
+    const sc=$('thScroll');
+    sc.insertAdjacentHTML('beforeend',`<div class="tool"><div class="tool-h" onclick="toggleTool(this)"><span class="ic skill">✦</span><span class="nm">skill:${_esc(name)}</span>`+
+      `<span class="st ok">已披露正文</span><span class="car">▾</span></div>`+
+      `<div class="tool-b"><pre style="white-space:pre-wrap;font:11px var(--mono);color:var(--ink2)">${_esc(d.skill.body)}</pre></div></div>`);
+    sc.scrollTop=sc.scrollHeight;
+  }catch(e){toast('调用失败：'+e);}
+}
+async function approveSkill(file){
+  try{
+    const r=await fetch('/api/v1/skills/candidates/approve',{method:'POST',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({file})});
+    const d=await r.json();
+    if(r.ok&&d.status==='success'){toast('候选已转正：'+d.approved);listSkills();}
+    else toast('批准失败：'+(d.error||r.status));
+  }catch(e){toast('批准失败：'+e);}
+}
+/* ---------- 宿主有界重启（P0-3 supervisor） ---------- */
+async function restartHost(id){
+  try{
+    const r=await fetch(`/api/v1/hosts/${id}/restart`,{method:'POST',headers:_H({'X-Request-ID':_rid()})});
+    const d=await r.json();
+    if(r.ok&&d.status==='success')toast('已发起重启：'+d.host.id+'（退避拉起中，稍后自动刷新状态）');
+    else toast('重启被拒：'+(d.error||r.status));
+  }catch(e){toast('重启失败：'+e);}
+  setTimeout(async()=>{  /* 退避窗口后刷新宿主状态 */
+    const hs=await _get('/api/v1/hosts');
+    if(hs&&hs.hosts){
+      $('hostChips').innerHTML=hs.hosts.map(h=>
+        `<div class="host"><span class="dot ${h.connected===true?'g':''}" ${h.connected!==true?'style="background:var(--ink3)"':''}></span>${_esc(h.label)}`+
+        (h.state==='restarting'?` <span style="color:var(--amb);font-size:10px">restarting…</span>`:'')+
+        (h.id==='blender'&&h.state==='down'&&h.restartable?` <a href="javascript:restartHost('blender')" style="color:var(--acc);font-size:10px">重启</a>`:'')+
+        `</div>`).join('');
+    }
+  },4000);
+}
+/* 深链直达（审核/演示）：#skills 打开技能库；#recall=关键词 触发 FTS5 检索（延迟执行，避免被首轮会话渲染覆盖） */
+setTimeout(()=>{
+  if(location.hash.includes('skills'))listSkills();
+  const _rc=location.hash.match(/recall=([^&]+)/);if(_rc)doRecall(decodeURIComponent(_rc[1]));
+},900);
 </script>
 
 </body>

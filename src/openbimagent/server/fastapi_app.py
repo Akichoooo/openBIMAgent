@@ -95,6 +95,11 @@ def build_m2_readonly_app(
     )
     if sessions_dir is not None:
         add_sse_endpoint(app, sessions_dir=sessions_dir, budget=sse_budget)
+    # P1-1：挂载 env 配置的第三方 MCP server（mcp:* 能力，默认 prompt 策略门）
+    from openbimagent.core.plugin import default_plugin_registry
+    from openbimagent.mcp_clients.external import attach_external_servers_from_env
+
+    attach_external_servers_from_env(default_plugin_registry)
     from openbimagent.server.auth import load_or_create_token
 
     workbench_token = load_or_create_token()
@@ -133,11 +138,15 @@ def build_m2_readonly_app(
             },
         )
 
-    @app.get("/api/v1/plugins", summary="获取已加载插件清单与 Profile 列表", tags=["Plugins"])
+    @app.get("/api/v1/plugins", summary="获取已加载插件清单与 Profile 列表（按当前工具集预设过滤可见面）", tags=["Plugins"])
     async def get_plugins_inventory() -> dict:
         from openbimagent.core.plugin import default_plugin_registry
+        from openbimagent.core.toolset import current_toolset, filter_capabilities
 
-        return default_plugin_registry.export_inventory()
+        inventory = default_plugin_registry.export_inventory()
+        inventory["capabilities_map"] = filter_capabilities(inventory["capabilities_map"])
+        inventory["toolset"] = current_toolset()
+        return inventory
 
     @app.get("/api/v1/ui/slots", summary="获取声明式 UI 插槽注册表", tags=["Plugins"])
     async def get_ui_slots() -> dict:
@@ -159,6 +168,17 @@ def build_m2_readonly_app(
             )
         payload = body.get("payload", {})
         confirm = bool(body.get("confirm", False))
+        from openbimagent.core.toolset import current_toolset, is_allowed
+
+        if not is_allowed(capability):
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "status": "error",
+                    "capability": capability,
+                    "error": f"能力被当前工具集预设 {current_toolset()} 过滤（/api/v1/toolset 可切换）",
+                },
+            )
         if not invoke_guard.try_acquire():
             return JSONResponse(
                 status_code=INVOKE_OVERLOADED_STATUS_CODE,
@@ -257,6 +277,15 @@ def build_m2_readonly_app(
             }
             for it in res.iteration_history
         ]
+        # P1-2 hooks：一轮"指令→求解"回合结束（观测型）
+        from openbimagent.core.hooks import default_hook_bus
+
+        default_hook_bus().emit(
+            "turn_end",
+            endpoint="demo/municipal-pipeline",
+            converged=res.converged,
+            iterations=res.iterations_spent,
+        )
         return {
             "status": "success",
             "converged": res.converged,

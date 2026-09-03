@@ -1,4 +1,4 @@
-# openBIMAgent UI（方案 J 已集成上线 · 功能打通 · 2026-09-02）
+# openBIMAgent UI（方案 J 已集成上线 · 功能打通 · 2026-09-03 Agent Core 增强）
 
 **终版 = `prototype-j-franken.html`（方案 J），已迁入 `src/openbimagent/server/web_ui.py`，全部功能接真实端点（非演示）。**
 
@@ -22,10 +22,15 @@
 | **HITL 导出** | `POST /api/v1/demo/export-blender` | 批准 → `{confirm:true}` 走 prompt 策略门 → 真实回执（objects/bytes/elapsed/output_path/plan_sha256） |
 | **3D 视口** | `GET /api/v1/demo/municipal-pipeline` | 真实 nodes/segments 驱动 canvas 渲染器，动态取景；自愈时间线回放；3D/平面/纵断面三视图 |
 | 规则树 / 模型芯片 / 会话 | `demo/rule-tree` · `demo/runtime-info` · `sessions` | 真实数据填充 |
+| **技能库（P0-1）** | `GET /api/v1/skills` · `POST /skills/invoke` · `POST /skills/candidates/approve` | 斜杠 `/skills` 或 `#skills` 深链：SKILL.md 目录（渐进披露，调用才给正文）；自蒸馏候选列表 + 人工批准转正 |
+| **会话全文检索（P0-2）** | `GET /api/v1/sessions/search` | 斜杠 `/recall 关键词` 或 `#recall=词` 深链：FTS5 + CJK bigram，命中卡可溯源跳会话 |
+| **宿主 Supervisor（P0-3）** | `GET /api/v1/hosts` · `POST /hosts/{id}/restart` | 侧栏宿主芯片真实状态（up/down/restarting/external）；Blender down 且配置 exe/cmd 时显示「重启」（有界退避）；VW 恒 external 不伪探测 |
+| **工具集预设（P0-3）** | `GET/PUT /api/v1/toolset` | 设置弹层切换 minimal（仅 solver）/modeling/full；清单可见面 + invoke 调用门双层过滤 |
+| **长期记忆（P0-4）** | `GET /api/v1/memory` · `POST /memory/record` | 设置弹层查看 MEMORY/USER 末 N 条；写入弹确认（prompt 策略门 confirm 语义），片段注入新任务上下文 |
 
-端点实现：`src/openbimagent/server/workbench_io.py`（设置/上传）、`src/openbimagent/server/runs.py`（运行/事件）、`src/openbimagent/server/approvals.py`（审批中心）；测试：`tests/test_workbench_io.py`（5 测）+ `tests/test_runs.py`（4 测）+ `tests/test_approvals.py`（3 测，真跑 single_asset_hero 走 deliver 审批门），均 tmp 隔离不碰真实配置。
+端点实现：`src/openbimagent/server/workbench_io.py`（设置/上传/宿主/工具集/记忆/技能）、`src/openbimagent/server/runs.py`（运行/事件/检索/归档）、`src/openbimagent/server/approvals.py`（审批中心）；测试：`tests/test_workbench_io.py` + `tests/test_runs.py` + `tests/test_approvals.py` + `tests/test_skills.py` + `tests/test_session_search.py` + `tests/test_host_supervisor.py` + `tests/test_memory.py`，均 tmp 隔离不碰真实配置。
 
-> 已知边界：municipal_utility 离线运行在 domain_gate 停（UNKNOWN：solver 证据键缺）——CLI 市政主线需 `utility_solver_input` 入参，Web 运行待补；single_asset_hero 可完整走通审批流。
+> 已知边界：municipal_utility 已补 pack 内默认入参 `solver_input.default.json`，Web 运行可越过 domain_gate 抵达 deliver 审批门。
 
 > 端口注意：若 8000 被本机其他程序占用（Windows Hyper-V 保留段常见），换 `--port 8001`。
 
@@ -45,8 +50,8 @@
 
 ## 二次修改 UI 的流程
 
-1. 改 `ui/prototype-j-franken.html`（布局/组件/渲染器/功能区块）
-2. 跑 `python scratch/build_web_ui.py`：自动替换 vendor 路径、注入集成接线脚本、重写 `web_ui.py`、同步测试断言
+1. 改 `ui/prototype-j-franken.html`（布局/组件/渲染器/功能区块）与 `tools/build_web_ui.py` 中的 BOOTSTRAP 接线脚本
+2. 跑 `python tools/build_web_ui.py`：自动替换 vendor 路径、注入集成接线脚本、重写 `web_ui.py`、同步测试断言
 3. `uv run pytest tests/test_m2_fastapi.py tests/test_workbench_io.py -q` + 起服目检
 
 业务接口背景见 `API_INVENTORY.md`。

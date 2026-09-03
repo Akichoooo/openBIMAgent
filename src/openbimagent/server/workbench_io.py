@@ -187,23 +187,124 @@ def add_workbench_io(app: FastAPI) -> None:
         except (json.JSONDecodeError, OSError):
             return {"status": "success", "usage": None}
 
-    @app.get("/api/v1/hosts", summary="CAD 宿主连接状态（Blender TCP 实探；VW 外部 runner 未探测如实标注）", tags=["Workbench"])
-    async def hosts_status() -> dict:
-        import socket
+    @app.get("/api/v1/skills", summary="技能目录（渐进披露：仅 name/description 元数据 + 候选区 + 拒载清单）", tags=["Workbench"])
+    async def list_skills() -> dict:
+        from openbimagent.skills.registry import candidates_dir, default_skill_registry
 
-        blender_ok = False
-        try:
-            with socket.create_connection(("127.0.0.1", 9876), timeout=0.4):
-                blender_ok = True
-        except OSError:
-            blender_ok = False
+        registry = default_skill_registry()
+        candidates = sorted(p.name for p in candidates_dir().glob("*.md")) if candidates_dir().is_dir() else []
         return {
             "status": "success",
-            "hosts": [
-                {"id": "blender", "label": "Blender MCP · 127.0.0.1:9876", "connected": blender_ok},
-                {"id": "vectorworks", "label": "Vectorworks IPC（外部 runner，未探测）", "connected": None},
-            ],
+            "skills": registry.catalog(),
+            "candidates": candidates,
+            "rejected": registry.rejected,
         }
+
+    @app.post("/api/v1/skills/invoke", summary="调用技能（返回完整正文；渐进披露的付费点）", tags=["Workbench"])
+    async def invoke_skill(request: dict[str, Any]) -> JSONResponse:
+        from openbimagent.skills.registry import default_skill_registry
+
+        name = str(request.get("name", "")).strip()
+        skill = default_skill_registry().get(name)
+        if skill is None:
+            return JSONResponse(status_code=404, content={"status": "error", "error": f"技能不存在: {name}"})
+        return JSONResponse(content={"status": "success", "skill": {**skill.catalog_row(), "body": skill.body}})
+
+    @app.post("/api/v1/skills/candidates/approve", summary="批准自蒸馏候选转正（fail-closed：人工门）", tags=["Workbench"])
+    async def approve_candidate(request: dict[str, Any]) -> JSONResponse:
+        from openbimagent.skills.registry import builtin_skills_root, candidates_dir, load_skill, reload_skills
+
+        filename = str(request.get("file", "")).strip()
+        if not re.fullmatch(r"[\w.\-一-鿿]+\.md", filename):
+            return JSONResponse(status_code=400, content={"status": "error", "error": "候选文件名非法"})
+        src = candidates_dir() / filename
+        if not src.is_file():
+            return JSONResponse(status_code=404, content={"status": "error", "error": f"候选不存在: {filename}"})
+        try:
+            skill = load_skill(src, source="distilled")
+        except ValueError as exc:
+            return JSONResponse(status_code=422, content={"status": "error", "error": f"候选校验失败（不予转正）: {exc}"})
+        dest_dir = builtin_skills_root() / skill.name
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        (dest_dir / "SKILL.md").write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+        src.unlink()
+        reload_skills()
+        return JSONResponse(content={"status": "success", "approved": skill.name})
+
+    @app.get("/api/v1/hosts", summary="CAD 宿主状态（HostSupervisor：up/down/restarting/external；VW 恒 external 不伪探测）", tags=["Workbench"])
+    async def hosts_status() -> dict:
+        from openbimagent.mcp_clients.supervisor import STATE_EXTERNAL, STATE_UP, default_host_supervisor
+
+        hosts = []
+        for h in default_host_supervisor().status():
+            hosts.append(
+                {
+                    **h,
+                    # 前端兼容字段：up→True；external（不探测）→None；其余→False
+                    "connected": True if h["state"] == STATE_UP else (None if h["state"] == STATE_EXTERNAL else False),
+                }
+            )
+        return {"status": "success", "hosts": hosts}
+
+    @app.post("/api/v1/hosts/{host_id}/restart", summary="有界退避重启宿主（仅 Blender 且配置 exe；超限/未配置/VW 如实拒绝）", tags=["Workbench"])
+    async def host_restart(host_id: str) -> JSONResponse:
+        from openbimagent.mcp_clients.supervisor import default_host_supervisor
+
+        try:
+            state = default_host_supervisor().restart(host_id)
+        except KeyError as exc:
+            return JSONResponse(status_code=404, content={"status": "error", "error": str(exc)})
+        except ValueError as exc:
+            return JSONResponse(status_code=400, content={"status": "error", "error": str(exc)})
+        return JSONResponse(content={"status": "success", "host": state.to_dict()})
+
+    @app.get("/api/v1/toolset", summary="当前工具集预设与可选项（能力面收敛）", tags=["Workbench"])
+    async def get_toolset() -> dict:
+        from openbimagent.core.toolset import TOOLSET_PRESETS, current_toolset
+
+        return {
+            "status": "success",
+            "current": current_toolset(),
+            "presets": {k: (list(v) if v else ["*"]) for k, v in TOOLSET_PRESETS.items()},
+        }
+
+    @app.put("/api/v1/toolset", summary="切换工具集预设（minimal/modeling/full；未知名 fail-closed 400）", tags=["Workbench"])
+    async def put_toolset(request: dict[str, Any]) -> JSONResponse:
+        from openbimagent.core.toolset import set_toolset
+
+        name = str(request.get("name", "")).strip()
+        try:
+            set_toolset(name)
+        except ValueError as exc:
+            return JSONResponse(status_code=400, content={"status": "error", "error": str(exc)})
+        return JSONResponse(content={"status": "success", "current": name})
+
+    @app.get("/api/v1/memory", summary="读取长期记忆（MEMORY.md/USER.md 末 N 条；读取免费）", tags=["Workbench"])
+    async def get_memory(n: int = 20) -> dict:
+        from openbimagent.core.memory import default_memory_store
+
+        store = default_memory_store()
+        return {
+            "status": "success",
+            "memory": store.tail("memory", n),
+            "user": store.tail("user", n),
+            "root": str(store.root),
+        }
+
+    @app.post("/api/v1/memory/record", summary="写入长期记忆（prompt 策略门：confirm=true 人工确认语义）", tags=["Workbench"])
+    async def record_memory(request: dict[str, Any]) -> JSONResponse:
+        from openbimagent.core.plugin import PluginPolicyPromptRequiredError, default_plugin_registry
+
+        entry = str(request.get("entry", "")).strip()
+        file_key = str(request.get("file", "memory")).strip()
+        confirm = bool(request.get("confirm", False))
+        try:
+            result = default_plugin_registry.invoke("memory:record", file=file_key, entry=entry, confirm=confirm)
+        except PluginPolicyPromptRequiredError as exc:
+            return JSONResponse(status_code=409, content={"status": "error", "error": str(exc), "need_confirm": True})
+        except ValueError as exc:
+            return JSONResponse(status_code=400, content={"status": "error", "error": str(exc)})
+        return JSONResponse(content={"status": "success", "recorded": result})
 
     @app.post("/api/v1/uploads", summary="上传附件（原始字节流；sha256 manifest 落盘）", tags=["Workbench"])
     async def upload_file(request: Request) -> JSONResponse:
