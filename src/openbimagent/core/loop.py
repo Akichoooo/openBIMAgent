@@ -36,6 +36,19 @@ MAX_TOOLS = 8
 MAX_SYSTEM_PROMPT_TOKENS = 2000
 """system prompt + 工具定义预算上限(COMPONENTS §2.1/§5)。"""
 
+# ---------- 上下文预算与压缩(COMPONENTS §5;对齐 Codex auto-compaction / pi 滑窗纪律) ----------
+CONTEXT_BUDGET_RATIO = 0.6
+"""估算 token 超过 context_window × 此比例即触发压缩(留足生成与工具结果空间)。"""
+
+CONTEXT_HARD_CAP_RATIO = 0.92
+"""压缩后仍超此硬上限 → 从旧到新丢弃非锚点消息(保底不爆窗)。"""
+
+COMPACT_KEEP_RECENT = 12
+"""压缩时保留的最近消息数(近期工作记忆不丢;更早的进摘要)。"""
+
+DEFAULT_CONTEXT_WINDOW = 131_072
+"""models.toml 未声明 context_window 时的兜底窗口。"""
+
 DEFAULT_SYSTEM_PROMPT = (
     "你是 openBIMAgent 的 orchestrator:用提供的工具完成用户的建模任务。"
     "读文件用 read,写/改用 write/edit,跑命令用 bash;完成后直接用文字总结,不要再调工具。"
@@ -311,10 +324,104 @@ class AgentLoop:
 
     # ---------- 主循环 ----------
 
+    # ----- 上下文预算与压缩(COMPONENTS §5) -----
+
+    def _estimate_tokens(self, messages: list[dict[str, Any]] | None = None) -> int:
+        """粗估消息 token(字符数/4 + 每条 4 开销;与挂载检查同口径,不引 tokenizer 依赖)。"""
+        msgs = messages if messages is not None else self.messages
+        total = 0
+        for msg in msgs:
+            content = msg.get("content") or ""
+            if not isinstance(content, str):
+                content = json.dumps(content, ensure_ascii=False)
+            total += len(content) // 4 + 4
+        return total
+
+    def _context_window(self) -> int:
+        """当前角色的 context_window(models.toml);registry 不可用/未声明时兜底。"""
+        try:
+            from openbimagent.providers.registry import get_default_registry
+
+            window = get_default_registry().model_for_role(self.role).context_window
+            return int(window) if window else DEFAULT_CONTEXT_WINDOW
+        except Exception:  # noqa: BLE001 — 离线/无 registry 一律走兜底窗口
+            return DEFAULT_CONTEXT_WINDOW
+
+    def _maybe_compact(self) -> None:
+        """超预算即压缩:保留 system + 首条任务锚点 + 最近 N 条,中段摘要化(失败回退确定性骨架)。
+
+        纪律(与 Codex auto-compaction 对齐):压缩动作与摘要哈希写 session 树可审计;
+        原文不删(session JSONL 全量留痕),仅上下文内回放被替换。
+        """
+        window = self._context_window()
+        if self._estimate_tokens() <= int(window * CONTEXT_BUDGET_RATIO):
+            return
+        anchor = self.messages[:2]  # system + 首条 user(任务锚点,永不压)
+        tail = self.messages[-COMPACT_KEEP_RECENT:] if len(self.messages) > COMPACT_KEEP_RECENT else []
+        middle_end = len(self.messages) - len(tail) if tail else len(self.messages)
+        middle = self.messages[2:middle_end]
+        if not middle:
+            return
+        digest = self._summarize_middle(middle)
+        digest_sha = hashlib.sha256(digest.encode()).hexdigest()
+        marker = (
+            f"[context-compaction] 已压缩 {len(middle)} 条早期消息为摘要"
+            f"(digest_sha256={digest_sha[:12]}…;原文留 session 树不回放)"
+        )
+        self.messages = [
+            *anchor,
+            {"role": "assistant", "content": marker},
+            {"role": "user", "content": f"[早期上下文摘要]\n{digest}"},
+            *tail,
+        ]
+        # 硬上限保底:仍超则从旧到新丢(tail 内最旧优先)
+        hard_cap = int(window * CONTEXT_HARD_CAP_RATIO)
+        while self._estimate_tokens() > hard_cap and len(self.messages) > len(anchor) + 2:
+            del self.messages[len(anchor) + 2]
+        self.session.append_new(
+            EventType.MESSAGE,
+            {"role": "assistant", "content": marker, "compacted_messages": len(middle), "digest_sha256": digest_sha},
+        )
+
+    def _summarize_middle(self, middle: list[dict[str, Any]]) -> str:
+        """中段消息摘要:先构造确定性骨架(必带),registry 可用则请轻量角色凝练,失败回退骨架。"""
+        lines: list[str] = []
+        for msg in middle:
+            role = msg.get("role", "?")
+            content = msg.get("content") or ""
+            if not isinstance(content, str):
+                content = json.dumps(content, ensure_ascii=False)
+            head = " ".join(content.split())[:160]
+            tool_names = ""
+            if msg.get("tool_calls"):
+                tool_names = " [tools: " + ",".join(tc.get("function", {}).get("name", "?") for tc in msg["tool_calls"]) + "]"
+            lines.append(f"- {role}{tool_names}: {head}")
+        skeleton = f"共 {len(middle)} 条早期消息;骨架:\n" + "\n".join(lines[:40])
+        try:
+            resp = self.chat_fn(
+                role="clarify",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "你是上下文压缩器。把早期对话骨架凝练为不超过 400 字的决策性摘要:"
+                        "保留任务目标、已做决策、关键工具结论、未完成事项;不编造、不评注。",
+                    },
+                    {"role": "user", "content": skeleton},
+                ],
+                tools=None,
+                cancel_event=None,
+            )
+            text, _, _ = _normalize_response(resp)
+            if text.strip():
+                return text.strip()
+        except Exception:  # noqa: BLE001 — 离线/无 key/摘要失败一律回退确定性骨架
+            pass
+        return skeleton[:1600]
+
     def run(self, user_input: str, *, cancel_event: threading.Event | None = None) -> str:
         """执行一轮任务,返回最终助手文本;全程事件写 session 树。
 
-        TODO: 接入 context 预算与 compaction 子代理(COMPONENTS §5)。
+        每次模型调用前经 ``_maybe_compact`` 执行上下文预算检查(COMPONENTS §5)。
         """
         self.session.append_new(EventType.MESSAGE, {"role": "user", "content": user_input})
         self.messages.append({"role": "user", "content": user_input})
@@ -332,6 +439,7 @@ class AgentLoop:
                         {"role": "user", "content": steer_message, "steer": True},
                     )
                     self.messages.append({"role": "user", "content": steer_message})
+            self._maybe_compact()
             resp = self.chat_fn(
                 role=self.role,
                 messages=self.messages,
