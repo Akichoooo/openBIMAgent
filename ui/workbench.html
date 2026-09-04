@@ -1,25 +1,4 @@
-"""M2 P6 Web Console: openBIMAgent 数字化工程工作台（方案 J 集成版 · 功能打通）。
-
-布局：Codex 风格 × 3D 视口英雄区（ui/workbench.html 为唯一权威 UI 源，tools/build_web_ui.py 构建）。
-- 组件栈：Franken UI 2.1.2 shadcn zinc token 皮肤 + Motion 动效
-- 库文件 vendor 到 server/static/vendor/（MIT 许可），经 /static 挂载，完全离线可用
-- 页尾集成态接线脚本消费真实端点（运行/会话/设置/上传/调度/导出全部功能打通）：
-  runs（POST/GET active）、sessions + sessions/{id}/events、demo/municipal-pipeline、
-  demo/rule-tree、demo/runtime-info、plugins、plugins/invoke、demo/export-blender、
-  settings/llm（GET/PUT）、settings/models、uploads（GET/POST/DELETE）、skills、memory
-"""
-
-from __future__ import annotations
-
-from pathlib import Path
-
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
-
-_STATIC_DIR = Path(__file__).resolve().parent / "static"
-
-PAGE = r"""<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh" class="dark uk-theme-zinc">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -3247,18 +3226,3 @@ setTimeout(()=>{
 
 </body>
 </html>
-"""
-
-
-def add_web_ui(app: FastAPI, token: str | None = None) -> None:
-    """挂载 /static 静态资源（vendor 组件库）并注册 / 工作台页面。
-
-    token 注入所伺服页面（window.__WB_TOKEN），前端变更请求据此携带 Bearer
-    （对齐 server/auth.py 守卫；token 不出现在任何 API 响应体中）。
-    """
-    if _STATIC_DIR.is_dir():
-        app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="web-ui-static")
-
-    @app.get("/", include_in_schema=False)
-    async def _web_ui(request: Request) -> HTMLResponse:
-        return HTMLResponse(content=PAGE.replace("__WB_TOKEN__", token or ""), status_code=200)

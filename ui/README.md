@@ -1,6 +1,8 @@
-# openBIMAgent UI（方案 J 已集成上线 · 功能打通 · 2026-09-03 Agent Core 增强 + 布局收敛）
+# openBIMAgent UI（唯一权威源 = `ui/workbench.html` · 2026-09-04 起）
 
-**终版 = `prototype-j-franken.html`（方案 J），已迁入 `src/openbimagent/server/web_ui.py`，全部功能接真实端点（非演示）。**
+**终版 = `ui/workbench.html`，经 `python tools/build_web_ui.py` 生成 `src/openbimagent/server/web_ui.py`。**
+
+纪律（并行漂移教训）：UI 只改 `ui/workbench.html` 再重建；**禁止直改 web_ui.py**（生成物）；`prototype-j-franken.html` 等 A–L 原型仅为历史留档，不再是构建源。
 
 启动：`uv run uvicorn openbimagent.server.fastapi_app:app --host 127.0.0.1 --port 8000` → 打开 http://127.0.0.1:8000/
 
@@ -57,8 +59,8 @@
 
 ## 二次修改 UI 的流程
 
-1. 改 `ui/prototype-j-franken.html`（布局/组件/渲染器/功能区块）与 `tools/build_web_ui.py` 中的 BOOTSTRAP 接线脚本
-2. 跑 `python tools/build_web_ui.py`：自动替换 vendor 路径、注入集成接线脚本、重写 `web_ui.py`、同步测试断言
+1. 改 `ui/workbench.html`（布局/组件/渲染器/接线脚本全部在这一个文件里）
+2. 跑 `python tools/build_web_ui.py` 重建 `web_ui.py`
 3. `uv run pytest tests/test_m2_fastapi.py tests/test_workbench_io.py -q` + 起服目检
 
 业务接口背景见 `API_INVENTORY.md`。

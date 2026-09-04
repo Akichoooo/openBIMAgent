@@ -74,6 +74,34 @@ class MemoryStore:
             return []
         return lines[-max(1, n) :]
 
+    def read_entries(self, file_key: str, limit: int = 100) -> list[dict[str, Any]]:
+        """带物理行号的条目清单（删除操作的寻址基础；末 limit 条）。"""
+        path = self._path(file_key)
+        if not path.is_file():
+            return []
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+        entries = [{"line": i + 1, "text": ln} for i, ln in enumerate(lines) if ln.strip()]
+        return entries[-max(1, limit) :]
+
+    def delete_line(self, file_key: str, line_no: int) -> bool:
+        """按物理行号删除一条记忆（只删目标行，其余原样保留）；行号不存在返回 False。"""
+        path = self._path(file_key)
+        if not path.is_file():
+            return False
+        with self._lock:
+            try:
+                lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+            except OSError:
+                return False
+            if line_no < 1 or line_no > len(lines):
+                return False
+            del lines[line_no - 1]
+            path.write_text("".join(lines), encoding="utf-8")
+        return True
+
     def prompt_fragment(self, max_entries: int = 8) -> str:
         """上下文注入片段（末 N 条长期记忆 + 用户画像；空则返回空串不注水）。"""
         mem = self.tail("memory", max_entries)

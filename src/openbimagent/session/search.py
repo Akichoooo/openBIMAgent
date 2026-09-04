@@ -151,6 +151,15 @@ class SessionSearchIndex:
             self._conn.commit()
         return self.sync()
 
+    def delete_session(self, session_id: str) -> int:
+        """删除会话的全部索引行（会话删除端点的一致性清理）；返回清理行数。"""
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM events WHERE session_id=?", (session_id,))
+            self._conn.execute("DELETE FROM events_fts WHERE session_id=?", (session_id,))
+            self._conn.execute("DELETE FROM watermarks WHERE session_id=?", (session_id,))
+            self._conn.commit()
+            return cur.rowcount
+
     # ---------- 检索 ----------
 
     def search(self, query: str, *, limit: int = 10) -> list[dict[str, Any]]:

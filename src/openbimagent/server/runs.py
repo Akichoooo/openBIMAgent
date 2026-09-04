@@ -318,6 +318,33 @@ def add_runs(app: FastAPI) -> None:
             return JSONResponse(status_code=500, content={"status": "error", "error": f"读取失败: {exc}"})
         return JSONResponse(content={"status": "success", "session_id": safe, "events": events[-max(1, min(tail, 1000)):]})
 
+    @app.delete("/api/v1/sessions/{session_id}", summary="删除会话（JSONL + index 条目 + FTS 索引行一致性清理；运行中 409）", tags=["Workbench"])
+    async def delete_session(session_id: str) -> JSONResponse:
+        safe = "".join(c for c in session_id if c.isalnum() or c in "-_")
+        if safe in _runs and _runs[safe].get("active"):
+            return JSONResponse(status_code=409, content={"status": "error", "error": "会话所属运行仍在进行，不能删除（先等收敛或拒绝审批门）"})
+        path = _sessions_dir() / f"{safe}.jsonl"
+        if not path.is_file():
+            return JSONResponse(status_code=404, content={"status": "error", "error": f"会话不存在: {safe}"})
+        try:
+            path.unlink()
+            # index.json 条目移除（与 SessionStore 同一把索引锁 + 原子写）
+            from openbimagent.session.store import INDEX_FILENAME, _atomic_write_json, _locked_index
+
+            index_path = _sessions_dir() / INDEX_FILENAME
+            with _locked_index(index_path):
+                if index_path.is_file():
+                    index = json.loads(index_path.read_text(encoding="utf-8"))
+                    index["sessions"] = [e for e in index.get("sessions", []) if e.get("id") != safe]
+                    _atomic_write_json(index_path, index)
+            # FTS 索引行清理（删过的会话不再被 /recall 命中）
+            from openbimagent.session.search import default_search_index
+
+            default_search_index(_sessions_dir()).delete_session(safe)
+        except OSError as exc:
+            return JSONResponse(status_code=500, content={"status": "error", "error": f"删除失败: {exc}"})
+        return JSONResponse(content={"status": "success", "deleted": safe})
+
     @app.get("/api/v1/sessions/search", summary="会话全文检索（FTS5；返回可溯源 session/event/snippet）", tags=["Workbench"])
     async def sessions_search(q: str, limit: int = 10) -> JSONResponse:
         from openbimagent.session.search import default_search_index
@@ -399,6 +426,58 @@ def add_runs(app: FastAPI) -> None:
             return JSONResponse(status_code=500, content={"status": "error", "error": f"分支失败: {exc}"})
         return JSONResponse(content={"status": "success", "session_id": new_store.session_id, "forked_from": safe})
 
+    @app.patch("/api/v1/sessions/{session_id}", summary="更新会话（重命名/归档/解归档）", tags=["Workbench"])
+    async def rename_session(session_id: str, request: dict[str, Any]) -> JSONResponse:
+        safe = "".join(c for c in session_id if c.isalnum() or c in "-_")
+        index_path = _sessions_dir() / "index.json"
+        if not index_path.is_file():
+            return JSONResponse(status_code=404, content={"status": "error", "error": "会话索引不存在"})
+        from openbimagent.session.store import _atomic_write_json, _locked_index
+
+        new_title = request.get("title")
+        archived = request.get("archived")
+
+        if new_title is None and archived is None:
+            return JSONResponse(status_code=400, content={"status": "error", "error": "缺少更新参数(title 或 archived)"})
+
+        with _locked_index(index_path):
+            try:
+                data = json.loads(index_path.read_text(encoding="utf-8"))
+                target = None
+                for s in data.get("sessions", []):
+                    if s.get("id") == safe:
+                        target = s
+                        break
+                if not target:
+                    return JSONResponse(status_code=404, content={"status": "error", "error": f"会话不存在: {safe}"})
+
+                if new_title is not None:
+                    title_str = str(new_title).strip()
+                    if not title_str:
+                        return JSONResponse(status_code=400, content={"status": "error", "error": "标题不能为空"})
+                    target["title"] = title_str
+
+                if archived is not None:
+                    is_archived = bool(archived)
+                    target["archived"] = is_archived
+                    if is_archived:
+                        target["archived_at"] = datetime.now(timezone.utc).isoformat()
+                    else:
+                        target["archived"] = False
+                        target.pop("archived_at", None)
+
+                _atomic_write_json(index_path, data)
+            except Exception as exc:
+                return JSONResponse(status_code=500, content={"status": "error", "error": f"更新会话失败: {exc}"})
+        return JSONResponse(
+            content={
+                "status": "success",
+                "session_id": safe,
+                "title": target.get("title", ""),
+                "archived": target.get("archived", False),
+            }
+        )
+
     @app.get("/api/v1/archive", summary="Domain Pack 素材归档索引（P2：只增不改）", tags=["Workbench"])
     async def list_archive() -> dict:
         items: list[dict[str, Any]] = []
@@ -425,6 +504,12 @@ def add_runs(app: FastAPI) -> None:
         if name not in _ARCHIVE_FILES:
             return JSONResponse(status_code=400, content={"status": "error", "error": f"工件名不在白名单: {name}"})
         path = _REPO_ROOT / "out" / "runs" / safe_session / name
+        if not path.is_file():
+            for playbook in _PLAYBOOKS.values():
+                cand = _archive_root(playbook.parent) / safe_session / name
+                if cand.is_file():
+                    path = cand
+                    break
         if not path.is_file():
             return JSONResponse(status_code=404, content={"status": "error", "error": f"工件不存在: {safe_session}/{name}"})
         import hashlib

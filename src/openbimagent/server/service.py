@@ -290,6 +290,8 @@ class M2ReadOnlyService:
             "created_at": str(entry.get("created_at", "")),
             "last_active": str(entry.get("last_active", "")),
             "event_count": event_count,
+            "archived": bool(entry.get("archived", False)),
+            "archived_at": str(entry.get("archived_at", "")),
         }
 
     @staticmethod

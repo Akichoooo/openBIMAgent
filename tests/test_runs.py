@@ -81,3 +81,34 @@ def test_events_unknown_session_404(client: TestClient) -> None:
 
 def test_start_run_rejects_empty_brief(client: TestClient) -> None:
     assert client.post("/api/v1/runs", json={"brief": "  "}).status_code == 400
+
+
+def test_archive_and_unarchive_session(client: TestClient, finished_run: str) -> None:
+    # 归档会话
+    patch_resp = client.patch(f"/api/v1/sessions/{finished_run}", json={"archived": True})
+    assert patch_resp.status_code == 200
+    data = patch_resp.json()
+    assert data["status"] == "success"
+    assert data["archived"] is True
+
+    # 查阅列表应包含 archived 状态
+    sessions_resp = client.get("/api/v1/sessions")
+    assert sessions_resp.status_code == 200
+    items = sessions_resp.json().get("data", {}).get("items") or []
+    target = next((s for s in items if s["session_id"] == finished_run), None)
+    assert target is not None
+    assert target["archived"] is True
+    assert target.get("archived_at")
+
+    # 解归档
+    unpatch_resp = client.patch(f"/api/v1/sessions/{finished_run}", json={"archived": False})
+    assert unpatch_resp.status_code == 200
+    assert unpatch_resp.json()["archived"] is False
+
+    # 再次查阅应已解归档
+    sessions_resp2 = client.get("/api/v1/sessions")
+    items2 = sessions_resp2.json().get("data", {}).get("items") or []
+    target2 = next((s for s in items2 if s["session_id"] == finished_run), None)
+    assert target2 is not None
+    assert target2["archived"] is False
+

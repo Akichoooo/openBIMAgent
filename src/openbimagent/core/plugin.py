@@ -196,6 +196,11 @@ DEFAULT_CAPABILITY_POLICIES: tuple[CapabilityPolicyRule, ...] = (
         justification="写入跨会话长期记忆（MEMORY.md/USER.md 持久化），需人工确认",
     ),
     CapabilityPolicyRule(
+        pattern="memory:delete",
+        decision=CapabilityPolicyDecision.PROMPT,
+        justification="删除长期记忆条目（跨会话持久化数据减损），需人工确认",
+    ),
+    CapabilityPolicyRule(
         pattern="mcp:*",
         decision=CapabilityPolicyDecision.PROMPT,
         justification="外部第三方 MCP server 工具（进程/网络面未知），fail-closed 需人工确认",
@@ -775,6 +780,7 @@ class MemoryPlugin(BIMPlugin):
     provides_capabilities = (
         "memory:record",
         "memory:recall",
+        "memory:delete",
     )
 
     def setup(self, ctx: BIMPluginContext) -> None:
@@ -791,8 +797,13 @@ class MemoryPlugin(BIMPlugin):
                 "user": store.tail("user", max_entries),
             }
 
+        def _delete(file: str = "memory", line: int = 0) -> dict:
+            ok = default_memory_store().delete_line(file, int(line))
+            return {"deleted": ok, "file": file, "line": int(line)}
+
         self.register_handler("memory:record", _record)
         self.register_handler("memory:recall", _recall)
+        self.register_handler("memory:delete", _delete)
 
 
 def create_default_plugin_registry() -> PluginRegistry:

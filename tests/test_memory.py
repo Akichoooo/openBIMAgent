@@ -77,9 +77,9 @@ class TestMemoryEndpoints:
         r2 = client.post("/api/v1/memory/record", json={"entry": "项目代号 Terra", "confirm": True})
         assert r2.status_code == 200, r2.text
         assert r2.json()["recorded"]["entry"] == "项目代号 Terra"
-        # 读取免费
+        # 读取免费（条目带物理行号，供删除寻址）
         mem = client.get("/api/v1/memory").json()
-        assert len(mem["memory"]) == 1 and "Terra" in mem["memory"][0]
+        assert len(mem["memory"]) == 1 and "Terra" in mem["memory"][0]["text"] and mem["memory"][0]["line"] == 1
 
     def test_record_user_file(self, client: TestClient) -> None:
         r = client.post("/api/v1/memory/record", json={"entry": "习惯先看 domain_gate 报告", "file": "user", "confirm": True})
@@ -90,6 +90,21 @@ class TestMemoryEndpoints:
     def test_record_invalid(self, client: TestClient) -> None:
         assert client.post("/api/v1/memory/record", json={"entry": "", "confirm": True}).status_code == 400
         assert client.post("/api/v1/memory/record", json={"entry": "x", "file": "nope", "confirm": True}).status_code == 400
+
+    def test_delete_requires_confirm_and_removes_line(self, client: TestClient) -> None:
+        client.post("/api/v1/memory/record", json={"entry": "待删除条目 X", "confirm": True})
+        mem = client.get("/api/v1/memory").json()["memory"]
+        target = next(e for e in mem if "待删除条目 X" in e["text"])
+        # 无 confirm：策略门拦截
+        r1 = client.post("/api/v1/memory/delete", json={"file": "memory", "line": target["line"]})
+        assert r1.status_code == 409 and r1.json()["need_confirm"] is True
+        # confirm：真实删除该行
+        r2 = client.post("/api/v1/memory/delete", json={"file": "memory", "line": target["line"], "confirm": True})
+        assert r2.status_code == 200 and r2.json()["deleted"]["deleted"] is True
+        after = client.get("/api/v1/memory").json()["memory"]
+        assert all("待删除条目 X" not in e["text"] for e in after)
+        # 非法行号 → 404
+        assert client.post("/api/v1/memory/delete", json={"file": "memory", "line": 9999, "confirm": True}).status_code == 404
 
     def test_default_root_is_repo_memory_not_src(self) -> None:
         """回归：_REPO_ROOT 必须定位仓库根（曾经误定位 src/，记忆写进 src/memory）。"""

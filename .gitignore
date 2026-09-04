@@ -47,6 +47,7 @@ scratch/
 papers/
 # Local LLM-Direct baseline config (contains API key, never commit)
 config/*.local.toml
+config/*.local.json
 
 # Domain Pack 素材自动归档（P2，运行时生成不入库）
 domain_packs/*/assets/auto_archive/
