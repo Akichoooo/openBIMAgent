@@ -298,6 +298,67 @@ def add_runs(app: FastAPI) -> None:
         active = next((r for r in runs if r["active"]), runs[0] if runs else None)
         return {"status": "success", "runs": runs, "run": active, "max_concurrent": _max_concurrent()}
 
+    @app.post("/api/v1/runs/{session_id}/stop", summary="停止运行：拒绝其全部待决审批票据唤醒阻塞线程（在下一个审批门处中止，不杀线程）", tags=["Workbench"])
+    async def stop_run(session_id: str) -> JSONResponse:
+        safe = "".join(c for c in session_id if c.isalnum() or c in "-_")
+        run = _runs.get(safe)
+        if run is None:
+            return JSONResponse(status_code=404, content={"status": "error", "error": f"运行不存在: {safe}"})
+        if not run.get("active"):
+            return JSONResponse(status_code=409, content={"status": "error", "error": "运行已结束，无需停止"})
+        from openbimagent.server.approvals import reject_pending_for_session
+
+        run["stop_requested"] = True
+        woken = reject_pending_for_session(safe)
+        return JSONResponse(
+            content={
+                "status": "success",
+                "session_id": safe,
+                "woken_approvals": woken,
+                "note": "已拒绝该运行全部待决票据；线程将在当前审批门处按拒绝路径退出（确定性求解中段不打断，语义安全）",
+            }
+        )
+
+    @app.get("/api/v1/sessions/{session_id}/export", summary="导出会话（fmt=jsonl 原始事件流 / fmt=md 可读纪要）", tags=["Workbench"])
+    async def export_session(session_id: str, fmt: str = "jsonl"):
+        safe = "".join(c for c in session_id if c.isalnum() or c in "-_")
+        path = _sessions_dir() / f"{safe}.jsonl"
+        if not path.is_file():
+            return JSONResponse(status_code=404, content={"status": "error", "error": f"会话不存在: {safe}"})
+        from fastapi.responses import Response
+
+        raw = path.read_bytes()
+        if fmt == "jsonl":
+            return Response(
+                content=raw,
+                media_type="application/x-ndjson",
+                headers={"Content-Disposition": f'attachment; filename="session-{safe[:8]}.jsonl"'},
+            )
+        if fmt == "md":
+            lines = [f"# 会话导出 {safe}", ""]
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    e = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                p = e.get("payload") or {}
+                ts = str(e.get("timestamp", ""))[:19].replace("T", " ")
+                if e.get("type") == "message":
+                    role = "用户" if p.get("role") == "user" else "Agent"
+                    lines.append(f"**{role}**（{ts}）：{p.get('content', '')}\n")
+                elif e.get("type") == "tool_call":
+                    lines.append(f"- `{p.get('toolName', 'tool')}`（{ts}）：{str(p.get('result_ui_view') or p.get('args_summary') or '')[:200]}")
+                elif e.get("type") == "custom":
+                    lines.append(f"- ◆ {p.get('customType', 'custom')}（{ts}）")
+            return Response(
+                content="\n".join(lines).encode("utf-8"),
+                media_type="text/markdown; charset=utf-8",
+                headers={"Content-Disposition": f'attachment; filename="session-{safe[:8]}.md"'},
+            )
+        return JSONResponse(status_code=400, content={"status": "error", "error": "fmt 仅支持 jsonl / md"})
+
     @app.get("/api/v1/sessions/{session_id}/events", summary="读取会话事件（Session JSONL，倒序截尾）", tags=["Workbench"])
     async def session_events(session_id: str, tail: int = 200) -> JSONResponse:
         safe = "".join(c for c in session_id if c.isalnum() or c in "-_")

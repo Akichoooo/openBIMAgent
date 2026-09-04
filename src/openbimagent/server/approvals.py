@@ -151,6 +151,19 @@ def make_web_approval_fn(session_id: str, sessions_dir: Path):
     return approve
 
 
+def reject_pending_for_session(session_id: str, *, actor: str = "system:stop") -> int:
+    """停止运行用：把该会话所有待决票据标记拒绝并唤醒阻塞线程（pipeline 在审批门处中止）。返回唤醒数。"""
+    woken = 0
+    with _lock:
+        tickets = [t for t in _pending.values() if t["session_id"] == session_id and not t.get("expired")]
+        for ticket in tickets:
+            ticket["decision"] = "rejected"
+            ticket["actor"] = actor
+            ticket["event"].set()
+            woken += 1
+    return woken
+
+
 def add_approvals(app: FastAPI) -> None:
     """注册审批中心端点（由 build_m2_readonly_app 调用）。"""
     _load_pending()

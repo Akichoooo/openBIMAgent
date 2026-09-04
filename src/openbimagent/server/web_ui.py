@@ -726,6 +726,7 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
       <span class="th-title" id="thSessTitle" title="会话标题">会话面板</span>
     </div>
     <div class="sp"></div>
+    <button class="chip" id="stopBtn" style="display:none;color:var(--red);border-color:var(--red)" title="停止当前运行（拒绝待决审批门，线程在门处安全退出）" onclick="stopCurrentRun()">⏹ 停止</button>
     <button class="collapse-th" onclick="toggleThread()" title="折叠对话面板"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M14.5 4v16"/></svg></button>
   </div>
 
@@ -1249,6 +1250,13 @@ plan_sha256: 7ac1…9f · objects: 22</pre>
       <div class="sess-pop-it" onclick="copySessionInfo('title')">复制会话名称</div>
       <div class="sess-pop-it" onclick="copySessionInfo('id')">复制会话 ID</div>
       <div class="sess-pop-it" onclick="copySessionInfo('project')">复制项目名称</div>
+    </div>
+  </div>
+  <div class="sess-pop-sub">
+    <div class="sess-pop-it"><svg viewBox="0 0 24 24" stroke-width="1.8"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>导出会话 <span style="margin-left:auto;color:var(--ink3)">›</span></div>
+    <div class="sess-pop-submenu">
+      <div class="sess-pop-it" onclick="menuExportSession('md')">可读纪要 (.md)</div>
+      <div class="sess-pop-it" onclick="menuExportSession('jsonl')">原始事件流 (.jsonl)</div>
     </div>
   </div>
   <div style="height:1px;background:var(--line);margin:3px 0"></div>
@@ -1946,6 +1954,15 @@ async function menuDeleteSession(){
     }else toast('删除失败：'+(d.error||r.status));
   }catch(e){toast('删除失败：'+e);}
 }
+/* 导出会话（.md 可读纪要 / .jsonl 原始事件流；浏览器直接下载） */
+function menuExportSession(fmt){
+  const sid=_activeMenuSid;closeSessMenu();if(!sid)return;
+  const a=document.createElement('a');
+  a.href=`/api/v1/sessions/${sid}/export?fmt=${fmt}`;
+  a.download='';
+  document.body.appendChild(a);a.click();a.remove();
+  toast(fmt==='md'?'纪要导出中…':'事件流导出中…');
+}
 
 async function loadSessions(selectId){
   const ss=await _get('/api/v1/sessions');
@@ -2077,6 +2094,7 @@ async function forkSession(sid,ev){
 }
 function pollRun(sid){
   if(_pollTimer)clearInterval(_pollTimer);
+  const sb=$('stopBtn');if(sb)sb.style.display='inline-flex';
   _pollTimer=setInterval(async()=>{
     /* 缺陷六：视口流式生长——运行中轮询工件 sha，变化即重渲染 */
     pollLiveIR(sid);
@@ -2086,12 +2104,24 @@ function pollRun(sid){
     if(run&&!run.active){
       clearInterval(_pollTimer);_pollTimer=null;
       if(_evtSrc){_evtSrc.close();_evtSrc=null;}
+      const sb2=$('stopBtn');if(sb2)sb2.style.display='none';
       pollLiveIR(sid);
       loadSessionEvents(sid);
       toast(run.error?('运行结束（有错误）：'+run.error):'任务完成 · 事件已落 session');
       loadSessions(sid);
     }
   },2500);
+}
+/* 停止运行（Codex/ZCode 的 stop 语义）：拒绝待决审批门，线程在门处安全退出 */
+async function stopCurrentRun(){
+  const sid=_curSession;
+  if(!sid){toast('当前无会话');return;}
+  try{
+    const r=await fetch(`/api/v1/runs/${sid}/stop`,{method:'POST',headers:_H({'X-Request-ID':_rid()})});
+    const d=await r.json();
+    if(r.ok&&d.status==='success')toast('已请求停止（审批门按拒绝退出，'+d.woken_approvals+' 票据被唤醒）');
+    else toast(d.error||'停止失败 '+r.status);
+  }catch(e){toast('停止失败：'+e);}
 }
 /* 缺陷六：运行工件的流式渲染（CompiledUtilityIR 变化即生长） */
 const _liveSha={};
