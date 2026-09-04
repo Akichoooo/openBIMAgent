@@ -26,6 +26,7 @@ from openbimagent.server.readonly_http import (
 )
 from openbimagent.server.sse_endpoint import M2SseStreamBudget, add_sse_endpoint
 from openbimagent.server.web_ui import add_web_ui
+from openbimagent.server.chat import add_chat
 from openbimagent.server.workbench_io import add_workbench_io
 from openbimagent.server.runs import add_runs
 from openbimagent.server.approvals import add_approvals
@@ -108,6 +109,7 @@ def build_m2_readonly_app(
     add_workbench_io(app)
     add_runs(app)
     add_approvals(app)
+    add_chat(app)
 
     invoke_guard = InvokeConcurrencyGuard(invoke_max_concurrency)
     export_guard = InvokeConcurrencyGuard(1)  # 真机导出串行：Blender/VW 共用，防并发多宿主写盘

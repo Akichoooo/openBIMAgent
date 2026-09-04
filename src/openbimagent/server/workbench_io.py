@@ -411,7 +411,7 @@ def add_workbench_io(app: FastAPI) -> None:
 
     @app.get(
         "/api/v1/settings/models",
-        summary="按 provider 分组的模型清单（包含预置与自定义供应商）",
+        summary="按 provider 分组的模型清单（key 只回 key_set 布尔，绝不回显本体）",
         tags=["Workbench"],
     )
     async def list_switchable_models() -> dict:
@@ -420,15 +420,16 @@ def add_workbench_io(app: FastAPI) -> None:
         glm_key = os.environ.get("GLM_API_KEY", "") or (
             raw_base.get("api_key") if raw_base.get("base_url", "").startswith("https://open.bigmodel.cn") else ""
         )
+        glm_key_set = bool(glm_key)
         for p in _PRESET_PROVIDERS:
             pc = dict(p)
-            pc["api_key"] = glm_key or ""
-            pc["key_set"] = bool(glm_key)
+            pc.pop("api_key", None)  # key 本体绝不出现在响应（与 settings/llm 同口径）
+            pc["key_set"] = glm_key_set
             preset_list.append(pc)
 
         custom_list = _read_custom_providers()
 
-        # 合并出 providers 供前端兼容使用
+        # 合并出 providers 供前端兼容使用（同样只带 key_set，不带 key）
         merged_providers = []
         for p in preset_list:
             merged_providers.append({
@@ -438,13 +439,16 @@ def add_workbench_io(app: FastAPI) -> None:
                 "type": p.get("api_format", "openai-compatible"),
                 "base_url": p.get("base_url", ""),
                 "api_format": p.get("api_format", "Chat Completions (/chat/completions)"),
-                "api_key": p.get("api_key", ""),
                 "key_set": p.get("key_set", False),
                 "enabled": p.get("enabled", True),
                 "is_preset": True,
                 "models": p.get("models", []),
             })
         for p in custom_list:
+            key_set = bool(p.get("api_key"))
+            entry = dict(p)
+            entry.pop("api_key", None)
+            entry["key_set"] = key_set
             merged_providers.append({
                 "id": p["id"],
                 "name": p["name"],
@@ -452,17 +456,23 @@ def add_workbench_io(app: FastAPI) -> None:
                 "type": p.get("api_format", "openai-compatible"),
                 "base_url": p.get("base_url", ""),
                 "api_format": p.get("api_format", "Chat Completions (/chat/completions)"),
-                "api_key": p.get("api_key", ""),
-                "key_set": bool(p.get("api_key")),
+                "key_set": key_set,
                 "enabled": p.get("enabled", True),
                 "is_preset": False,
                 "models": p.get("models", []),
             })
 
+        # custom 同样剥 key 本体（前端只看 key_set）
+        safe_custom = []
+        for p in custom_list:
+            q = dict(p)
+            key_set = bool(q.pop("api_key", None))
+            q["key_set"] = key_set
+            safe_custom.append(q)
         return {
             "status": "success",
             "presets": preset_list,
-            "custom": custom_list,
+            "custom": safe_custom,
             "providers": merged_providers,
             "current": raw_base.get("model"),
             "error": None,
@@ -502,7 +512,10 @@ def add_workbench_io(app: FastAPI) -> None:
         custom = _read_custom_providers()
         custom.append(new_provider)
         _write_custom_providers(custom)
-        return JSONResponse(content={"status": "success", "provider": new_provider})
+        safe = dict(new_provider)
+        safe.pop("api_key", None)  # 响应只带 key_set，不带 key 本体
+        safe["key_set"] = bool(api_key)
+        return JSONResponse(content={"status": "success", "provider": safe})
 
     @app.patch("/api/v1/settings/providers/{provider_id}", summary="更新自定义供应商", tags=["Workbench"])
     async def update_provider(provider_id: str, request: Request) -> JSONResponse:
@@ -518,13 +531,17 @@ def add_workbench_io(app: FastAPI) -> None:
                 if p.get("id") == provider_id:
                     if "api_key" in body:
                         key_val = str(body["api_key"]).strip()
-                        os.environ["GLM_API_KEY"] = key_val
-                        _update_env_file({"GLM_API_KEY": key_val})
-                        raw = _read_baseline_raw()
-                        if raw.get("base_url", "").startswith("https://open.bigmodel.cn"):
-                            raw["api_key"] = key_val
-                            _write_toml_flat(_baseline_path(), raw)
-                    return JSONResponse(content={"status": "success", "provider": p})
+                        if key_val:  # 空 key = 保持已存值
+                            os.environ["GLM_API_KEY"] = key_val
+                            _update_env_file({"GLM_API_KEY": key_val})
+                            raw = _read_baseline_raw()
+                            if raw.get("base_url", "").startswith("https://open.bigmodel.cn"):
+                                raw["api_key"] = key_val
+                                _write_toml_flat(_baseline_path(), raw)
+                    safe = dict(p)
+                    safe.pop("api_key", None)  # 响应只带 key_set，不带 key 本体
+                    safe["key_set"] = bool(os.environ.get("GLM_API_KEY"))
+                    return JSONResponse(content={"status": "success", "provider": safe})
             return JSONResponse(status_code=404, content={"status": "error", "error": "供应商不存在"})
 
         if "name" in body and str(body["name"]).strip():
@@ -534,11 +551,16 @@ def add_workbench_io(app: FastAPI) -> None:
         if "api_format" in body:
             target["api_format"] = str(body["api_format"]).strip()
         if "api_key" in body:
-            target["api_key"] = str(body["api_key"]).strip()
+            key_val = str(body["api_key"]).strip()
+            if key_val:  # 空 key = 保持已存值（前端不回显 key 本体，留空仅表示不变）
+                target["api_key"] = key_val
         if "enabled" in body:
             target["enabled"] = bool(body["enabled"])
         _write_custom_providers(custom)
-        return JSONResponse(content={"status": "success", "provider": target})
+        safe = dict(target)
+        safe.pop("api_key", None)  # 响应只带 key_set，不带 key 本体
+        safe["key_set"] = bool(target.get("api_key"))
+        return JSONResponse(content={"status": "success", "provider": safe})
 
     @app.delete("/api/v1/settings/providers/{provider_id}", summary="删除自定义供应商", tags=["Workbench"])
     async def delete_provider(provider_id: str) -> JSONResponse:
@@ -583,7 +605,10 @@ def add_workbench_io(app: FastAPI) -> None:
                 "capabilities": caps,
             })
         _write_custom_providers(custom)
-        return JSONResponse(content={"status": "success", "provider": target})
+        safe = dict(target)
+        safe.pop("api_key", None)  # 响应只带 key_set，不带 key 本体
+        safe["key_set"] = bool(target.get("api_key"))
+        return JSONResponse(content={"status": "success", "provider": safe})
 
     @app.patch("/api/v1/settings/providers/{provider_id}/models/{model_name}", summary="修改模型", tags=["Workbench"])
     async def update_provider_model(provider_id: str, model_name: str, request: Request) -> JSONResponse:
@@ -610,7 +635,10 @@ def add_workbench_io(app: FastAPI) -> None:
         if "capabilities" in body:
             model_obj["capabilities"] = list(body["capabilities"])
         _write_custom_providers(custom)
-        return JSONResponse(content={"status": "success", "provider": target})
+        safe = dict(target)
+        safe.pop("api_key", None)  # 响应只带 key_set，不带 key 本体
+        safe["key_set"] = bool(target.get("api_key"))
+        return JSONResponse(content={"status": "success", "provider": safe})
 
     @app.delete("/api/v1/settings/providers/{provider_id}/models/{model_name}", summary="删除模型", tags=["Workbench"])
     async def delete_provider_model(provider_id: str, model_name: str) -> JSONResponse:
@@ -623,7 +651,10 @@ def add_workbench_io(app: FastAPI) -> None:
         models = target.get("models", [])
         target["models"] = [m for m in models if m.get("name") != model_name]
         _write_custom_providers(custom)
-        return JSONResponse(content={"status": "success", "provider": target})
+        safe = dict(target)
+        safe.pop("api_key", None)  # 响应只带 key_set，不带 key 本体
+        safe["key_set"] = bool(target.get("api_key"))
+        return JSONResponse(content={"status": "success", "provider": safe})
 
     @app.post("/api/v1/settings/providers/{provider_id}/probe", summary="连通性测速探针", tags=["Workbench"])
     async def probe_provider(provider_id: str, request: Request) -> JSONResponse:

@@ -611,6 +611,13 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
 .m-no{border:1px solid var(--line2);color:var(--ink2)}.m-no:hover{background:var(--bg3)}
 .toast{position:fixed;top:16px;left:50%;transform:translateX(-50%) translateY(-8px);background:var(--bg3);border:1px solid var(--line2);border-radius:10px;padding:8px 14px;font-size:12px;color:var(--ink);opacity:0;pointer-events:none;transition:all .25s;z-index:99}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+/* 审批待决角标（挂 .th-tabs；#tabConv 元素已不存在，勿再引用） */
+.bdg{font:10px var(--mono);color:var(--amb);background:var(--amb-dim);border:1px solid rgba(217,161,63,.4);border-radius:999px;padding:1px 8px;white-space:nowrap}
+/* 自绘 confirm/prompt 弹窗（替换原生对话框；#cfmInput 仅 prompt 模式显示） */
+#cfmMask .modal{width:400px}
+#cfmInput{display:none}
+/* 发送按钮禁用态（空输入；运行中由 stopBtn 接管语义） */
+.send.disabled{opacity:.4;cursor:default;pointer-events:none}
 .fl{display:block;font-size:11.5px;color:var(--ink2);margin:7px 0}
 .fin{display:block;width:100%;margin-top:3px;background:var(--bg);border:1px solid var(--line2);border-radius:8px;color:var(--ink);font:11.5px var(--mono);padding:7px 9px;outline:none}
 .fin:focus{border-color:hsl(var(--primary) / .5)}
@@ -675,7 +682,7 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
 
     <div class="vp-hud">
       <div class="hud-chip"><span class="dot b"></span>CompiledUtilityIR v1</div>
-      <div class="hud-chip mono" id="hudStat">6 井 · 5 段 · DN400</div>
+      <div class="hud-chip mono" id="hudStat">加载模型数据…</div>
       <div class="hud-chip mono" id="hudCam"></div>
     </div>
 
@@ -687,7 +694,7 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
       <button class="vt" id="tgFull" data-tip="视口全屏" title="视口全屏" onclick="toggleFullscreen()"><svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg></button>
     </div>
 
-    <div class="vp-scale"><div class="bar"></div><span id="scaleLbl">20 m</span></div>
+    <div class="vp-scale"><div class="bar"></div><span id="scaleLbl">—</span></div>
 
     <div class="vp-tl">
       <div class="tl-steps" id="tlSteps"></div>
@@ -713,25 +720,9 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
   <div class="th-scroll" id="thScroll">
     <div class="agentline" id="welcomeLine">就绪。<span class="dim">新建任务真跑 pipeline（离线走确定性模板），或直接在下方输入工程指令调度自愈求解器。会话事件、规则树、IR、导出全部来自真实端点。</span></div>
 
-    <div class="tool closed" id="tool2" style="display:none">
-      <div class="tool-h" onclick="toggleTool(this)">
-        <span class="ic rules">✓</span>
-        <span class="nm">rules:gb50289.verify</span>
-        <span class="st" id="tool2St"></span>
-        <span class="car">▾</span>
-      </div>
-      <div class="tool-b">
-        <div><span class="k">ruleset&nbsp;&nbsp;&nbsp;</span>MunicipalRuleSet v1.2 · 12 条 · enforcement=production</div>
-        <div><span class="k">self_test&nbsp;</span><span class="ok">33/33 样例重放通过（编译期门）</span></div>
-        <div><span class="k">verdict&nbsp;&nbsp;&nbsp;</span><span class="ok">全部合规</span> · 净距 3.1m ≥ 2.5m · 覆土 1.42m ✓</div>
-        <div><span class="k">evidence&nbsp;</span>canonical_sha256 <span class="hl">e9296294…c7</span></div>
-      </div>
-    </div>
-
     <div class="art" id="artIR" style="display:none">
       <div class="art-t"><span class="tag">工件</span>CompiledUtilityIR v1</div>
-      <div class="mini-stat"><span><b>6</b> 检查井</span><span><b>5</b> 管段</span><span><b>DN400</b></span><span><b>0.003</b> 坡度</span></div>
-      <div class="hash">canonical e9296294eb35eb22ecca11a7d3322e94a90588c7</div>
+      <div class="mini-stat"></div>
       <div class="row">
         <button class="abtn" onclick="downloadIR()">下载 JSON</button>
         <button class="abtn" onclick="openInspector('ir')">在检查器查看</button>
@@ -740,9 +731,9 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
 
     <div class="hitl" id="hitl" style="display:none">
       <div class="hd"><span class="tag">HITL · prompt 策略门</span>等待人工确认</div>
-      <div class="ds">能力 <code>cad_host:blender.execute</code> 被策略表标记为 <b>prompt</b>：将向授权根目录写入真实 <code>.blend</code> 产物（typed plan，22 对象）。确认后执行。</div>
+      <div class="ds">能力 <code>cad_host:blender.execute</code> 被策略表标记为 <b>prompt</b>：将向授权根目录写入真实产物（typed plan，对象数由执行回执回填）。确认后执行。</div>
       <div class="row">
-        <button id="approveBtn" onclick="askConfirm()" class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground w-full">批准导出</button>
+        <button id="approveBtn" onclick="askConfirm('blender')" class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground w-full">批准导出</button>
         <button class="reject" onclick="rejectExport()">拒绝</button>
       </div>
     </div>
@@ -750,26 +741,21 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
     <div class="tool closed" id="tool3" style="display:none">
       <div class="tool-h" onclick="toggleTool(this)">
         <span class="ic host">⬡</span>
-        <span class="nm">cad_host:blender.execute</span>
+        <span class="nm" id="tool3Nm">cad_host:blender.execute</span>
         <span class="st" id="tool3St"></span>
         <span class="car">▾</span>
       </div>
       <div class="tool-b">
-        <div><span class="k">plan&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>BlenderExecutionPlan v1 · plan_sha256 <span class="hl">7ac1…9f</span></div>
-        <div><span class="k">host&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>Blender 5.2.0 LTS (headless) · addon fork execute_plan</div>
-        <div><span class="k">scope&nbsp;&nbsp;&nbsp;&nbsp;</span>__OBMCP_ 受控作用域 · 授权根写盘</div>
-        <div><span class="k">snapshot</span>语义快照 ↔ IR 哈希绑定 <span class="ok">一致</span></div>
+        <div><span class="k">plan&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>typed execution plan · plan_sha256 <span class="hl" id="tool3Plan">执行后回填</span></div>
+        <div><span class="k">host&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span id="tool3Host">—</span></div>
+        <div><span class="k">scope&nbsp;&nbsp;&nbsp;&nbsp;</span>受控作用域 · 授权根写盘</div>
+        <div><span class="k">snapshot</span>语义快照 ↔ IR 哈希绑定（sidecar 随产物落盘）</div>
       </div>
     </div>
 
-    <div class="rcpt" id="rcpt" style="display:none">
-      <div class="hd">✓ 交付回执 · receipt=completed</div>
-      <div><span class="k">objects&nbsp;&nbsp;&nbsp;&nbsp;</span>22&nbsp;&nbsp;<span class="k">output_bytes&nbsp;</span>120,031&nbsp;&nbsp;<span class="k">elapsed&nbsp;</span>2,187 ms</div>
-      <div><span class="k">output&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>D:/G6_Test/m3_invoke_e2e.blend + sidecar</div>
-      <div><span class="k">manifest&nbsp;&nbsp;&nbsp;</span>ArtifactManifest v1.1 已提交（C5 交付门通过）</div>
-    </div>
+    <div class="rcpt" id="rcpt" style="display:none"></div>
 
-    <div class="agentline" id="doneLine" style="display:none">已交付。<span class="dim">右侧视口为本次 IR 的真实几何回放：红色为初始碰撞路径，绿色为自愈绕行。VLM 六维评分为 <b style="color:var(--amb)">演示值</b>，未计入证据包。</span></div>
+    <div class="agentline" id="doneLine" style="display:none">已交付。<span class="dim">右侧视口为本次 IR 的真实几何回放：红色为初始碰撞路径，绿色为自愈绕行。</span></div>
   </div>
 
   <!-- inspector（已迁入设置页「数据与审查」分区：规则树/插件/IR/上传/用量/归档；openInspector(p) 改开设置对应区） -->
@@ -777,7 +763,7 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
   <!-- composer -->
   <div class="composer">
     <div class="cmp">
-      <textarea id="cmpTa" rows="1" placeholder="下达工程指令，或输入 / 调用命令…"></textarea>
+      <textarea id="cmpTa" rows="1" placeholder="与基线模型对话，或输入 / 调用命令（/solve 调度自愈求解器）…"></textarea>
       <div class="slash" id="slash">
         <div class="sl" onclick="pickCmd('/solve')"><span class="c">/solve</span><span class="d">重新调度自愈求解器</span></div>
         <div class="sl" onclick="pickCmd('/rules')"><span class="c">/rules</span><span class="d">打开 GB 50289 规则树</span></div>
@@ -796,7 +782,8 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
       </div>
     </div>
     <div class="chips">
-      <button class="chip" onclick="askConfirm()">导出 Blender</button>
+      <button class="chip" onclick="askConfirm('blender')">导出 Blender</button>
+      <button class="chip" onclick="askConfirm('vectorworks')">导出 Vectorworks</button>
       <button class="chip" onclick="openInspector('rules')">规则树</button>
       <button class="chip" onclick="openInspector('usage');loadUsage()">用量</button>
       <button class="chip" onclick="playTimeline()">▶ 自愈回放</button>
@@ -806,14 +793,13 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
 
 <!-- settings popover（已删除：setPop 为原型假数据残留——假模型列表/假连接绿灯；真实设置在 #setMask 弹层） -->
 
-<!-- HITL confirm modal -->
+<!-- HITL confirm modal（宿主由 askConfirm(host) 参数化：blender / vectorworks） -->
 <div class="modal-mask" id="modalMask">
   <div class="modal">
-    <h3>确认执行 cad_host:blender.execute？</h3>
-    <p>该能力被策略表标记为 <b>prompt</b>。执行将向授权根目录写入真实产物，动作不可自动撤销。</p>
-    <pre>POST /api/v1/demo/export-blender
-{ "confirm": true }
-plan_sha256: 7ac1…9f · objects: 22</pre>
+    <h3 id="expModalTitle">确认执行 cad_host:blender.execute？</h3>
+    <p id="expModalDesc">该能力被策略表标记为 <b>prompt</b>。执行将向授权根目录写入真实产物，动作不可自动撤销。</p>
+    <pre id="expModalPre">POST /api/v1/demo/export-blender
+{ "confirm": true }</pre>
     <div class="row">
       <button class="m-no" onclick="closeModal()">取消</button>
       <button onclick="doExport()" class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground w-full">确认执行</button>
@@ -822,6 +808,19 @@ plan_sha256: 7ac1…9f · objects: 22</pre>
 </div>
 
 <div class="toast" id="toastEl"></div>
+
+<!-- 自绘确认/输入对话框（替换原生 confirm/prompt；风格与 .modal 同源） -->
+<div class="modal-mask" id="cfmMask">
+  <div class="modal">
+    <h3 id="cfmTitle">确认</h3>
+    <p id="cfmText" style="white-space:pre-wrap"></p>
+    <input class="fin" id="cfmInput" autocomplete="off">
+    <div class="row">
+      <button class="m-no" id="cfmNo">取消</button>
+      <button class="m-ok" id="cfmYes">确定</button>
+    </div>
+  </div>
+</div>
 
 <!-- 新建任务弹层（真实 POST /api/v1/runs） -->
 <div class="modal-mask" id="runMask">
@@ -871,12 +870,12 @@ plan_sha256: 7ac1…9f · objects: 22</pre>
       <div class="sethead"><h3 id="setTitle">外观设置</h3><button class="setclose" onclick="toggleSettings()" title="关闭 (Esc)">✕</button></div>
       <div class="setbody">
         <section data-setsec="general" style="display:none">
-          <p class="setdesc">openBIMAgent 数字化工程工作台运行环境与当前实例状态。</p>
+          <p class="setdesc">openBIMAgent 数字化工程工作台运行环境与当前实例状态（实时取自真实端点）。</p>
           <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">
-            <label class="fl">工作区路径<input class="fin" value="openBIMAgent" readonly></label>
-            <label class="fl">服务版本<input class="fin" value="v1.2.0 · M2 P6 方案 J 集成版" readonly></label>
-            <label class="fl">核心协议<input class="fin" value="CompiledUtilityIR v1 + FastMCP" readonly></label>
-            <label class="fl">API 端点<input class="fin" value="http://127.0.0.1:8001/api/v1" readonly></label>
+            <label class="fl">API 端点<input class="fin" id="genEndpoint" value="…" readonly></label>
+            <label class="fl">LLM 基线<input class="fin" id="genLLM" value="…" readonly></label>
+            <label class="fl">微内核<input class="fin" id="genKernel" value="…" readonly></label>
+            <label class="fl">规则集协议<input class="fin" id="genRules" value="…" readonly></label>
           </div>
         </section>
         <section data-setsec="appearance">
@@ -909,56 +908,6 @@ plan_sha256: 7ac1…9f · objects: 22</pre>
                     <option value="14px">14 px</option>
                     <option value="15px">15 px</option>
                   </select>
-                </div>
-              </div>
-            </div>
-
-            <div class="set-appr-sec">
-              <div class="set-appr-title">代码设置</div>
-              <div class="set-appr-desc">设置代码内容的主题、字号和显示方式，不受界面字号影响。</div>
-              <div class="set-appr-row">
-                <div class="set-appr-label">
-                  <div class="lbl">浅色代码主题</div>
-                  <div class="sub">浅色界面下代码内容使用的高亮主题。</div>
-                </div>
-                <div class="set-appr-ctrl">
-                  <select class="fin set-select"><option>GitHub Light</option></select>
-                </div>
-              </div>
-              <div class="set-appr-row">
-                <div class="set-appr-label">
-                  <div class="lbl">深色代码主题</div>
-                  <div class="sub">深色界面下代码内容使用的高亮主题。</div>
-                </div>
-                <div class="set-appr-ctrl">
-                  <select class="fin set-select"><option>GitHub Dark</option></select>
-                </div>
-              </div>
-              <div class="set-appr-row">
-                <div class="set-appr-label">
-                  <div class="lbl">显示行号</div>
-                  <div class="sub">在代码内容和差异视图中显示行号。</div>
-                </div>
-                <div class="set-appr-ctrl">
-                  <input type="checkbox" id="chkLineNums" checked style="accent-color:var(--acc);width:16px;height:16px">
-                </div>
-              </div>
-              <div class="set-appr-row">
-                <div class="set-appr-label">
-                  <div class="lbl">长行自动换行</div>
-                  <div class="sub">代码内容过长时自动换行。</div>
-                </div>
-                <div class="set-appr-ctrl">
-                  <input type="checkbox" id="chkWrap" style="accent-color:var(--acc);width:16px;height:16px">
-                </div>
-              </div>
-              <div class="set-appr-row">
-                <div class="set-appr-label">
-                  <div class="lbl">代码字号</div>
-                  <div class="sub">调整代码块、文件预览和差异视图的默认字号。</div>
-                </div>
-                <div class="set-appr-ctrl">
-                  <select class="fin set-select"><option>12 px</option><option>13 px</option></select>
                 </div>
               </div>
             </div>
@@ -1067,7 +1016,7 @@ plan_sha256: 7ac1…9f · objects: 22</pre>
             </select>
             <textarea placeholder='payload JSON（可选）'>{}</textarea>
             <button onclick="invokeCap()" class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground">运行（经 registry.invoke）</button>
-            <div class="cons-out">prompt 策略能力需勾选「确认执行」· 满载 503 + -32001 背压</div>
+            <div class="cons-out">prompt 策略能力以 confirm=true 语义直接发起调度；满载返回 503 + -32001 背压</div>
           </div>
         </section>
         <section data-setsec="ir" style="display:none">
@@ -1367,9 +1316,9 @@ const isL=()=>document.documentElement.getAttribute('data-theme')==='light';
 
 function draw(){
   cx.clearRect(0,0,W,H);
-  if(view==='plan') return drawPlan();
-  if(view==='prof') return drawProf();
-  draw3D();
+  if(view==='plan'){drawPlan();updateScale();return;}
+  if(view==='prof'){drawProf();updateScale();return;}
+  draw3D();updateScale();
 }
 function drawEmptyState(){
   if(opt.grid){
@@ -1467,7 +1416,7 @@ function draw3D(){
   if(tlStep===0&&OBST.length){
     const o0=OBST[0];
     const m=P([o0.x, o0.y+o0.d/2+1.5, nz(10.2)]);
-    if(m)prims.push({d:m[2]-1,k:'label',p:[m[0]-50,m[1]-12],t:'✕ MU-CLEAR-001 净距 1.6m < 2.5m',c:'#e5636c',bold:true});
+    if(m)prims.push({d:m[2]-1,k:'label',p:[m[0]-50,m[1]-12],t:'✕ '+TIMELINE[0].note,c:'#e5636c',bold:true});
   }
   /* 排序绘制 */
   prims.sort((a,b)=>b.d-a.d);
@@ -1521,7 +1470,7 @@ function drawPlan(){
     cx.strokeStyle=isL()?'rgba(30,41,59,.35)':'rgba(232,235,240,.4)';cx.beginPath();cx.arc(X(n.x),Y(n.y),8,0,7);cx.stroke();
     cx.fillStyle=isL()?'#0f172a':'rgba(232,235,240,.8)';cx.font='10.5px '+getFontMono();cx.fillText(n.id,X(n.x)+10,Y(n.y)-8);
   });
-  if(tlStep===0&&OBST.length){cx.fillStyle='#e5636c';cx.font='700 11px '+getFontMono();cx.fillText('✕ MU-CLEAR-001：净距 1.6m < 2.5m',X(24),Y(16));}
+  if(tlStep===0&&OBST.length){cx.fillStyle='#e5636c';cx.font='700 11px '+getFontMono();cx.fillText('✕ '+TIMELINE[0].note,X(24),Y(16));}
   cx.fillStyle=isL()?'#64748b':'rgba(154,164,178,.6)';cx.font='10px '+getFontMono();
   cx.fillText('平面布置图 · 红=初始碰撞路径 绿=自愈绕行',pad,20);
 }
@@ -1624,7 +1573,24 @@ function resetCam(){
   draw();
 }
 function toggleOpt(k,el){opt[k]=!opt[k];el.classList.toggle('on',opt[k]);draw();}
-function setView(v,el){view=v;document.querySelectorAll('#viewSeg button').forEach(b=>b.classList.toggle('on',b===el));document.getElementById('scaleLbl').textContent=v==='prof'?'链age 135m':'20 m';draw();}
+function updateScale(){
+  /* 比例尺按真实节点跨度换算（死值 '20 m' 硬编码已随真实化移除） */
+  const el=document.getElementById('scaleLbl');if(!el)return;
+  if(!NODES||NODES.length<2){el.textContent='—';return;}
+  if(view==='prof'){
+    let chain=0;SEGS.forEach(s=>chain+=(s.len||25));
+    el.textContent='链age '+chain.toFixed(0)+'m';return;
+  }
+  const xs=NODES.map(n=>n.x),ys=NODES.map(n=>n.y);
+  const span=Math.max(Math.max(...xs)-Math.min(...xs),Math.max(...ys)-Math.min(...ys),10);
+  const bar=el.parentElement.querySelector('.bar');
+  const wpx=bar?bar.getBoundingClientRect().width:80;
+  const perPx=span*0.35/Math.max(wpx,1); /* 取景跨度≈节点跨度×~2.9（resetCam 1.65×FOV 裕量），比例尺量程取 35% */
+  const candidates=[5,10,20,25,50,100,200];
+  const v=candidates.find(c=>c>=perPx*40)||200;
+  el.textContent=v+' m';
+}
+function setView(v,el){view=v;document.querySelectorAll('#viewSeg button').forEach(b=>b.classList.toggle('on',b===el));updateScale();draw();}
 (function spinLoop(){if(opt.spin&&!dragging&&view==='3d'){cam.yaw+=0.0035;draw();}requestAnimationFrame(spinLoop);})();
 
 /* ================================================================
@@ -1644,12 +1610,8 @@ function renderTL(){
   tlNote.textContent=TIMELINE[tlStep].note;
 }
 let playing=false;
-/* 播放键图标切换（变体原型可覆盖此函数以适配不同组件库） */
-function setPlayState(on){const pi=document.getElementById('playIco');if(!pi)return;
-  pi.innerHTML=on?'<rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/>':'<path d="M7 4l13 8-13 8z"/>';}
 function playTimeline(){
   if(playing)return;playing=true;
-  setPlayState(true);
   tlStep=0;bendT=0;renderTL();draw();
   const t0=performance.now();
   (function anim(now){
@@ -1659,7 +1621,7 @@ function playTimeline(){
     else{tlStep=2;bendT=1;}
     renderTL();draw();
     if(t<1)requestAnimationFrame(anim);
-    else{playing=false;setPlayState(false);tlNote.textContent=TIMELINE[2].note;}
+    else{playing=false;tlNote.textContent=TIMELINE[2].note;}
   })(t0);
 }
 
@@ -1670,7 +1632,15 @@ function playTimeline(){
 const $=id=>document.getElementById(id);
 function toggleTool(h){const t=h.parentElement,wasClosed=t.classList.contains('closed');t.classList.toggle('closed');if(wasClosed)expandIn(t.querySelector('.tool-b'));}
 function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
-function askConfirm(){$('modalMask').classList.add('show');popIn($('modalMask').querySelector('.modal'));}
+/* 导出宿主参数化：blender（headless addon）/ vectorworks（外部 IPC runner） */
+let _exportHost='blender';
+const _EXPORT_HOST_DESC={blender:'Blender（headless）· addon execute_plan',vectorworks:'Vectorworks（外部 IPC runner）· execute_plan'};
+function askConfirm(host){
+  _exportHost=(host==='vectorworks')?'vectorworks':'blender';
+  $('expModalTitle').textContent='确认执行 cad_host:'+_exportHost+'.execute？';
+  $('expModalPre').textContent='POST /api/v1/demo/export-'+_exportHost+'\n{ "confirm": true }';
+  $('modalMask').classList.add('show');popIn($('modalMask').querySelector('.modal'));
+}
 function closeModal(){$('modalMask').classList.remove('show');}
 function rejectExport(){
   $('hitl').innerHTML='<div class="hd"><span class="tag">HITL</span><span style="color:var(--red)">已拒绝 · 策略门拦截，未执行任何写盘</span></div>';
@@ -1678,14 +1648,31 @@ function rejectExport(){
 }
 /* composer */
 const ta=$('cmpTa'),slash=$('slash');
-ta.addEventListener('input',()=>{slash.classList.toggle('show',ta.value==='/');});
-ta.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg();}});
-function pickCmd(c){slash.classList.remove('show');ta.value='';
-  if(c==='/rules')openInspector('rules');
-  else if(c==='/ir')openInspector('ir');
-  else if(c==='/export')askConfirm();
-  else if(c==='/solve'){ta.value='重新调度自愈求解器';sendMsg();}
+/* 输入态三件套：发送禁用态 / ↑↓历史 / 草稿持久化（切会话不丢字） */
+var _hist=window._hist||[];window._hist=_hist;var _histIdx=-1;
+function updateSendState(){
+  const b=document.querySelector('.send');
+  if(b)b.classList.toggle('disabled',!ta.value.trim());
 }
+ta.addEventListener('input',()=>{
+  slash.classList.toggle('show',ta.value==='/');
+  updateSendState();
+  try{localStorage.setItem('wb_draft',ta.value);}catch(e){}
+});
+ta.addEventListener('keydown',e=>{
+  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg();return;}
+  if(e.key==='ArrowUp'&&!ta.selectionStart&&!ta.selectionEnd&&_hist.length){
+    _histIdx=Math.max(0,_histIdx-1);if(_histIdx>=0&&_hist[_histIdx]!==undefined){ta.value=_hist[_histIdx];updateSendState();e.preventDefault();}
+    return;
+  }
+  if(e.key==='ArrowDown'&&_hist.length){
+    _histIdx=Math.min(_hist.length,_histIdx+1);
+    ta.value=_histIdx>=_hist.length?'':_hist[_histIdx];
+    updateSendState();e.preventDefault();
+  }
+});
+try{const _d=localStorage.getItem('wb_draft');if(_d){ta.value=_d;}}catch(e){}
+updateSendState();
 function threadMode(m){const t=$('thread');t.classList.remove('ins-mode');}
 function toggleThread(){
   const t=$('thread');if(!t)return;
@@ -1695,11 +1682,29 @@ function toggleThread(){
   _smoothResize(240);
 }
 function openInspector(p){openSettingsAt(p);}
-function focusViewport(){toast('视口：拖拽旋转 · 滚轮缩放 · Shift+拖拽平移');}
 /* settings：真实实现（toggleSettings 开关 #setMask）由集成接线脚本提供；原型 setPop 版已随假数据一并删除 */
 /* toast */
 let toastTm;
 function toast(m){const t=$('toastEl');t.textContent=m;t.classList.add('show');clearTimeout(toastTm);toastTm=setTimeout(()=>t.classList.remove('show'),2200);}
+/* 自绘对话框（替换原生 confirm/prompt；Promise 风格，Esc/取消 = falsy） */
+function _dlgOpen({title,text,input,value,yes}){
+  return new Promise(res=>{
+    const m=$('cfmMask'),t=$('cfmTitle'),p=$('cfmText'),ip=$('cfmInput'),y=$('cfmYes'),n=$('cfmNo');
+    t.textContent=title||'确认';p.textContent=text||'';
+    ip.style.display=input?'block':'none';
+    if(input){ip.value=value||'';}
+    m.classList.add('show');
+    if(input){setTimeout(()=>{ip.focus();ip.select();},30);}else setTimeout(()=>y.focus(),30);
+    const done=v=>{m.classList.remove('show');y.onclick=n.onclick=ip.onkeydown=null;document.removeEventListener('keydown',esc);res(v);};
+    const esc=e=>{if(e.key==='Escape')done(input?null:false);};
+    y.onclick=()=>done(input?(ip.value.trim()||null):true);
+    n.onclick=()=>done(input?null:false);
+    ip.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();y.onclick();}};
+    document.addEventListener('keydown',esc);
+  });
+}
+const uiConfirm=(text,title)=>_dlgOpen({title,text});
+const uiPrompt=(text,value,title)=>_dlgOpen({title,text,input:true,value});
 /* init（支持 #plan / #prof / #step2 直达深链，便于审核截图） */
 const h=location.hash;
 if(h.includes('plan'))setView('plan',document.querySelector('#viewSeg [data-v=plan]'));
@@ -1893,7 +1898,7 @@ async function menuRenameSession(){
   const sid=_activeMenuSid;closeSessMenu();if(!sid)return;
   const el=document.querySelector(`.sess[data-sid="${sid}"]`);
   const oldTitle=el?(el.dataset.title||sid):sid;
-  const newTitle=prompt('重命名会话：',oldTitle);
+  const newTitle=await uiPrompt('重命名会话：',oldTitle,'重命名会话');
   if(!newTitle||newTitle.trim()===oldTitle)return;
   try{
     const r=await fetch(`/api/v1/sessions/${sid}`,{method:'PATCH',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({title:newTitle.trim()})});
@@ -1919,7 +1924,7 @@ async function menuDeleteSession(){
   const sid=_activeMenuSid;closeSessMenu();if(!sid)return;
   const el=document.querySelector(`.sess[data-sid="${sid}"]`);
   const title=el?(el.dataset.title||sid):sid;
-  if(!confirm(`确认删除会话「${title}」？此操作不可撤销。`))return;
+  if(!(await uiConfirm(`确认删除会话「${title}」？此操作不可撤销。`,'删除会话')))return;
   try{
     const r=await fetch(`/api/v1/sessions/${sid}`,{method:'DELETE',headers:_H({'X-Request-ID':_rid()})});
     const d=await r.json();
@@ -1989,7 +1994,7 @@ async function loadSessions(selectId){
   list.innerHTML=html;
   return items;
 }
-const _KEEP=['welcomeLine','tool2','artIR','hitl','tool3','rcpt','doneLine'];
+const _KEEP=['welcomeLine','artIR','hitl','tool3','rcpt','doneLine'];  /* tool2 已随演示流硬编码移除 */
 async function loadSessionEvents(sid,el){
   _curSession=sid;
   _lastEventsSig='';  /* 切会话重置签名，强制全量重渲染 */
@@ -2400,6 +2405,7 @@ function toggleSidebar(){
 }
 document.addEventListener('keydown',e=>{
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='b'){e.preventDefault();toggleSidebar();}
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();newTaskModal();}
 });
 function toggleSettings(e){
   e&&e.stopPropagation();
@@ -2413,6 +2419,19 @@ function toggleSettings(e){
 document.addEventListener('keydown',e=>{
   if(e.key==='Escape'){const p=$('setMask');if(p&&p.classList.contains('show'))p.classList.remove('show');}
 });
+/* 常规区：实时真值（API 端点 / LLM 基线 / 微内核统计 / 规则集协议） */
+async function loadGeneral(){
+  const ge=$('genEndpoint');if(!ge)return;
+  ge.value=location.origin+'/api/v1';
+  const ri=await _get('/api/v1/demo/runtime-info');
+  if(ri){
+    $('genLLM').value=(ri.llm&&ri.llm.configured)?(ri.llm.model+' @ '+ri.llm.base_url):'未配置（离线确定性模板）';
+    $('genKernel').value=ri.registry.plugins+' 插件 · '+ri.registry.capabilities+' 能力 · '+ri.registry.policies+' 策略门';
+  }else{$('genLLM').value='读取失败';$('genKernel').value='读取失败';}
+  const rt=await _get('/api/v1/demo/rule-tree');
+  $('genRules').value=(rt&&rt.rules&&rt.rules.length)?
+    (rt.protocol_version||'v?')+' · compiler '+(rt.compiler_version||'?')+' · '+rt.rules.length+' 条 · sha '+String(rt.canonical_sha256||'').slice(0,12)+'…':'读取失败';
+}
 async function loadSettings(){
   const th=localStorage.getItem('wb_theme')||'dark';
   const selTh=$('selTheme');if(selTh)selTh.value=th;
@@ -2423,6 +2442,7 @@ async function loadSettings(){
   loadProviders();
   loadMemory();
   refreshHosts();
+  loadGeneral();
   /* 技能与 MCP 服务器（只读清单区） */
   const sk=await _get('/api/v1/skills');
   if(sk){
@@ -2625,7 +2645,7 @@ async function setProviderEnabled(provId, enabled){
 async function renameProvider(provId){
   const p = (_modelData.providers || _modelData.custom || []).find(x => x.id === provId);
   if(!p) return;
-  const newName = prompt('重命名供应商：', p.name);
+  const newName = await uiPrompt('重命名供应商：', p.name, '重命名供应商');
   if(!newName || newName.trim() === p.name) return;
   try{
     const r = await fetch(`/api/v1/settings/providers/${provId}`, {
@@ -2644,7 +2664,7 @@ async function renameProvider(provId){
 async function deleteProvider(provId){
   const p = (_modelData.providers || _modelData.custom || []).find(x => x.id === provId);
   if(!p) return;
-  if(!confirm(`确认删除供应商「${p.name}」及其所有模型？此操作不可撤销。`)) return;
+  if(!(await uiConfirm(`确认删除供应商「${p.name}」及其所有模型？此操作不可撤销。`,'删除供应商'))) return;
   try{
     const r = await fetch(`/api/v1/settings/providers/${provId}`, {
       method: 'DELETE',
@@ -2754,7 +2774,7 @@ async function saveModelModal(){
 }
 
 async function deleteModel(provId, modelName){
-  if(!confirm(`确认删除模型「${modelName}」？`)) return;
+  if(!(await uiConfirm(`确认删除模型「${modelName}」？`,'删除模型'))) return;
   try{
     const r = await fetch(`/api/v1/settings/providers/${provId}/models/${encodeURIComponent(modelName)}`, {
       method: 'DELETE',
@@ -2817,7 +2837,7 @@ async function loadMemory(){
     :'<div style="color:var(--ink3)">暂无长期记忆（写入需逐条确认，文件存 memory/）</div>';
 }
 async function delMemory(file,line){
-  if(!confirm(`确认删除该记忆条目？（${file} 第 ${line} 行，不可撤销）`))return;
+  if(!(await uiConfirm(`确认删除该记忆条目？（${file} 第 ${line} 行，不可撤销）`,'删除记忆')))return;
   try{
     const r=await fetch('/api/v1/memory/delete',{method:'POST',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({file,line,confirm:true})});
     const d=await r.json();
@@ -2827,7 +2847,7 @@ async function delMemory(file,line){
 }
 async function recordMemory(){
   const entry=$('memEntry').value.trim();if(!entry){toast('记忆条目不能为空');return;}
-  if(!confirm(`确认写入长期记忆（跨会话持久化）？\n\n${entry}`))return;
+  if(!(await uiConfirm(`确认写入长期记忆（跨会话持久化）？\n\n${entry}`,'写入记忆')))return;
   try{
     const r=await fetch('/api/v1/memory/record',{method:'POST',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({entry,file:$('memFile').value,confirm:true})});
     const d=await r.json();
@@ -2910,7 +2930,7 @@ async function loadUploads(){
     :'<div style="font-size:11px;color:var(--ink3)">暂无上传</div>';
 }
 async function delUpload(id){
-  if(!confirm(`确认删除附件？\n\n${id}`))return;
+  if(!(await uiConfirm(`确认删除附件？\n\n${id}`,'删除附件')))return;
   try{
     const r=await fetch(`/api/v1/uploads/${encodeURIComponent(id)}`,{method:'DELETE',headers:_H({'X-Request-ID':_rid()})});
     const d=await r.json();
@@ -2933,18 +2953,24 @@ async function invokeCap(){
   }catch(e){out.textContent='invoke 失败：'+e;}
 }
 
-/* ---------- HITL 导出：真实 POST /api/v1/demo/export-blender ---------- */
+/* ---------- HITL 导出：真实 POST /api/v1/demo/export-{blender|vectorworks} ---------- */
 async function doExport(){
   closeModal();
+  const host=_exportHost;
+  $('tool3Nm').textContent='cad_host:'+host+'.execute';
+  $('tool3Host').textContent=_EXPORT_HOST_DESC[host]||host;
+  $('tool3Plan').textContent='执行后回填';
   const b=$('approveBtn');b.disabled=true;b.textContent='执行中…';
   $('tool3').style.display='';riseIn($('tool3'));$('tool3').classList.remove('closed');
   $('tool3St').className='st run';$('tool3St').innerHTML='<span class="spin"></span>executing…';
   try{
-    const r=await fetch('/api/v1/demo/export-blender',{method:'POST',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({confirm:true})});
+    const r=await fetch('/api/v1/demo/export-'+host,{method:'POST',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({confirm:true})});
     const d=await r.json();
     if(!r.ok)throw new Error((d.detail&&d.detail.error&&d.detail.error.message)||d.detail||r.status);
+    if(d.status==='error')throw new Error(d.error||'导出失败');
     const rc=d.receipt||d;
     $('tool3St').className='st ok';$('tool3St').textContent='✓ '+(rc.elapsed_ms??'—')+' ms · '+(rc.status||'completed');
+    if(rc.plan_sha256)$('tool3Plan').textContent=String(rc.plan_sha256).slice(0,16)+'…';
     $('tool3').classList.add('closed');
     $('rcpt').innerHTML=`<div class="hd">✓ 交付回执 · receipt=${rc.status||'completed'}</div>`+
       `<div><span class="k">objects&nbsp;&nbsp;&nbsp;&nbsp;</span>${rc.objects??'—'}&nbsp;&nbsp;<span class="k">output_bytes&nbsp;</span>${rc.output_bytes??'—'}&nbsp;&nbsp;<span class="k">elapsed&nbsp;</span>${rc.elapsed_ms??'—'} ms</div>`+
@@ -2963,12 +2989,16 @@ const _apprShown=new Set();
 async function pollApprovals(){
   const d=await _get('/api/v1/approvals');
   if(!d)return;
-  const tab=$('tabConv');
-  let badge=tab.querySelector('.bdg');
+  /* 角标挂到线程头会话信息区（原 #tabConv 已在信息架构重构中移除；空引用会中断后续审批卡渲染） */
+  const host=$('thSessInfo');
+  let badge=host?host.querySelector('.bdg'):null;
   if(d.count>0){
-    if(!badge){badge=document.createElement('span');badge.className='bdg';tab.appendChild(badge);}
-    badge.textContent=d.count+' 待批';
-    badge.style.background='var(--amb-dim)';badge.style.color='var(--amb)';
+    if(host){
+      if(!badge){badge=document.createElement('span');badge.className='bdg';host.appendChild(badge);}
+      badge.textContent=d.count+' 待批';
+      badge.style.cssText='margin-left:6px;padding:1px 7px;border-radius:8px;font:10px var(--mono);background:var(--amb-dim);color:var(--amb)';
+      badge.title='有审批门待决（卡片在对话流中）';
+    }
   }else if(badge){badge.remove();}
   for(const it of d.items){
     if(_apprShown.has(it.id))continue;
@@ -3056,7 +3086,7 @@ async function openArchivedSession(sid){
 }
 
 async function deleteArchivedSession(sid, title){
-  if(!confirm(`确认永久删除已归档会话「${title}」？此操作不可撤销。`))return;
+  if(!(await uiConfirm(`确认永久删除已归档会话「${title}」？此操作不可撤销。`,'删除归档会话')))return;
   try{
     const r=await fetch(`/api/v1/sessions/${sid}`,{method:'DELETE',headers:_H({'X-Request-ID':_rid()})});
     const d=await r.json();
@@ -3137,16 +3167,61 @@ async function loadArchive(){
   }
 }
 
-/* ---------- Composer：普通文本 → 真实调度自愈求解器并追加回合 ---------- */
+/* ---------- Composer：普通文本 → /api/v1/chat 真实 LLM 对话；/solve → 自愈求解器演示调度 ---------- */
+/* _hist/_histIdx 声明在 composer 监听块（首个 script），此处仅复用 */
+function pushHistory(v){if(v&&_hist[_hist.length-1]!==v)_hist.push(v);if(_hist.length>50)_hist.shift();_histIdx=_hist.length;}
 async function sendMsg(){
-  const v=ta.value.trim();if(!v)return;ta.value='';slash.classList.remove('show');
+  const v=ta.value.trim();if(!v)return;ta.value='';slash.classList.remove('show');updateSendState();pushHistory(v);
+  try{localStorage.setItem('wb_draft','');}catch(e){}
   if(v.startsWith('/recall')){doRecall(v.slice(7).trim());return;}
+  if(v==='/solve'||v.startsWith('/solve ')){solveDemo();return;}
+  if(v.startsWith('/')){
+    const cmd=v.split(/\s+/)[0];
+    if(['/rules','/ir','/export','/skills','/solve'].includes(cmd)){pickCmd(cmd);return;}
+    const sc0=$('thScroll');
+    sc0.insertAdjacentHTML('beforeend',
+      `<div class="msg-you"></div><div class="agentline">未知命令 <code>${_esc(cmd)}</code>（可用：/solve /rules /ir /export /recall /skills）</div>`);
+    const ms=sc0.querySelectorAll('.msg-you');ms[ms.length-1].textContent=v;
+    sc0.scrollTop=sc0.scrollHeight;return;
+  }
+  sendChat(v);
+}
+/* 对话主循环：POST /api/v1/chat → 会话事件成对落盘 → 回读渲染（与 pipeline 同一事件源） */
+async function sendChat(v){
+  const sc=$('thScroll');
+  sc.insertAdjacentHTML('beforeend',`<div class="msg-you"></div>`+
+    `<div class="agentline" id="chatThinking"><span class="spin"></span> <span class="dim">模型思考中…</span></div>`);
+  const msgs=sc.querySelectorAll('.msg-you');msgs[msgs.length-1].textContent=v;
+  const kids=sc.children;riseIn(kids[kids.length-2]);riseIn(kids[kids.length-1],.08);
+  sc.scrollTop=sc.scrollHeight;
+  const sid=_curSession;
+  try{
+    const r=await fetch('/api/v1/chat',{method:'POST',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({message:v,session_id:sid||undefined})});
+    const d=await r.json().catch(()=>({}));
+    $('chatThinking')&&$('chatThinking').remove();
+    if(!r.ok||d.status!=='success'){
+      const hint422=(r.status===422);
+      sc.insertAdjacentHTML('beforeend',
+        `<div class="agentline">${_esc(d.error||('对话失败 '+r.status))}${hint422?' <button class="chip" onclick="openSettingsAt(\'models\')">去配置模型 →</button>':''}</div>`);
+      sc.scrollTop=sc.scrollHeight;return;
+    }
+    if(sid===_curSession&&sid){loadSessionEvents(sid);} /* 服务端已落事件：回读即含双方消息，单一事实源 */
+    else{sc.insertAdjacentHTML('beforeend',`<div class="agentline">${_esc(d.reply)}</div>`);sc.scrollTop=sc.scrollHeight;}
+    if(d.usage&&(d.usage.prompt_tokens||d.usage.completion_tokens))toast('tokens in '+d.usage.prompt_tokens+' · out '+d.usage.completion_tokens);
+  }catch(e){
+    $('chatThinking')&&$('chatThinking').remove();
+    sc.insertAdjacentHTML('beforeend',`<div class="agentline" style="color:var(--red)">对话请求失败：${_esc(String(e))}</div>`);
+    sc.scrollTop=sc.scrollHeight;
+  }
+}
+/* /solve：确定性自愈求解器调度（演示主线；真实 pipeline 走「新任务」） */
+async function solveDemo(){
   const sc=$('thScroll');
   sc.insertAdjacentHTML('beforeend',`<div class="msg-you"></div>`+
     `<div class="tool"><div class="tool-h" onclick="toggleTool(this)"><span class="ic solver">Σ</span><span class="nm">solver:self_healing</span>`+
     `<span class="st run" id="dynSt"><span class="spin"></span>running…</span><span class="car">▾</span></div>`+
     `<div class="tool-b" id="dynB"><div>经 registry.invoke 调度内置市政自愈场景（真实求解中…）</div></div></div>`);
-  const msgs=sc.querySelectorAll('.msg-you');msgs[msgs.length-1].textContent=v;
+  const msgs=sc.querySelectorAll('.msg-you');msgs[msgs.length-1].textContent='/solve（调度自愈求解器）';
   const kids=sc.children;riseIn(kids[kids.length-2]);riseIn(kids[kids.length-1],.08);
   sc.scrollTop=sc.scrollHeight;
   playTimeline();
@@ -3168,12 +3243,12 @@ async function sendMsg(){
 }
 
 /* ---------- 斜杠命令补全：/recall（FTS5 检索）与 /skills（技能库） ---------- */
-function pickCmd(c){slash.classList.remove('show');ta.value='';
+function pickCmd(c){slash.classList.remove('show');ta.value='';updateSendState();
   if(c==='/rules')openInspector('rules');
   else if(c==='/ir')openInspector('ir');
-  else if(c==='/export')askConfirm();
-  else if(c==='/solve'){ta.value='重新调度自愈求解器';sendMsg();}
-  else if(c==='/recall'){ta.value='/recall ';ta.focus();toast('输入 /recall 关键词 检索历史会话（FTS5）');}
+  else if(c==='/export')askConfirm('blender');
+  else if(c==='/solve'){solveDemo();}
+  else if(c==='/recall'){ta.value='/recall ';ta.focus();updateSendState();toast('输入 /recall 关键词 检索历史会话（FTS5）');}
   else if(c==='/skills'){listSkills();}
 }
 async function doRecall(q){
@@ -3246,11 +3321,12 @@ async function restartHost(id){
   }catch(e){toast('重启失败：'+e);}
   setTimeout(refreshHosts,4000);  /* 退避窗口后刷新宿主状态 */
 }
-/* 深链直达（审核/演示）：#skills 打开技能库；#recall=关键词 触发 FTS5 检索；#settings 打开设置（延迟执行，避免被首轮会话渲染覆盖） */
+/* 深链直达（审核/演示）：#skills 打开技能库；#recall=关键词 触发 FTS5 检索；#settings 打开设置、#settings=分区 直达指定分区（延迟执行，避免被首轮会话渲染覆盖） */
 setTimeout(()=>{
   if(location.hash.includes('skills'))listSkills();
   const _rc=location.hash.match(/recall=([^&]+)/);if(_rc)doRecall(decodeURIComponent(_rc[1]));
-  if(location.hash.includes('settings'))toggleSettings();
+  const _sh=location.hash.match(/settings(?:=([a-z]+))?/);
+  if(_sh){if(_sh[1]&&_SET_SECTIONS[_sh[1]])openSettingsAt(_sh[1]);else toggleSettings();}
 },900);
 </script>
 
