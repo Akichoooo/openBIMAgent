@@ -26,7 +26,7 @@ from openbimagent.server.readonly_http import (
 )
 from openbimagent.server.sse_endpoint import M2SseStreamBudget, add_sse_endpoint
 from openbimagent.server.web_ui import add_web_ui
-from openbimagent.server.chat import add_chat
+from openbimagent.server.chat import add_chat, add_chat_stream
 from openbimagent.server.workbench_io import add_workbench_io
 from openbimagent.server.runs import add_runs
 from openbimagent.server.approvals import add_approvals
@@ -96,11 +96,12 @@ def build_m2_readonly_app(
     )
     if sessions_dir is not None:
         add_sse_endpoint(app, sessions_dir=sessions_dir, budget=sse_budget)
-    # P1-1：挂载 env 配置的第三方 MCP server（mcp:* 能力，默认 prompt 策略门）
+    # P1-1：挂载第三方 MCP server（mcp:* 能力，默认 prompt 策略门）
+    # 配置来源：config/mcp_servers.local.json（设置页「保存 MCP」写入）> OPENBIMAGENT_MCP_SERVERS env
     from openbimagent.core.plugin import default_plugin_registry
-    from openbimagent.mcp_clients.external import attach_external_servers_from_env
+    from openbimagent.mcp_clients.external import attach_external_servers_from_config
 
-    attach_external_servers_from_env(default_plugin_registry)
+    attach_external_servers_from_config(default_plugin_registry)
     from openbimagent.server.auth import load_or_create_token
 
     workbench_token = load_or_create_token()
@@ -110,6 +111,11 @@ def build_m2_readonly_app(
     add_runs(app)
     add_approvals(app)
     add_chat(app)
+    add_chat_stream(app)
+
+    from openbimagent.server.workspaces import register_workspace_routes
+
+    register_workspace_routes(app)
 
     invoke_guard = InvokeConcurrencyGuard(invoke_max_concurrency)
     export_guard = InvokeConcurrencyGuard(1)  # 真机导出串行：Blender/VW 共用，防并发多宿主写盘

@@ -33,7 +33,7 @@ def test_sse_with_invalid_session_id_returns_event() -> None:
     adapter = M2ReadonlyHttpAdapter(service)
     app = build_m2_readonly_app(adapter, sessions_dir=Path("."))
     client = TestClient(app)
-    resp = client.get("/api/v1/sessions/invalid-session/events", headers={"X-Request-ID": "t-001"})
+    resp = client.get("/api/v1/sessions/invalid-session/events/projection", headers={"X-Request-ID": "t-001"})
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/event-stream")
 
@@ -45,7 +45,7 @@ def test_sse_unknown_session_returns_error() -> None:
     adapter = M2ReadonlyHttpAdapter(service)
     app = build_m2_readonly_app(adapter, sessions_dir=Path("."))
     client = TestClient(app)
-    resp = client.get("/api/v1/sessions/nonexistent/events", headers={"X-Request-ID": "t-002"})
+    resp = client.get("/api/v1/sessions/nonexistent/events/projection", headers={"X-Request-ID": "t-002"})
     assert resp.status_code == 200
     lines = resp.text.split("\n")
     # Should return an error event
@@ -60,7 +60,7 @@ def test_sse_stream_budget_rejects_over_limit() -> None:
     adapter = M2ReadonlyHttpAdapter(service)
     app = build_m2_readonly_app(adapter, sessions_dir=Path("."), sse_budget=budget)
     client = TestClient(app)
-    resp = client.get("/api/v1/sessions/valid-id/events", headers={"X-Request-ID": "t-003"})
+    resp = client.get("/api/v1/sessions/valid-id/events/projection", headers={"X-Request-ID": "t-003"})
     assert resp.status_code == 200
     lines = resp.text.split("\n")
     assert any("event: error" in line for line in lines)
@@ -98,7 +98,7 @@ def test_sse_with_real_session(tmp_path: Path) -> None:
     app = build_m2_readonly_app(adapter, sessions_dir=tmp_path)
     client = TestClient(app)
     resp = client.get(
-        f"/api/v1/sessions/{store.session_id}/events",
+        f"/api/v1/sessions/{store.session_id}/events/projection",
         headers={"X-Request-ID": "t-004"},
     )
     assert resp.status_code == 200
@@ -131,7 +131,7 @@ def test_sse_replay_with_last_event_id(tmp_path: Path) -> None:
 
     # First request: get all events
     resp1 = client.get(
-        f"/api/v1/sessions/{store.session_id}/events",
+        f"/api/v1/sessions/{store.session_id}/events/projection",
         headers={"X-Request-ID": "t-005", "Last-Event-ID": ""},
     )
     assert resp1.status_code == 200
@@ -145,10 +145,36 @@ def test_sse_replay_with_last_event_id(tmp_path: Path) -> None:
     if len(event_ids) >= 2:
         last_id = event_ids[-2]
         resp2 = client.get(
-            f"/api/v1/sessions/{store.session_id}/events",
+            f"/api/v1/sessions/{store.session_id}/events/projection",
             headers={"X-Request-ID": "t-006", "Last-Event-ID": last_id},
         )
         assert resp2.status_code == 200
         # Should have fewer events than the full list
         replay_ids = [line.split("id: ")[1] for line in resp2.text.split("\n") if line.startswith("id: ")]
         assert len(replay_ids) < len(event_ids)
+
+
+def test_events_json_and_m2_projection_do_not_shadow(tmp_path: Path) -> None:
+    """B5 回归：同一 app 传入 sessions_dir 时，workbench 的 JSON /events(runs.py)与
+    M2 持久投影 SSE /events/projection(sse_endpoint.py)分流到不同 handler，互不遮蔽。
+
+    修复前两者抢注 /events，FastAPI 先注册先匹配 → server 模式(传 sessions_dir)下
+    workbench 的 JSON 读取端点被 M2 SSE 遮蔽，前端 getSessionEvents 拿不到 JSON。
+    """
+    service = M2ReadOnlyService(
+        control_plane=_MockReader(), session_index_reader=lambda: [], artifact_lookup=lambda _: None
+    )
+    adapter = M2ReadonlyHttpAdapter(service)
+    app = build_m2_readonly_app(adapter, sessions_dir=tmp_path)
+    client = TestClient(app)
+
+    # workbench JSON 读取端点命中 runs.py(content-type=application/json)，未被 M2 SSE 遮蔽
+    json_resp = client.get("/api/v1/sessions/coexist-check/events")
+    assert json_resp.headers["content-type"].startswith("application/json")
+
+    # M2 持久投影端点走独立子路径，命中 sse_endpoint.py(content-type=text/event-stream)
+    proj_resp = client.get(
+        "/api/v1/sessions/coexist-check/events/projection",
+        headers={"X-Request-ID": "t-coexist"},
+    )
+    assert proj_resp.headers["content-type"].startswith("text/event-stream")

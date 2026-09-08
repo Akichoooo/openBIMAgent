@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import time
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Sequence
@@ -29,6 +29,12 @@ from openbimagent.benchmark.self_healing_ablation import (
     AblationMethodStats,
     run_self_healing_ablation,
 )
+from openbimagent.benchmark.reliability_passk import PassKReport, run_passk
+from openbimagent.benchmark.trajectory_metrics import (
+    TrajectoryMetrics,
+    compute_trajectory_metrics,
+)
+from openbimagent.benchmark.vlm_scorecard import VLMScorecard, run_vlm_scorecard
 from openbimagent.utility.hydraulic_solver import solve_hydraulic_network
 from openbimagent.utility.solver import solve_straight_gravity_utility
 
@@ -50,6 +56,13 @@ class MethodBenchmarkMetrics:
     avg_latency_ms: float  # 平均耗时 (ms)
     avg_tool_calls: float  # 平均工具调用/求解器运行轮次
     avg_token_count: int  # 平均消耗 Token 数 (离线确定性方法为 0)
+    # A1/A2 论文级轨迹与可靠性指标（仅神经-符号 agent 行实测；其他范式 None=不适用）
+    task_success_rate: float | None = None
+    trajectory_accuracy: float | None = None
+    evidence_chain_completeness: float | None = None
+    fail_closed_compliance: float | None = None
+    pass_at_1: float | None = None
+    pass_at_k: float | None = None
     measured: bool = True  # 指标是否来自真实运行测量
     provenance: str = ""  # 数据来源与计算口径说明
 
@@ -63,6 +76,9 @@ class AcademicBenchmarkReport:
     scenario_count: int
     scenarios: tuple[str, ...]
     methods: tuple[MethodBenchmarkMetrics, ...]
+    trajectory: TrajectoryMetrics | None = None
+    passk: PassKReport | None = None
+    vlm: VLMScorecard | None = None
 
     def to_markdown_table(self) -> str:
         """生成学术论文标准 Markdown 表格。"""
@@ -96,6 +112,7 @@ class AcademicBenchmarkReport:
                 "> † **警告**：标注 † 的方法未经过真实运行测量，其数值禁止作为实验结果引用于论文、"
                 "开题材料或答辩演示；仅代表评测框架的目标范式占位。"
             )
+        lines.extend(self._trajectory_section_markdown())
         return "\n".join(lines)
 
     def to_latex_table(self) -> str:
@@ -128,14 +145,51 @@ class AcademicBenchmarkReport:
         lines.append(r"\end{table}")
         return "\n".join(lines)
 
+    def _trajectory_section_markdown(self) -> list[str]:
+        """A1/A2：轨迹质量与 pass^k 可靠性小节（对标 2026 task-success vs trajectory-accuracy）。"""
+        if self.trajectory is None:
+            return []
+        t = self.trajectory
+        out = [
+            "",
+            "### 轨迹质量与可靠性 (Trajectory Accuracy & pass^k)",
+            "",
+            "| 指标 | 值 | 口径 |",
+            "| :--- | :---: | :--- |",
+            f"| Task Success Rate | {t.task_success_rate:.1f}% | observed == expected（结果正确） |",
+            f"| **Trajectory Accuracy** | {t.trajectory_accuracy:.1f}% | 结果对 + 过程可审计（拒绝 scrappy win） |",
+            f"| Evidence-Chain Completeness | {t.evidence_chain_completeness:.1f}% | 六环存在且校验通过 |",
+            f"| **Fail-Closed Compliance** | {t.fail_closed_compliance:.1f}% | 预期非 PASS 场景严格未升格 |",
+        ]
+        if self.passk is not None:
+            pk = self.passk
+            flag = "✓ 零方差" if pk.determinism_confirmed else "✗ 有方差"
+            out.append(f"| pass^1 | {pk.pass_at_1:.1f}% | 单次运行成功率 |")
+            out.append(
+                f"| **pass^{pk.k}** | {pk.pass_at_k:.1f}% | 连续 {pk.k} 次全部成功（确定性 {flag}） |"
+            )
+        if self.vlm is not None:
+            out.extend(["", "**VLM 六维视觉评分（双环自检证据）：**", "", "| 维度 | 分数 | 说明 |", "| :--- | :---: | :--- |"])
+            out.extend(self.vlm.to_markdown_rows())
+            out.append(f"> VLM 数据来源：{self.vlm.provenance}")
+        out.append("")
+        out.append(f"> 轨迹指标数据来源：{t.provenance}")
+        if self.passk is not None:
+            out.append(f"> pass^k 数据来源：{self.passk.provenance}")
+        return out
+
 
 def _run_agent_method_row(
     scenarios: Sequence[str],
     *,
     work_dir: Path,
     repetitions: int,
-) -> MethodBenchmarkMetrics:
-    """真实运行 M1.5 T7 基准，实测 openBIMAgent (神经-符号) 各项指标。"""
+) -> tuple[MethodBenchmarkMetrics, tuple]:
+    """真实运行 M1.5 T7 基准，实测 openBIMAgent (神经-符号) 各项指标。
+
+    返回 (metrics, results)：results 为 BenchmarkScenarioResult 元组，供上层派生
+    轨迹质量指标（A1）与 pass^k（A2）复用，避免重复运行基准。
+    """
     m15_report = run_m1_5_t7_benchmark(
         output_dir=work_dir / "m1_5_t7",
         scenario_ids=scenarios,
@@ -150,7 +204,8 @@ def _run_agent_method_row(
     avg_latency = sum(r.performance.duration_ms for r in results) / max(1, total)
     avg_solver_runs = sum(r.performance.solver_runs for r in results) / max(1, total)
 
-    return MethodBenchmarkMetrics(
+    trajectory = compute_trajectory_metrics(results)
+    metrics = MethodBenchmarkMetrics(
         method_name="openBIMAgent (Neuro-Symbolic + Solvers)",
         total_cases=total,
         topology_valid_rate=round(verdict_correct / max(1, total) * 100.0, 1),
@@ -159,6 +214,10 @@ def _run_agent_method_row(
         avg_latency_ms=round(avg_latency, 1),
         avg_tool_calls=round(avg_solver_runs, 1),
         avg_token_count=0,
+        task_success_rate=trajectory.task_success_rate,
+        trajectory_accuracy=trajectory.trajectory_accuracy,
+        evidence_chain_completeness=trajectory.evidence_chain_completeness,
+        fail_closed_compliance=trajectory.fail_closed_compliance,
         measured=True,
         provenance=(
             f"M1.5 T7 基准真实运行 (repetitions={repetitions})：拓扑判定正确 {verdict_correct}/{total} "
@@ -168,6 +227,7 @@ def _run_agent_method_row(
             "Token=0 (离线确定性内核，LLM 在线链路 token 计量待接入)。"
         ),
     )
+    return metrics, results
 
 
 def _run_heuristic_method_row(scenarios: Sequence[str]) -> MethodBenchmarkMetrics:
@@ -311,6 +371,11 @@ def run_academic_benchmark(
     work_dir: Path | None = None,
     repetitions: int = 2,
     include_llm_baseline: bool | None = None,
+    include_passk: bool = False,
+    passk_scenarios: Sequence[str] = ("B1", "B2", "B3"),
+    passk_k: int = 5,
+    include_vlm_scorecard: bool = False,
+    vlm_image_paths: Sequence[Path | str] = (),
 ) -> AcademicBenchmarkReport:
     """运行学术基准评测并输出带数据来源声明的量化对比报告。
 
@@ -326,7 +391,18 @@ def run_academic_benchmark(
 
     with tempfile.TemporaryDirectory(prefix="bimbench-academic-") as tmp:
         root = Path(work_dir) if work_dir is not None else Path(tmp)
-        agent_row = _run_agent_method_row(scenarios, work_dir=root, repetitions=repetitions)
+        agent_row, agent_results = _run_agent_method_row(
+            scenarios, work_dir=root, repetitions=repetitions
+        )
+
+    # A1：轨迹质量指标（复用 agent 行的真实 T7 结果，零额外运行成本）
+    trajectory = compute_trajectory_metrics(agent_results)
+    # A2：pass^k 可靠性（可选，需独立重跑 k 次；默认关闭控成本，opt-in 启用）
+    passk = run_passk(passk_scenarios, k=passk_k, repetitions=2) if include_passk else None
+    if passk is not None:
+        agent_row = replace(agent_row, pass_at_1=passk.pass_at_1, pass_at_k=passk.pass_at_k)
+    # A4：VLM 六维视觉评分（需 vision profile + 渲染图；离线/无图/无key 诚实降级为占位）
+    vlm = run_vlm_scorecard(vlm_image_paths) if include_vlm_scorecard else None
 
     heuristic_row = _run_heuristic_method_row(scenarios)
 
@@ -365,6 +441,9 @@ def run_academic_benchmark(
         scenario_count=total,
         scenarios=tuple(scenarios),
         methods=(agent_row, healing_on_row, healing_off_row, heuristic_row, llm_row),
+        trajectory=trajectory,
+        passk=passk,
+        vlm=vlm,
     )
 
     if output_path is not None:

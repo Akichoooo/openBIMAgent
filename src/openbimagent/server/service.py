@@ -292,6 +292,7 @@ class M2ReadOnlyService:
             "event_count": event_count,
             "archived": bool(entry.get("archived", False)),
             "archived_at": str(entry.get("archived_at", "")),
+            "workspace": str(entry.get("workspace") or ""),  # 工作区归属（空串 = 不在项目中）
         }
 
     @staticmethod

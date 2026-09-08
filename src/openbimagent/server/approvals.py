@@ -98,8 +98,18 @@ def _append_session_event(sessions_dir: Path, session_id: str, custom_type: str,
         pass
 
 
-def make_web_approval_fn(session_id: str, sessions_dir: Path):
-    """构造阻塞式 Web 审批门：挂起运行线程直到前端 decide 或超时（失败关闭）。"""
+def make_web_approval_fn(session_id: str, sessions_dir: Path, auto_approve: bool = False):
+    """构造阻塞式 Web 审批门：挂起运行线程直到前端 decide 或超时（失败关闭）；auto_approve=True 时直接放行（自主模式）。"""
+    if auto_approve:
+        def approve(operation: str, params: dict[str, Any]) -> bool:
+            _append_session_event(
+                sessions_dir,
+                session_id,
+                "approval_decided",
+                {"ticket_id": "auto-yolo", "operation": operation, "decision": "approved", "actor": "system:yolo_autonomous"},
+            )
+            return True
+        return approve
 
     def approve(operation: str, params: dict[str, Any]) -> bool:
         from openbimagent.session.schema import uuid7
@@ -206,6 +216,18 @@ def add_approvals(app: FastAPI) -> None:
                     content={"status": "error", "error": "票据已过期（进程重启后运行线程不可恢复），请拒绝以作废"},
                 )
         ticket["decision"] = decision
+        from openbimagent.audit import log_audit
+        
+        log_audit(
+            "approval_decided",
+            {
+                "ticket": ticket_id,
+                "operation": ticket.get("operation"),
+                "decision": decision,
+                "actor": actor,
+            },
+            "ok" if decision == "approved" else "rejected",
+        )
         ticket["actor"] = actor
         instruction = request.get("instruction")
         if isinstance(instruction, str) and instruction.strip():

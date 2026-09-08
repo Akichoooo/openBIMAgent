@@ -23,6 +23,7 @@ docs/学术材料/
 
 # Internal session logs
 .workbuddy/
+.box-agent/
 
 # Temp exports
 *.bimbench.json

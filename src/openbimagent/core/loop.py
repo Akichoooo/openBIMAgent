@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import subprocess
 import threading
 from pathlib import Path
@@ -30,6 +31,61 @@ ToolName = Literal["read", "write", "edit", "bash", "mcp_call", "vision_check", 
 """循环允许挂载的 8 个工具名,超出即配置错误(COMPONENTS §2.1)。"""
 
 TOOL_NAMES: tuple[ToolName, ...] = ("read", "write", "edit", "bash", "mcp_call", "vision_check", "subagent", "deliver")
+
+WRITE_TOOLS: frozenset[str] = frozenset({"write", "edit", "bash", "mcp_call", "deliver"})
+"""写操作工具集:只读模式(plan)硬拦截这些工具(权限加固,不依赖 LLM 自觉)。"""
+
+_DANGER_PATTERNS = (
+    "rm -rf /",
+    "rm -rf ~",
+    "mkfs",
+    "dd if=",
+    "format c:",
+    "shutdown",
+    "reboot",
+    "reg delete",
+    "del /s /q c:\\",
+    "sudo ",
+    "chmod -r 777 /",
+    ":(){:|:&};:",
+)
+
+
+def _sandbox_denied(command: str) -> str | None:
+    """OS 级沙箱:危险命令模式匹配,命中返回拒绝原因。"""
+    low = command.lower()
+    for pat in _DANGER_PATTERNS:
+        if pat in low:
+            return f"危险命令模式: {pat}"
+    return None
+
+
+def _persist_file_checkpoint(session_id: str, path: str, old_content: str) -> None:
+    """文件级 checkpoint 持久化(append-only jsonl),供 rewind 物理回滚。"""
+    ck = Path.cwd() / "out" / "checkpoints" / f"{session_id}.jsonl"
+    try:
+        ck.parent.mkdir(parents=True, exist_ok=True)
+        with ck.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"path": path, "old": old_content}, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+def restore_file_checkpoints(session_id: str) -> int:
+    """rewind 物理回滚:按 checkpoint jsonl 逆序恢复文件旧内容,返回恢复文件数。"""
+    ck = Path.cwd() / "out" / "checkpoints" / f"{session_id}.jsonl"
+    if not ck.is_file():
+        return 0
+    lines = ck.read_text(encoding="utf-8").splitlines()
+    restored = 0
+    for ln in reversed(lines):
+        try:
+            rec = json.loads(ln)
+            Path(rec["path"]).write_text(rec["old"], encoding="utf-8")
+            restored += 1
+        except (json.JSONDecodeError, OSError, KeyError):
+            continue
+    return restored
 
 MAX_TOOLS = 8
 
@@ -290,6 +346,8 @@ class AgentLoop:
         depth: int = 0,
         mcp_clients: dict[str, Any] | None = None,
         vision_checker: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+        mode: str = "agent",
+        token_budget: int | None = None,
     ) -> None:
         """挂载工具(≤8,超出报错)并绑定 session 树;system prompt 超 token 预算即配置错误。"""
         if len(tools) > MAX_TOOLS:
@@ -304,6 +362,10 @@ class AgentLoop:
         self.approval_request_callback = approval_request_callback
         self.steer_callback = steer_callback
         self.permission_rules = permission_rules or {}
+        self.mode = mode if mode in ("plan", "agent", "yolo") else "agent"
+        self.token_budget = token_budget  # 根目标 token 预算(Codex 范式:子代理 token 计入)
+        self._subagent_tokens = 0
+        self._file_ckpts: list[tuple[str, str]] = []  # (path, old_content) 写前快照
         self._cancel_event: threading.Event | None = None
         self.max_steps = max_steps
         self.workdir = Path(workdir) if workdir else Path.cwd()
@@ -496,6 +558,16 @@ class AgentLoop:
     def _execute_tool(self, tc: dict[str, Any]) -> dict[str, Any]:
         """执行一次工具调用:写 tool_call(call) 事件 → 审批门 → 执行 → 写 tool_call(result) 事件。"""
         name, args = tc["name"], tc["arguments"]
+        # 只读模式硬拦截写工具(权限加固:不依赖 LLM 自觉,直接拒绝并审计留痕)
+        if self.mode == "plan" and name in WRITE_TOOLS:
+            from openbimagent.audit import log_audit
+
+            log_audit("tool_blocked_readonly", {"tool": name, "mode": self.mode}, "blocked")
+            return _tool_result(
+                "denied",
+                f"只读模式拦截写工具 {name}:仅输出方案,不执行修改。",
+                {"permission": "readonly_mode"},
+            )
         self.session.append_new(
             EventType.TOOL_CALL,
             {
@@ -532,7 +604,7 @@ class AgentLoop:
         approval_granted = False
         if perm is Permission.DENY:
             return _tool_result("denied", f"工具 {perm_key} 被权限规则拒绝(deny)。", {"permission": "deny"})
-        if perm is Permission.ASK:
+        if perm is Permission.ASK and self.mode != "yolo":
             approved = (
                 self.approval_request_callback(name, perm_key, args, self._cancel_event)
                 if self.approval_request_callback is not None
@@ -567,6 +639,15 @@ class AgentLoop:
         p = Path(path)
         return p if p.is_absolute() else self.workdir / p
 
+    def _snapshot_file(self, path: Path) -> None:
+        """文件级 checkpoint(Claude 范式):写前快照旧内容,供 rewind 物理回滚。"""
+        try:
+            old = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
+            self._file_ckpts.append((str(path), old))
+            _persist_file_checkpoint(self.session.session_id, str(path), old)
+        except OSError:
+            pass
+
     def _tool_read(self, args: dict[str, Any]) -> dict[str, Any]:
         path = self._resolve(args["path"])
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -578,6 +659,7 @@ class AgentLoop:
         path = self._resolve(args["path"])
         path.parent.mkdir(parents=True, exist_ok=True)
         content = args["content"]
+        self._snapshot_file(path)  # 文件级 checkpoint:写前快照供物理回滚
         path.write_text(content, encoding="utf-8")
         return _tool_result("ok", f"已写入 {path}({len(content)} 字符)。", {"path": str(path), "chars": len(content)})
 
@@ -593,11 +675,20 @@ class AgentLoop:
                 f"在 {path} 中匹配到 {count} 处,请提供更多上下文或设 replace_all=true。",
                 {"path": str(path), "replaced": 0},
             )
+        self._snapshot_file(path)  # 文件级 checkpoint:写前快照供物理回滚
         path.write_text(text.replace(args["old"], args["new"]), encoding="utf-8")
         return _tool_result("ok", f"已在 {path} 替换 {count} 处。", {"path": str(path), "replaced": count})
 
     def _tool_bash(self, args: dict[str, Any]) -> dict[str, Any]:
         command = args["command"]
+        # OS 级沙箱(Codex 范式):危险命令 deny + env 最小化(不泄露 API key) + cwd 限定 + 审计
+        denied = _sandbox_denied(command)
+        if denied:
+            from openbimagent.audit import log_audit
+
+            log_audit("bash_sandbox_denied", {"command": command[:200], "reason": denied}, "blocked")
+            return _tool_result("denied", f"沙箱拒绝危险命令: {denied}", {"command": command, "sandbox": True})
+        safe_env = {k: os.environ[k] for k in ("PATH", "SYSTEMROOT", "TEMP", "TMP") if k in os.environ}
         try:
             proc = subprocess.run(
                 command,
@@ -608,6 +699,7 @@ class AgentLoop:
                 timeout=BASH_TIMEOUT_S,
                 encoding="utf-8",
                 errors="replace",
+                env=safe_env,
             )
         except subprocess.TimeoutExpired:
             return _tool_result("error", f"命令超时({BASH_TIMEOUT_S}s): {command}", {"command": command, "timeout": True})
@@ -707,7 +799,17 @@ class AgentLoop:
         if action == "join":
             envelope = self.subagent_runtime.join(str(args["request_id"]), timeout_s=args.get("timeout_s"))
             status = "ok" if envelope.status.value == "completed" else "error"
-            return _tool_result(status, envelope.llm_summary(), envelope.ui_dict())
+            # Codex 范式:嵌套 subagent token 计入根目标预算
+            ui = envelope.ui_dict()
+            sub_tokens = int(ui.get("total_tokens") or ui.get("tokens") or 0)
+            self._subagent_tokens += sub_tokens
+            if self.token_budget is not None and self._subagent_tokens > self.token_budget:
+                return _tool_result(
+                    "error",
+                    f"子代理累计 token {self._subagent_tokens} 超根预算 {self.token_budget},停止派发。",
+                    {**ui, "subagent_tokens": self._subagent_tokens, "budget_exceeded": True},
+                )
+            return _tool_result(status, envelope.llm_summary(), {**ui, "subagent_tokens": self._subagent_tokens})
         if action == "resume":
             handle, receipt = self.subagent_runtime.resume(
                 str(args["request_id"]),

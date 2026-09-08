@@ -809,6 +809,19 @@ class _UsageTrackingRegistry:
             })
         except Exception:
             pass
+        # 同步入统一用量流水账（工作台「用量」仪表盘数据源；失败不影响 pipeline）
+        try:
+            from openbimagent.server.usage_ledger import record_call
+
+            record_call(
+                model=result.get("model_resolved", "unknown"),
+                prompt_tokens=usage.get("prompt_tokens"),
+                completion_tokens=usage.get("completion_tokens"),
+                total_tokens=usage.get("total_tokens"),
+                source="pipeline",
+            )
+        except Exception:
+            pass
         return result
 
     def __getattr__(self, name: str) -> Any:

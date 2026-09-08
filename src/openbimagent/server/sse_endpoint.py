@@ -1,8 +1,13 @@
 """M2 P4 SSE 网络服务端点。
 
-将 M2SseProjector 的持久事实投影封装为 /api/v1/sessions/{session_id}/events 的
-Server-Sent Events。事件从 Session JSONL 文件投影，不持有 Runtime lease、不读取
+将 M2SseProjector 的持久事实投影封装为 /api/v1/sessions/{session_id}/events/projection
+的 Server-Sent Events。事件从 Session JSONL 文件投影，不持有 Runtime lease、不读取
 IPC token、不构造 Runtime。支持 Last-Event-ID 与 cursor 回放窗口。
+
+路径说明(B5):M2 持久投影走独立子路径 /events/projection，与 workbench 的 JSON 读取
+端点 /events 及实时跟随端点 /events/stream(均在 runs.py)分离，避免同一 app 传入
+sessions_dir 时路由互相遮蔽(FastAPI 先注册先匹配;此前 M2 SSE 抢注 /events 会遮蔽
+workbench 的 JSON 读取端点，导致前端 getSessionEvents 拿不到 JSON)。
 
 连接预算:同一时刻最多 M2_SSE_MAX_ACTIVE_STREAMS 个活跃流;超出失败关闭。
 慢消费者:单次写入超时即断开,防止背压累计。
@@ -71,7 +76,7 @@ def add_sse_endpoint(app: FastAPI, *, sessions_dir: Path, budget: M2SseStreamBud
     projector = M2SseProjector()
     stream_budget = budget or M2SseStreamBudget()
 
-    @app.get("/api/v1/sessions/{session_id}/events")
+    @app.get("/api/v1/sessions/{session_id}/events/projection")
     async def _session_events(session_id: str, request: Request) -> StreamingResponse:
         request_id = request.headers.get("x-request-id", "invalid-request")
         try:

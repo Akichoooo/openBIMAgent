@@ -7,7 +7,6 @@ OPENBIMAGENT_SESSIONS_DIR 指向 tmp_path 隔离；pipeline 产物仍写仓库 o
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient

@@ -22,11 +22,21 @@ type = "openai-compatible"
 base_url = "https://freetokenfaucet.com/v1"
 api_key_env = "FREETOKENFAUCET_API_KEY"
 
+[providers.sensenova]
+type = "openai-compatible"               # 用户确认 OpenAI 兼容 /chat/completions
+base_url = "https://token.sensenova.cn/v1"
+api_key_env = "SENSENOVA_API_KEY"        # key 从环境变量读(.env via uv run --env-file)
+
 [models."glm-5.2"]
 provider = "glm"
 context_window = 1_000_000          # 调研值,待确认
 capabilities = ["tools"]            # 不支持 vision(控制台确认)
 cost_per_mtoken = { input = 0.84, output = 2.64 }
+[models."glm-5.2".reasoning]
+wire = "effort"
+levels = ["none", "low", "high", "max"]
+can_disable = true
+force_think = false
 
 [models."gemini-3.1-pro"]
 provider = "gemini"
@@ -65,14 +75,32 @@ capabilities = ["tools"]
 [models."deepseek-v4-flash"]
 provider = "freetokenfaucet"
 capabilities = ["tools"]
+[models."deepseek-v4-flash".reasoning]
+wire = "thinking.type+effort"
+levels = ["disabled", "low", "high", "max"]
+can_disable = true
+force_think = false
 
 [models."mimo-v2.5"]
 provider = "freetokenfaucet"
-capabilities = ["tools"]
+capabilities = ["tools", "vision"]   # 实测确认多模态(2026-09-07):base64 内联图+stream → 200 content='Red';reasoning 模型需 stream 绕过网关 ~15s origin 超时
+context_window = 128_000
+cost_multiplier = 0.3
+description = "小米多模态 reasoning 模型;thinking.type 三档控制,disabled 可 1.3s 直出治网关 524"
+[models."mimo-v2.5".reasoning]
+wire = "thinking.type"
+levels = ["disabled", "adaptive", "enabled"]
+can_disable = true
+force_think = false
 
 [models."mimo-v2.5-pro"]
 provider = "freetokenfaucet"
 capabilities = ["tools"]
+
+[models."sensenova-6.8-flash-lite"]
+provider = "sensenova"
+context_window = 256_000                 # 用户确认 256K 上下文
+capabilities = ["tools", "vision"]       # 用户确认多模态:A4 VLM 六维评分需 vision
 
 [profiles]                          # OPENBIMAGENT_PROFILE 切换,默认 official
 [profiles.official]
@@ -101,6 +129,26 @@ clarify = "deepseek-v4-flash"
 researcher = "gpt-5.6-luna"
 deliver = "mimo-v2.5"
 
+[profiles.faucet_vlm]                # A4 VLM 六维专用:mimo-v2.5 是 freetokenfaucet 免费层唯一可用 vision 模型
+orchestrator = "mimo-v2.5"           # (pro/terra/luna/deepseek 当前 402/503/524);本 profile 仅驱动 critic_render
+planner = "mimo-v2.5"                # 对外部渲染图评分(不跑生成环,故不触发"生成与评判分家"防放水约束)
+modeler = "mimo-v2.5"
+critic_scad = "mimo-v2.5"
+critic_render = "mimo-v2.5"          # vision 六维:base64 内联图 + stream 绕过网关 origin 超时,实测 overall=7.67
+clarify = "mimo-v2.5"
+researcher = "mimo-v2.5"
+deliver = "mimo-v2.5"
+
+[profiles.sensenova]                # SenseNova 多模态单模型:A4 VLM 六维 + D 学习曲线 + LLM 基线
+orchestrator = "sensenova-6.8-flash-lite"
+planner = "sensenova-6.8-flash-lite"
+modeler = "sensenova-6.8-flash-lite"
+critic_scad = "sensenova-6.8-flash-lite"
+critic_render = "sensenova-6.8-flash-lite"   # vision:六维视觉评分
+clarify = "sensenova-6.8-flash-lite"
+researcher = "sensenova-6.8-flash-lite"
+deliver = "sensenova-6.8-flash-lite"
+
 [fallbacks]
 "gemini-3.1-pro" = ["glm-5.2"]
 "gpt-5.5" = ["claude-opus-4-6"]
@@ -112,6 +160,44 @@ deliver = "mimo-v2.5"
 retry = { max = 3, backoff = "exponential", base_ms = 1000 }
 timeout_s = 120
 circuit_breaker = { failures = 5, cooldown_s = 300 }
+
+[providers.kimi]
+type = "openai-compatible"
+base_url = "https://api.moonshot.cn/v1"
+api_key_env = "KIMI_API_KEY"
+
+[providers.qwen]
+type = "openai-compatible"
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+api_key_env = "QWEN_API_KEY"
+
+[models."kimi-k3"]
+provider = "kimi"
+capabilities = ["tools"]
+[models."kimi-k3".reasoning]
+wire = "effort"
+levels = ["max"]
+can_disable = false
+force_think = true                  # 始终推理,off 自动 clamp 到 max
+
+[models."qwen3.8-max"]
+provider = "qwen"
+capabilities = ["tools", "vision"]
+[models."qwen3.8-max".reasoning]
+wire = "enable_thinking+budget"
+levels = ["off", "low", "medium", "xhigh"]
+can_disable = true
+force_think = false
+
+[reasoning_defaults]                # per-role 默认思考档位(与 registry._REASONING_DEFAULTS 镜像)
+critic_render = "high"
+critic_scad = "high"
+modeler = "high"
+planner = "high"
+orchestrator = "medium"
+researcher = "medium"
+clarify = "low"
+deliver = "low"
 
 [tracking]
 log_tokens = true

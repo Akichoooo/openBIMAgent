@@ -24,7 +24,7 @@ INVALID_PLAN = {
 def test_loads_all_schemas() -> None:
     """schemas/ 目录全部 JSON Schema 均加载，关键版本化协议必须存在。"""
     names = gate.SchemaGate().schema_names()
-    assert len(names) == 45
+    assert len(names) == 46
     assert "bimbench_export.schema.json" in names
     assert "m2_authenticated_principal.schema.json" in names
     assert "plan.schema.json" in names
@@ -42,6 +42,7 @@ def test_loads_all_schemas() -> None:
     assert "municipal_rule_evidence_bundle.schema.json" in names
     assert "clearance_exception_approval.schema.json" in names
     assert "m1_5_t7_benchmark_artifact.schema.json" in names
+    assert "trajectory_metrics.schema.json" in names  # A1 新增:轨迹质量指标契约
     assert "vectorworks_execution_plan.schema.json" in names
     assert "semantic_snapshot.schema.json" in names
     assert "semantic_comparison_report.schema.json" in names

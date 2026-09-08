@@ -101,8 +101,8 @@ def test_web_ui_accessible() -> None:
     client = _app()
     resp = client.get("/")
     assert resp.status_code == 200
-    assert "openBIMAgent" in resp.text
-    assert "/static/vendor/franken" in resp.text
+    # 前端产物存在时伺服 React SPA（frontend/dist），否则回退旧单文件 workbench
+    assert 'id="root"' in resp.text or "/static/vendor/franken" in resp.text
 
 
 def test_plugins_inventory_endpoint() -> None:

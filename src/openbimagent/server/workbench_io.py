@@ -33,6 +33,15 @@ _MAX_UPLOAD_BYTES = 64 * 1024 * 1024
 
 _providers_lock = threading.Lock()
 
+def _sanitize_no_proxy() -> None:
+    for k in ("NO_PROXY", "no_proxy"):
+        val = os.environ.get(k)
+        if val:
+            cleaned = ",".join(p.strip() for p in val.split(",") if not p.strip().startswith("::"))
+            os.environ[k] = cleaned
+
+_sanitize_no_proxy()
+
 _PRESET_PROVIDERS: list[dict[str, Any]] = []
 
 _DEFAULT_CUSTOM_PROVIDERS: list[dict[str, Any]] = [
@@ -50,132 +59,16 @@ _DEFAULT_CUSTOM_PROVIDERS: list[dict[str, Any]] = [
             {"name": "sensenova-6.8-flash-lite", "context_window": 256000, "max_tokens": 32000, "capabilities": ["tools"]},
         ],
     },
-    {
-        "id": "prov_sensenova_zy",
-        "name": "商汤-zy",
-        "group": "自定义供应商",
-        "enabled": True,
-        "base_url": "https://token.sensenova.cn/v1",
-        "api_format": "Chat Completions (/chat/completions)",
-        "api_key": "",
-        "models": [
-            {"name": "sensenova-6.8-flash-lite", "context_window": 256000, "max_tokens": 32000, "capabilities": ["tools"]},
-        ],
-    },
-    {
-        "id": "prov_sensenova_zy2",
-        "name": "商汤-zy2",
-        "group": "自定义供应商",
-        "enabled": True,
-        "base_url": "https://token.sensenova.cn/v1",
-        "api_format": "Chat Completions (/chat/completions)",
-        "api_key": "",
-        "models": [
-            {"name": "sensenova-6.8-flash-lite", "context_window": 256000, "max_tokens": 32000, "capabilities": ["tools"]},
-        ],
-    },
-    {
-        "id": "prov_sensenova_zy3",
-        "name": "商汤-zy3",
-        "group": "自定义供应商",
-        "enabled": True,
-        "base_url": "https://token.sensenova.cn/v1",
-        "api_format": "Chat Completions (/chat/completions)",
-        "api_key": "",
-        "models": [
-            {"name": "sensenova-6.8-flash-lite", "context_window": 256000, "max_tokens": 32000, "capabilities": ["tools"]},
-        ],
-    },
-    {
-        "id": "prov_sensenova_zjp",
-        "name": "商汤-zjp",
-        "group": "自定义供应商",
-        "enabled": False,
-        "base_url": "https://token.sensenova.cn/v1",
-        "api_format": "Chat Completions (/chat/completions)",
-        "api_key": "",
-        "models": [
-            {"name": "sensenova-6.8-flash-lite", "context_window": 256000, "max_tokens": 32000, "capabilities": ["tools"]},
-        ],
-    },
-    {
-        "id": "prov_ali",
-        "name": "阿里",
-        "group": "自定义供应商",
-        "enabled": False,
-        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "api_format": "Chat Completions (/chat/completions)",
-        "api_key": "",
-        "models": [
-            {"name": "qwen-plus", "context_window": 128000, "max_tokens": 8192, "capabilities": ["tools"]},
-            {"name": "qwen-max", "context_window": 32000, "max_tokens": 8192, "capabilities": ["tools"]},
-        ],
-    },
-    {
-        "id": "prov_volc",
-        "name": "火山agent",
-        "group": "自定义供应商",
-        "enabled": True,
-        "base_url": "https://ark.cn-beijing.volces.com/api/v3",
-        "api_format": "Chat Completions (/chat/completions)",
-        "api_key": "",
-        "models": [
-            {"name": "doubao-pro-32k", "context_window": 32000, "max_tokens": 4096, "capabilities": ["tools"]},
-        ],
-    },
-    {
-        "id": "prov_jiyan",
-        "name": "基元律动",
-        "group": "自定义供应商",
-        "enabled": True,
-        "base_url": "https://api.jiyan.com/v1",
-        "api_format": "Chat Completions (/chat/completions)",
-        "api_key": "",
-        "models": [
-            {"name": "deepseek-chat", "context_window": 128000, "max_tokens": 8192, "capabilities": ["tools"]},
-        ],
-    },
-    {
-        "id": "prov_openrouter",
-        "name": "openrouter",
-        "group": "自定义供应商",
-        "enabled": False,
-        "base_url": "https://openrouter.ai/api/v1",
-        "api_format": "Chat Completions (/chat/completions)",
-        "api_key": "",
-        "models": [
-            {"name": "anthropic/claude-3.5-sonnet", "context_window": 200000, "max_tokens": 8192, "capabilities": ["tools", "vision"]},
-        ],
-    },
-    {
-        "id": "prov_peezy",
-        "name": "peezy",
-        "group": "自定义供应商",
-        "enabled": False,
-        "base_url": "https://api.peezy.ai/v1",
-        "api_format": "Chat Completions (/chat/completions)",
-        "api_key": "",
-        "models": [
-            {"name": "gpt-4o", "context_window": 128000, "max_tokens": 4096, "capabilities": ["tools", "vision"]},
-        ],
-    },
-    {
-        "id": "prov_deepseek",
-        "name": "DeepSeek-gzm",
-        "group": "自定义供应商",
-        "enabled": True,
-        "base_url": "https://api.deepseek.com/v1",
-        "api_format": "Chat Completions (/chat/completions)",
-        "api_key": "",
-        "models": [
-            {"name": "deepseek-chat", "context_window": 128000, "max_tokens": 8192, "capabilities": ["tools"]},
-        ],
-    },
 ]
 
 
+def _custom_providers_file() -> Path:
+    override = os.environ.get("OPENBIMAGENT_CUSTOM_PROVIDERS")
+    return Path(override) if override else _CUSTOM_PROVIDERS_FILE
+
+
 def _read_custom_providers() -> list[dict[str, Any]]:
-    path = _CUSTOM_PROVIDERS_FILE
+    path = _custom_providers_file()
     if not path.is_file():
         try:
             _write_custom_providers(_DEFAULT_CUSTOM_PROVIDERS)
@@ -185,13 +78,15 @@ def _read_custom_providers() -> list[dict[str, Any]]:
     try:
         with _providers_lock:
             data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, list) else []
+        if isinstance(data, list):
+            return data
+        return []
     except (json.JSONDecodeError, OSError):
-        return [dict(p) for p in _DEFAULT_CUSTOM_PROVIDERS]
+        return []
 
 
 def _write_custom_providers(providers: list[dict[str, Any]]) -> None:
-    path = _CUSTOM_PROVIDERS_FILE
+    path = _custom_providers_file()
     path.parent.mkdir(parents=True, exist_ok=True)
     content = json.dumps(providers, ensure_ascii=False, indent=2)
     with _providers_lock:
@@ -262,6 +157,43 @@ def _read_baseline_raw() -> dict[str, Any]:
         return tomllib.loads(path.read_text(encoding="utf-8"))
     except (tomllib.TOMLDecodeError, OSError):
         return {}
+
+
+#: 第三方 MCP server 配置持久化文件（gitignore 的 .local.json，与 custom_providers 同模式）
+_MCP_SERVERS_FILE = _REPO_ROOT / "config" / "mcp_servers.local.json"
+_mcp_lock = threading.Lock()
+
+
+def _mcp_config_path() -> Path:
+    override = os.environ.get("OPENBIMAGENT_MCP_CONFIG_FILE")
+    return Path(override) if override else _MCP_SERVERS_FILE
+
+
+def _read_mcp_config() -> dict[str, Any]:
+    """持久化文件优先；回退进程环境 OPENBIMAGENT_MCP_SERVERS（条目含元数据键）。"""
+    from openbimagent.mcp_clients.external import load_mcp_servers_config
+
+    return load_mcp_servers_config()
+
+
+def _apply_mcp_env(config: dict[str, Any]) -> None:
+    """把保存的配置同步到进程环境（重启后由 external.attach_external_servers_from_env 挂载）。"""
+    os.environ["OPENBIMAGENT_MCP_SERVERS"] = json.dumps(config, ensure_ascii=False)
+
+
+def _mcp_tools_payload() -> dict[str, list[str]]:
+    """已挂载 server 的工具名清单（读全局 default_plugin_registry；只读不探测，失败降级为空）。"""
+    tools: dict[str, list[str]] = {}
+    try:
+        from openbimagent.core.plugin import default_plugin_registry
+
+        inv = default_plugin_registry.export_inventory()
+        for cap, pid in (inv.get("capabilities_map") or {}).items():
+            if str(pid).startswith("plugin.external.mcp."):
+                tools.setdefault(str(pid).removeprefix("plugin.external.mcp."), []).append(str(cap))
+    except Exception:  # noqa: BLE001 — registry 不可用时降级为空（前端显示"未挂载"）
+        return {}
+    return tools
 
 
 def _settings_payload() -> dict[str, Any]:
@@ -469,14 +401,122 @@ def add_workbench_io(app: FastAPI) -> None:
             key_set = bool(q.pop("api_key", None))
             q["key_set"] = key_set
             safe_custom.append(q)
+        has_models = any(p.get("models") for p in merged_providers if p.get("enabled", True))
+        active_current = raw_base.get("model") if has_models else ""
         return {
             "status": "success",
             "presets": preset_list,
             "custom": safe_custom,
             "providers": merged_providers,
-            "current": raw_base.get("model"),
+            "current": active_current,
             "error": None,
         }
+
+    @app.put(
+        "/api/v1/settings/models",
+        summary="全量保存模型与供应商设置",
+        tags=["Workbench"],
+    )
+    async def save_models_settings(request: Request) -> JSONResponse:
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse(status_code=400, content={"status": "error", "error": "请求体必须为 JSON"})
+        if not isinstance(body, dict):
+            return JSONResponse(status_code=400, content={"status": "error", "error": "请求体必须为 JSON 对象"})
+
+        # 1. 保存当前基线模型 (current)
+        curr = body.get("current")
+        if curr and isinstance(curr, str) and curr.strip():
+            raw_base = _read_baseline_raw()
+            raw_base["model"] = curr.strip()
+            # 寻找 provider 对应的 base_url / key
+            custom_provs = _read_custom_providers()
+            found_p = False
+            for cp in custom_provs:
+                for m in cp.get("models", []):
+                    if m.get("name") == curr.strip() or m.get("id") == curr.strip():
+                        raw_base["base_url"] = str(cp.get("base_url", "")).rstrip("/")
+                        if cp.get("api_key"):
+                            raw_base["api_key"] = cp.get("api_key")
+                        found_p = True
+                        break
+                if found_p:
+                    break
+            if not found_p:
+                for pp in _PRESET_PROVIDERS:
+                    for m in pp.get("models", []):
+                        if m.get("name") == curr.strip() or m.get("id") == curr.strip():
+                            raw_base["base_url"] = str(pp.get("base_url", "")).rstrip("/")
+                            key_env = pp.get("api_key_env", "")
+                            if key_env and os.environ.get(key_env):
+                                raw_base["api_key"] = os.environ[key_env]
+                            found_p = True
+                            break
+                    if found_p:
+                        break
+            try:
+                _write_toml_flat(_baseline_path(), raw_base)
+            except OSError:
+                pass
+
+        # 2. 保存供应商列表 (providers)
+        prov_list = body.get("providers")
+        if isinstance(prov_list, list):
+            preset_ids = {p["id"] for p in _PRESET_PROVIDERS}
+            existing_custom = _read_custom_providers()
+            existing_map = {cp.get("id"): cp for cp in existing_custom if cp.get("id")}
+            new_custom = []
+            for p in prov_list:
+                if not isinstance(p, dict):
+                    continue
+                pid = str(p.get("id") or "").strip()
+                if pid in preset_ids:
+                    # 预置供应商仅同步 API Key
+                    if p.get("api_key") and str(p["api_key"]).strip():
+                        key_val = str(p["api_key"]).strip()
+                        os.environ["GLM_API_KEY"] = key_val
+                        _update_env_file({"GLM_API_KEY": key_val})
+                        raw_base = _read_baseline_raw()
+                        if raw_base.get("base_url", "").startswith("https://open.bigmodel.cn"):
+                            raw_base["api_key"] = key_val
+                            try:
+                                _write_toml_flat(_baseline_path(), raw_base)
+                            except OSError:
+                                pass
+                else:
+                    # 自定义供应商
+                    old = existing_map.get(pid, {})
+                    old_key = old.get("api_key", "")
+                    key_val = str(p.get("api_key", "")).strip() or old_key
+                    raw_models = p.get("models") or []
+                    models = []
+                    for m in raw_models:
+                        if isinstance(m, dict):
+                            mname = str(m.get("name") or m.get("id") or "").strip()
+                            if mname:
+                                models.append({
+                                    "name": mname,
+                                    "context_window": int(m.get("context_window") or m.get("context_length", 128000)),
+                                    "max_tokens": int(m.get("max_tokens") or m.get("max_output_tokens", 128000)),
+                                    "capabilities": list(m.get("capabilities") or ["tools"]),
+                                    "input_types": list(m.get("input_types") or ["text"]),
+                                    "output_types": list(m.get("output_types") or ["text"]),
+                                })
+                    new_custom.append({
+                        "id": pid or ("prov_" + uuid4().hex[:8]),
+                        "name": str(p.get("name") or "自定义供应商").strip(),
+                        "group": str(p.get("group") or "自定义供应商"),
+                        "enabled": bool(p.get("enabled", True)),
+                        "base_url": str(p.get("base_url") or "").strip(),
+                        "api_format": str(p.get("api_format") or "Chat Completions (/chat/completions)").strip(),
+                        "api_key": key_val,
+                        "models": models,
+                    })
+            _write_custom_providers(new_custom)
+
+        return JSONResponse(content={"status": "success", "message": "配置已保存"})
+
 
     @app.post("/api/v1/settings/providers", summary="添加自定义供应商", tags=["Workbench"])
     async def create_provider(request: Request) -> JSONResponse:
@@ -563,6 +603,7 @@ def add_workbench_io(app: FastAPI) -> None:
         return JSONResponse(content={"status": "success", "provider": safe})
 
     @app.delete("/api/v1/settings/providers/{provider_id}", summary="删除自定义供应商", tags=["Workbench"])
+    @app.delete("/api/v1/settings/models/providers/{provider_id}", include_in_schema=False)
     async def delete_provider(provider_id: str) -> JSONResponse:
         custom = _read_custom_providers()
         initial_len = len(custom)
@@ -581,9 +622,11 @@ def add_workbench_io(app: FastAPI) -> None:
         mname = str(body.get("name") or "").strip()
         if not mname:
             return JSONResponse(status_code=400, content={"status": "error", "error": "模型名称不能为空"})
-        ctx = int(body.get("context_window", 1000000))
-        max_tok = int(body.get("max_tokens", 128000))
+        ctx = int(body.get("context_window") or body.get("context_length", 1000000))
+        max_tok = int(body.get("max_tokens") or body.get("max_output_tokens", 128000))
         caps = list(body.get("capabilities") or ["tools"])
+        in_types = list(body.get("input_types") or ["text"])
+        out_types = list(body.get("output_types") or ["text"])
 
         custom = _read_custom_providers()
         target = next((p for p in custom if p.get("id") == provider_id), None)
@@ -597,12 +640,16 @@ def add_workbench_io(app: FastAPI) -> None:
             existing["context_window"] = ctx
             existing["max_tokens"] = max_tok
             existing["capabilities"] = caps
+            existing["input_types"] = in_types
+            existing["output_types"] = out_types
         else:
             models.append({
                 "name": mname,
                 "context_window": ctx,
                 "max_tokens": max_tok,
                 "capabilities": caps,
+                "input_types": in_types,
+                "output_types": out_types,
             })
         _write_custom_providers(custom)
         safe = dict(target)
@@ -630,10 +677,18 @@ def add_workbench_io(app: FastAPI) -> None:
             model_obj["name"] = str(body["new_name"]).strip()
         if "context_window" in body:
             model_obj["context_window"] = int(body["context_window"])
+        elif "context_length" in body:
+            model_obj["context_window"] = int(body["context_length"])
         if "max_tokens" in body:
             model_obj["max_tokens"] = int(body["max_tokens"])
+        elif "max_output_tokens" in body:
+            model_obj["max_tokens"] = int(body["max_output_tokens"])
         if "capabilities" in body:
             model_obj["capabilities"] = list(body["capabilities"])
+        if "input_types" in body:
+            model_obj["input_types"] = list(body["input_types"])
+        if "output_types" in body:
+            model_obj["output_types"] = list(body["output_types"])
         _write_custom_providers(custom)
         safe = dict(target)
         safe.pop("api_key", None)  # 响应只带 key_set，不带 key 本体
@@ -656,34 +711,59 @@ def add_workbench_io(app: FastAPI) -> None:
         safe["key_set"] = bool(target.get("api_key"))
         return JSONResponse(content={"status": "success", "provider": safe})
 
-    @app.post("/api/v1/settings/providers/{provider_id}/probe", summary="连通性测速探针", tags=["Workbench"])
-    async def probe_provider(provider_id: str, request: Request) -> JSONResponse:
-        target, is_preset = _find_provider(provider_id)
-        if not target:
-            return JSONResponse(status_code=404, content={"status": "error", "error": "供应商不存在"})
-        base_url = str(target.get("base_url") or "").rstrip("/")
+    async def _execute_provider_probe(request: Request, provider_id: str | None = None) -> JSONResponse:
+        _sanitize_no_proxy()
+        body = {}
+        try:
+            body = await request.json()
+        except Exception:
+            pass
+
+        target = None
+        is_preset = False
+        if provider_id and provider_id != "undefined" and provider_id != "null":
+            target, is_preset = _find_provider(provider_id)
+        
+        base_url = str(body.get("base_url") or (target.get("base_url") if target else "") or "").rstrip("/")
         if not base_url:
             return JSONResponse(content={"status": "error", "error": "未配置 Base URL", "latency_ms": 0})
-        api_key = str(target.get("api_key") or "").strip()
+        api_key = str(body.get("api_key") or (target.get("api_key") if target else "") or "").strip()
         if is_preset and not api_key:
             api_key = os.environ.get("GLM_API_KEY", "") or _read_baseline_raw().get("api_key", "")
-        headers = {"User-Agent": "openBIMAgent/1.0"}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
+        if not api_key:
+            return JSONResponse(content={"status": "error", "error": "未填写 API Key，请先配置有效 Key 后测速", "latency_ms": 0})
+        headers = {"User-Agent": "openBIMAgent/1.0", "Authorization": f"Bearer {api_key}"}
 
         start_t = time.perf_counter()
         try:
-            async with httpx.AsyncClient(timeout=4.0, verify=False) as client:
+            async with httpx.AsyncClient(timeout=6.0, verify=False, trust_env=False) as client:
                 probe_url = base_url + "/models"
                 try:
                     resp = await client.get(probe_url, headers=headers)
                     elapsed_ms = int((time.perf_counter() - start_t) * 1000)
                     if resp.status_code in (200, 201):
-                        return JSONResponse(content={"status": "success", "latency_ms": elapsed_ms, "message": f"连接正常 ({elapsed_ms}ms)"})
+                        models_data = []
+                        try:
+                            rj = resp.json()
+                            raw_list = rj.get("data") if isinstance(rj.get("data"), list) else rj.get("models")
+                            if isinstance(raw_list, list):
+                                models_data = [
+                                    m.get("id") or m.get("name")
+                                    for m in raw_list
+                                    if isinstance(m, dict) and (m.get("id") or m.get("name"))
+                                ]
+                        except Exception:
+                            pass
+                        return JSONResponse(content={
+                            "status": "success",
+                            "latency_ms": elapsed_ms,
+                            "message": f"连接正常 ({elapsed_ms}ms)",
+                            "models": models_data,
+                        })
                     elif resp.status_code in (401, 403):
-                        return JSONResponse(content={"status": "error", "latency_ms": elapsed_ms, "error": f"鉴权未通过 (HTTP {resp.status_code})"})
+                        return JSONResponse(content={"status": "error", "latency_ms": elapsed_ms, "error": f"鉴权未通过 (HTTP {resp.status_code})：请检查 API Key"})
                     else:
-                        return JSONResponse(content={"status": "success", "latency_ms": elapsed_ms, "message": f"响应正常 (HTTP {resp.status_code} · {elapsed_ms}ms)"})
+                        return JSONResponse(content={"status": "error", "latency_ms": elapsed_ms, "error": f"端点异常 (HTTP {resp.status_code})"})
                 except httpx.HTTPStatusError as e:
                     elapsed_ms = int((time.perf_counter() - start_t) * 1000)
                     return JSONResponse(content={"status": "error", "latency_ms": elapsed_ms, "error": f"HTTP 错误: {e.response.status_code}"})
@@ -691,29 +771,134 @@ def add_workbench_io(app: FastAPI) -> None:
             elapsed_ms = int((time.perf_counter() - start_t) * 1000)
             err_msg = str(exc)
             if "ConnectTimeout" in err_msg or "ReadTimeout" in err_msg:
-                return JSONResponse(content={"status": "error", "latency_ms": elapsed_ms, "error": "请求超时 (4s)"})
+                return JSONResponse(content={"status": "error", "latency_ms": elapsed_ms, "error": "请求超时 (6s)"})
             return JSONResponse(content={"status": "error", "latency_ms": elapsed_ms, "error": f"网络不可达: {exc.__class__.__name__}"})
+
+    @app.post("/api/v1/settings/providers/probe", summary="连通性测速探针 (临时配置)", tags=["Workbench"])
+    async def probe_provider_adhoc(request: Request) -> JSONResponse:
+        return await _execute_provider_probe(request, None)
+
+    @app.post("/api/v1/settings/providers/{provider_id}/probe", summary="连通性测速探针", tags=["Workbench"])
+    async def probe_provider(request: Request, provider_id: str) -> JSONResponse:
+        return await _execute_provider_probe(request, provider_id)
+
+    async def _execute_fetch_models(request: Request, provider_id: str | None = None) -> JSONResponse:
+        _sanitize_no_proxy()
+        body = {}
+        try:
+            body = await request.json()
+        except Exception:
+            pass
+        target = None
+        if provider_id and provider_id != "undefined" and provider_id != "null":
+            target, _ = _find_provider(provider_id)
+        base_url = str(body.get("base_url") or (target.get("base_url") if target else "") or "").rstrip("/")
+        api_key = str(body.get("api_key") or (target.get("api_key") if target else "") or "").strip()
+        if not base_url:
+            return JSONResponse(content={"status": "error", "error": "未配置 Base URL", "models": []})
+        if not api_key:
+            return JSONResponse(content={"status": "error", "error": "未填写 API Key", "models": []})
+        
+        headers = {"User-Agent": "openBIMAgent/1.0", "Authorization": f"Bearer {api_key}"}
+        start_t = time.perf_counter()
+        try:
+            async with httpx.AsyncClient(timeout=8.0, verify=False, trust_env=False) as client:
+                resp = await client.get(f"{base_url}/models", headers=headers)
+                elapsed_ms = int((time.perf_counter() - start_t) * 1000)
+                if resp.status_code in (200, 201):
+                    rj = resp.json()
+                    raw_list = rj.get("data") if isinstance(rj.get("data"), list) else rj.get("models")
+                    if isinstance(raw_list, list):
+                        models_data = []
+                        for m in raw_list:
+                            if isinstance(m, dict):
+                                mid = m.get("id") or m.get("name")
+                                if mid:
+                                    models_data.append({
+                                        "id": str(mid),
+                                        "name": str(mid),
+                                        "input_types": m.get("input_modalities") or ["text"],
+                                    })
+                        return JSONResponse(content={
+                            "status": "success",
+                            "latency_ms": elapsed_ms,
+                            "models": models_data,
+                            "count": len(models_data),
+                        })
+                    return JSONResponse(content={"status": "error", "error": "接口未返回预期的模型数组", "models": []})
+                elif resp.status_code in (401, 403):
+                    return JSONResponse(content={"status": "error", "error": f"鉴权失败 (HTTP {resp.status_code})，请检查 API Key", "models": []})
+                else:
+                    return JSONResponse(content={"status": "error", "error": f"端点返回 HTTP {resp.status_code}", "models": []})
+        except Exception as exc:
+            return JSONResponse(content={"status": "error", "error": f"拉取失败: {str(exc)}", "models": []})
+
+    @app.post("/api/v1/settings/providers/fetch_models", summary="拉取可用模型列表 (临时配置)", tags=["Workbench"])
+    async def fetch_provider_models_adhoc(request: Request) -> JSONResponse:
+        return await _execute_fetch_models(request, None)
+
+    @app.post("/api/v1/settings/providers/{provider_id}/fetch_models", summary="拉取可用模型列表", tags=["Workbench"])
+    async def fetch_provider_models(request: Request, provider_id: str) -> JSONResponse:
+        return await _execute_fetch_models(request, provider_id)
+
+    @app.post("/api/v1/settings/models/probe", summary="连通性测速探针 (按模型别名)", tags=["Workbench"], include_in_schema=False)
+    async def probe_model_alias(request: Request) -> JSONResponse:
+        try:
+            body = await request.json()
+            pid = str(body.get("provider_id") or "").strip()
+            return await probe_provider(request, pid)
+        except Exception as e:
+            return JSONResponse(status_code=400, content={"status": "error", "error": str(e)})
 
     @app.get("/api/v1/uploads", summary="上传附件清单（manifest 索引）", tags=["Workbench"])
     async def list_uploads() -> dict:
         return {"status": "success", "items": _read_upload_index(_uploads_dir())}
 
-    @app.get("/api/v1/usage", summary="LLM 用量汇总（out/usage_summary.json；P3 成本面板数据源）", tags=["Workbench"])
+    @app.get(
+        "/api/v1/usage",
+        summary="LLM 用量仪表盘（真实调用流水账 out/usage_log.jsonl 聚合：总量/按日/按模型/最近）",
+        tags=["Workbench"],
+    )
     async def usage_summary() -> dict:
-        path = _REPO_ROOT / "out" / "usage_summary.json"
-        if not path.is_file():
+        from openbimagent.server.usage_ledger import aggregate, _iter_entries
+
+        if not _iter_entries():
+            # 流水账为空时回退旧 CLI 快照（usage_summary.json），避免历史数据一夜消失
+            path = _REPO_ROOT / "out" / "usage_summary.json"
+            if path.is_file():
+                try:
+                    legacy = json.loads(path.read_text(encoding="utf-8"))
+                    if legacy.get("total", {}).get("calls"):
+                        return {"status": "success", "usage": legacy, "source": "legacy"}
+                except (json.JSONDecodeError, OSError):
+                    pass
             return {"status": "success", "usage": None}
-        try:
-            return {"status": "success", "usage": json.loads(path.read_text(encoding="utf-8"))}
-        except (json.JSONDecodeError, OSError):
-            return {"status": "success", "usage": None}
+        return {"status": "success", "usage": aggregate(), "source": "ledger"}
 
     @app.get("/api/v1/skills", summary="技能目录（渐进披露：仅 name/description 元数据 + 候选区 + 拒载清单）", tags=["Workbench"])
     async def list_skills() -> dict:
-        from openbimagent.skills.registry import candidates_dir, default_skill_registry
+        from openbimagent.skills.registry import candidates_dir, default_skill_registry, load_skill
 
         registry = default_skill_registry()
-        candidates = sorted(p.name for p in candidates_dir().glob("*.md")) if candidates_dir().is_dir() else []
+        candidates = []
+        if candidates_dir().is_dir():
+            for p in sorted(candidates_dir().glob("*.md")):
+                try:
+                    sk = load_skill(p, source="candidate")
+                    candidates.append({
+                        "id": p.name,
+                        "file": p.name,
+                        "name": sk.name,
+                        "description": sk.description,
+                        "when_to_use": sk.when_to_use,
+                    })
+                except Exception:
+                    candidates.append({
+                        "id": p.name,
+                        "file": p.name,
+                        "name": p.stem,
+                        "description": "自愈求解沉淀候选经验",
+                    })
         return {
             "status": "success",
             "skills": registry.catalog(),
@@ -735,8 +920,10 @@ def add_workbench_io(app: FastAPI) -> None:
     async def approve_candidate(request: dict[str, Any]) -> JSONResponse:
         from openbimagent.skills.registry import builtin_skills_root, candidates_dir, load_skill, reload_skills
 
-        filename = str(request.get("file", "")).strip()
-        if not re.fullmatch(r"[\w.\-一-鿿]+\.md", filename):
+        filename = str(request.get("file") or request.get("id") or request.get("name") or "").strip()
+        if filename and not filename.endswith(".md"):
+            filename = f"{filename}.md"
+        if not filename or not re.fullmatch(r"[\w.\-一-鿿]+\.md", filename):
             return JSONResponse(status_code=400, content={"status": "error", "error": "候选文件名非法"})
         src = candidates_dir() / filename
         if not src.is_file():
@@ -756,7 +943,9 @@ def add_workbench_io(app: FastAPI) -> None:
     async def discard_candidate(request: dict[str, Any]) -> JSONResponse:
         from openbimagent.skills.registry import candidates_dir
 
-        filename = str(request.get("file", "")).strip()
+        filename = str(request.get("file") or request.get("id") or request.get("name") or "").strip()
+        if filename and not filename.endswith(".md"):
+            filename = f"{filename}.md"
         if not re.fullmatch(r"[\w.\-一-鿿]+\.md", filename):
             return JSONResponse(status_code=400, content={"status": "error", "error": "候选文件名非法"})
         src = candidates_dir() / filename
@@ -764,6 +953,74 @@ def add_workbench_io(app: FastAPI) -> None:
             return JSONResponse(status_code=404, content={"status": "error", "error": f"候选不存在: {filename}"})
         src.unlink()
         return JSONResponse(content={"status": "success", "discarded": filename})
+
+    @app.get(
+        "/api/v1/settings/mcp",
+        summary="读取 MCP server 配置（本地持久化文件优先，回读 env；tools 为已挂载 server 的能力清单）",
+        tags=["Workbench"],
+    )
+    async def get_mcp_settings() -> dict:
+        with _mcp_lock:
+            config = _read_mcp_config()
+        return {
+            "status": "success",
+            "config": config,
+            "tools": _mcp_tools_payload(),
+            "path": str(_mcp_config_path()),
+            "env_configured": bool(os.environ.get("OPENBIMAGENT_MCP_SERVERS", "").strip()),
+        }
+
+    @app.put(
+        "/api/v1/settings/mcp",
+        summary="保存 MCP server 配置：写 mcp_servers.local.json + 同步进程环境（重启后挂载；支持 mcpServers 包装格式）",
+        tags=["Workbench"],
+    )
+    async def put_mcp_settings(request: dict[str, Any]) -> JSONResponse:
+        config = request.get("config")
+        # 兼容 {"mcpServers": {...}} 包装格式（高级配置区直接粘贴的形态）
+        if isinstance(config, dict) and "mcpServers" in config and isinstance(config.get("mcpServers"), dict):
+            config = config["mcpServers"]
+        if not isinstance(config, dict):
+            return JSONResponse(status_code=400, content={"status": "error", "error": "config 必须是对象（server 名 → 连接配置）或含 mcpServers 键"})
+        name_re = re.compile(r"^[a-z0-9][a-z0-9\-_]{0,31}$")
+        for name, entry in config.items():
+            if not name_re.fullmatch(str(name)):
+                return JSONResponse(status_code=400, content={"status": "error", "error": f"server 名非法（需小写 slug）: {name}"})
+            if not isinstance(entry, dict):
+                return JSONResponse(status_code=400, content={"status": "error", "error": f"server {name} 条目必须是对象"})
+            if not entry.get("disabled"):
+                if not entry.get("url") and not entry.get("command"):
+                    return JSONResponse(status_code=400, content={"status": "error", "error": f"server {name} 缺少 url 或 command"})
+        with _mcp_lock:
+            path = _mcp_config_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            tmp.replace(path)
+            _apply_mcp_env(config)
+        return JSONResponse(content={"status": "success", "saved": len(config), "path": str(path)})
+
+    @app.delete(
+        "/api/v1/settings/mcp",
+        summary="恢复默认：删除本地持久化文件并按 env 原值重置（即当前 env 配置即为默认来源）",
+        tags=["Workbench"],
+    )
+    async def delete_mcp_settings() -> JSONResponse:
+        env_raw = os.environ.get("OPENBIMAGENT_MCP_SERVERS", "").strip()
+        default_cfg: dict[str, Any] = {}
+        if env_raw:
+            try:
+                loaded = json.loads(env_raw)
+                if isinstance(loaded, dict):
+                    default_cfg = loaded
+            except json.JSONDecodeError:
+                pass
+        path = _mcp_config_path()
+        with _mcp_lock:
+            if path.is_file():
+                path.unlink()
+            _apply_mcp_env(default_cfg)
+        return JSONResponse(content={"status": "success", "config": default_cfg})
 
     @app.get("/api/v1/hosts", summary="CAD 宿主状态（HostSupervisor：up/down/restarting/external；VW 恒 external 不伪探测）", tags=["Workbench"])
     async def hosts_status() -> dict:
@@ -806,7 +1063,7 @@ def add_workbench_io(app: FastAPI) -> None:
     async def put_toolset(request: dict[str, Any]) -> JSONResponse:
         from openbimagent.core.toolset import set_toolset
 
-        name = str(request.get("name", "")).strip()
+        name = str(request.get("name") or request.get("preset") or "").strip()
         try:
             set_toolset(name)
         except ValueError as exc:
@@ -829,7 +1086,7 @@ def add_workbench_io(app: FastAPI) -> None:
     async def record_memory(request: dict[str, Any]) -> JSONResponse:
         from openbimagent.core.plugin import PluginPolicyPromptRequiredError, default_plugin_registry
 
-        entry = str(request.get("entry", "")).strip()
+        entry = str(request.get("entry") or request.get("text") or "").strip()
         file_key = str(request.get("file", "memory")).strip()
         confirm = bool(request.get("confirm", False))
         try:

@@ -46,7 +46,7 @@ class _FakeClient:
     lines: list[str] = []
     response_headers: dict[str, str] = {}
 
-    def __init__(self, timeout: Any = None) -> None:
+    def __init__(self, timeout: Any = None, **kwargs: Any) -> None:
         pass
 
     def __enter__(self) -> "_FakeClient":

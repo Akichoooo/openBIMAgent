@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.dev/schemas/trajectory_metrics.schema.json",
+  "title": "TrajectoryMetrics",
+  "description": "A1 轨迹质量指标契约：对标 2026 Agent 评估范式（task success vs trajectory accuracy）+ fail-closed 诚信 + 证据链完整率。从 M1.5 T7 BenchmarkScenarioResult 离线确定性派生，无需真实 LLM/宿主。所有聚合指标必须携带 measured 与 provenance（未实测禁止引用于论文/答辩）。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "total_cases",
+    "task_success_rate",
+    "trajectory_accuracy",
+    "evidence_chain_completeness",
+    "fail_closed_compliance",
+    "measured",
+    "provenance"
+  ],
+  "properties": {
+    "total_cases": { "type": "integer", "minimum": 0 },
+    "task_success_rate": {
+      "type": "number", "minimum": 0, "maximum": 100,
+      "description": "结果正确率：observed_status == expected_status 的场景占比（%）"
+    },
+    "trajectory_accuracy": {
+      "type": "number", "minimum": 0, "maximum": 100,
+      "description": "轨迹可审计正确率：结果对 + 失败标记匹配 + 确定性稳定 + 双宿主恢复 + 语义一致（拒绝 scrappy win）（%）"
+    },
+    "evidence_chain_completeness": {
+      "type": "number", "minimum": 0, "maximum": 100,
+      "description": "证据链完整率：仅对期望 PASS 场景核验六环（input→result→compiled IR→semantic→IFC/IDS→determinism）（%）"
+    },
+    "fail_closed_compliance": {
+      "type": "number", "minimum": 0, "maximum": 100,
+      "description": "失败关闭合规率：预期非 PASS 场景（FAIL/UNKNOWN/REVIEW_REQUIRED）严格未升格为 PASS 的比例（%）"
+    },
+    "measured": { "type": "boolean" },
+    "provenance": { "type": "string", "minLength": 1 },
+    "per_scenario": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "scenario_id", "expected_status", "observed_status",
+          "task_success", "trajectory_ok", "chain_links_present", "chain_links_total"
+        ],
+        "properties": {
+          "scenario_id": { "type": "string", "pattern": "^B(?:10|[1-9])$" },
+          "expected_status": {
+            "type": "string",
+            "enum": ["PASS", "FAIL", "UNKNOWN", "REVIEW_REQUIRED", "SKIPPED"]
+          },
+          "observed_status": { "type": "string" },
+          "task_success": { "type": "boolean" },
+          "trajectory_ok": { "type": "boolean" },
+          "chain_links_present": { "type": "integer", "minimum": 0, "maximum": 6 },
+          "chain_links_total": { "type": "integer", "minimum": 0, "maximum": 6 },
+          "fail_closed_ok": {
+            "description": "None=期望 PASS 不适用 fail-closed 判定",
+            "type": ["boolean", "null"]
+          }
+        }
+      }
+    }
+  }
+}

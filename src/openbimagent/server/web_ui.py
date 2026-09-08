@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -61,7 +61,9 @@ window.__M={animate:window.Motion&&window.Motion.animate,stagger:window.Motion&&
   --amb:#d9a13f; --amb-dim:rgba(217,161,63,.13);
   --mono:ui-monospace,'Cascadia Code','JetBrains Mono',Consolas,monospace;
   --sans:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
-  --r:var(--radius);
+  /* 统一圆角 token：--r 全局唯一入口（此前引用未定义的 --radius，所有 var(--r) 圆角静默变直角）
+     8px 与 .fin/弹窗内 8-10px 半径族一致；改这一处即全站换肤 */
+  --r:8px;
 }
 
 /* ============ 白底黑字皮肤 (Light Theme · 图五) ============ */
@@ -338,8 +340,8 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .ms-icon-btn svg{width:15px;height:15px}
 .ms-toggle-pill{display:inline-flex;border:1px solid var(--line2);border-radius:9999px;padding:2px;gap:2px;background:var(--bg2)}
 .ms-toggle-btn{border:none;background:none;font-size:12px;padding:3px 12px;border-radius:9999px;cursor:pointer;color:var(--ink3);transition:all .15s}
-.ms-toggle-btn.on-active{background:#10b981;color:#ffffff;font-weight:550;box-shadow:0 1px 4px rgba(16,185,129,.35)}
-.ms-toggle-btn.off-active{background:#64748b;color:#ffffff;font-weight:550}
+.ms-toggle-btn.on-active{background:var(--grn);color:#04140d;font-weight:550;box-shadow:0 1px 4px rgba(63,182,139,.35)}
+.ms-toggle-btn.off-active{background:var(--bg3);color:var(--ink2);font-weight:550}
 .ms-del-prov-btn{background:none;border:none;padding:6px;cursor:pointer;color:var(--ink3);display:flex;align-items:center;justify-content:center;border-radius:9999px;transition:all .15s}
 .ms-del-prov-btn:hover{color:var(--red);background:var(--red-dim,rgba(239,68,68,.1))}
 .ms-del-prov-btn svg{width:16px;height:16px}
@@ -356,10 +358,9 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .ms-sec-header{display:flex;align-items:center;justify-content:space-between;margin-top:4px}
 .ms-sec-title{font-size:13px;font-weight:650;color:var(--ink);display:flex;align-items:center;gap:6px}
 .ms-sec-count{font-size:11px;font-weight:500;color:var(--ink3);background:var(--bg3);padding:1px 7px;border-radius:9999px}
-.ms-add-mdl-head-btn{display:inline-flex;align-items:center;gap:5px;padding:6px 14px;border-radius:9999px;background:#000000;color:#ffffff;border:none;font-size:12px;font-weight:500;cursor:pointer;transition:all .15s}
+.ms-add-mdl-head-btn{display:inline-flex;align-items:center;gap:5px;padding:6px 14px;border-radius:9999px;background:var(--acc);color:var(--acc-fg);border:none;font-size:12px;font-weight:500;cursor:pointer;transition:all .15s}
 .ms-add-mdl-head-btn:hover{opacity:.85}
 .ms-add-mdl-head-btn svg{width:13px;height:13px}
-html[data-theme="dark"] .ms-add-mdl-head-btn{background:#f4f4f5;color:#09090b}
 
 .ms-mdl-list{display:flex;flex-direction:column;gap:6px;margin-top:8px}
 .ms-mdl-card{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border:1px solid transparent;border-radius:12px;background:transparent;transition:all .15s}
@@ -392,10 +393,9 @@ html[data-theme="dark"] .ms-chip{background:var(--bg2)}
 .ms-chip.locked .ms-chk-icon{width:14px;height:14px;color:var(--ink)}
 .ms-chip.locked .ms-lock-icon{width:13px;height:13px;color:var(--ink3);margin-left:2px}
 .ms-modal-foot{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:6px;padding-top:12px;border-top:1px solid var(--line)}
-.ms-btn-cancel{background:none;border:none;color:var(--ink2);cursor:pointer;padding:7px 16px;font-size:13px;border-radius:6px;transition:all .12s}
+.ms-btn-cancel{background:none;border:none;color:var(--ink2);cursor:pointer;padding:7px 16px;font-size:13px;border-radius:8px;transition:all .12s}
 .ms-btn-cancel:hover{color:var(--ink);background:var(--bg2)}
-.ms-btn-save{background:#000000;color:#ffffff;border:none;border-radius:6px;padding:7px 22px;font-size:13px;font-weight:550;cursor:pointer;transition:opacity .15s}
-html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
+.ms-btn-save{background:var(--acc);color:var(--acc-fg);border:none;border-radius:8px;padding:7px 22px;font-size:13px;font-weight:550;cursor:pointer;transition:opacity .15s}
 .ms-btn-save:hover{opacity:.88}
 
 /* composer 模型窄菜单（紧贴模型芯片上方，对齐图二：宽 175px，二级向右展开） */
@@ -454,7 +454,20 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
 .pill.g{border-color:rgba(63,182,139,.4);color:var(--grn);background:var(--grn-dim)}
 .st-top .sp{flex:1}
 .seg{display:flex;background:var(--bg3);border-radius:var(--r);padding:2px;gap:1px}
-.seg button{padding:5px 12px;border-radius:calc(var(--radius) - 2px);font-size:12px;color:var(--ink2)}
+/* 顶栏「导出 CAD」下拉（HITL 交付入口；从 composer 下方 chips 迁来） */
+.exp-wrap{position:relative;display:inline-flex}
+.exp-pill{cursor:pointer;gap:5px}
+.exp-pill:hover{border-color:var(--line2);color:var(--ink)}
+.exp-pill .arr{font-size:9px;color:var(--ink3);margin-left:1px}
+.exp-pill.no-ir{opacity:.45;cursor:default;pointer-events:none}
+.exp-menu{display:none;position:absolute;top:calc(100% + 6px);right:0;min-width:230px;background:var(--bg1);border:1px solid var(--line2);border-radius:12px;box-shadow:0 14px 44px rgba(0,0,0,.35);z-index:120;padding:6px}
+.exp-menu.show{display:block;animation:popIn .15s cubic-bezier(.16,1,.3,1)}
+.exp-menu .it{display:flex;align-items:center;gap:9px;width:100%;padding:8px 10px;border-radius:8px;font-size:12.5px;color:var(--ink);cursor:pointer;text-align:left}
+.exp-menu .it:hover{background:var(--bg2)}
+.exp-menu .it svg{color:var(--ink2);flex:none}
+.exp-menu .nm{font-weight:550}
+.exp-menu .fmt{margin-left:auto;font:10px var(--mono);color:var(--ink3)}
+.seg button{padding:5px 12px;border-radius:6px;font-size:12px;color:var(--ink2)}
 .seg button.on{background:var(--bg1);color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.35)}
 .ghostbtn{display:inline-flex;align-items:center;gap:6px;padding:6px 11px;border:1px solid var(--line2);border-radius:var(--r);font-size:12px;color:var(--ink2)}
 .ghostbtn:hover{background:var(--bg3);color:var(--ink)}
@@ -468,6 +481,7 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
 .vt{width:32px;height:32px;border-radius:8px;background:hsl(var(--background) / .72);backdrop-filter:blur(8px);border:1px solid var(--line);color:var(--ink2);display:flex;align-items:center;justify-content:center;position:relative}
 .vt:hover{color:var(--ink);border-color:var(--line2)}
 .vt.on{color:var(--acc);border-color:hsl(var(--primary) / .45);background:var(--acc-dim)}
+.vt.off-dis{opacity:.28;pointer-events:none;cursor:default} /* 当前视图下无语义的工具（如平面图的垂直夸大） */
 .vt svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
 .vt::before{content:attr(data-tip);position:absolute;right:calc(100% + 8px);top:50%;transform:translateY(-50%);background:hsl(var(--background) / .92);backdrop-filter:blur(8px);border:1px solid var(--line2);color:var(--ink);font:11px var(--mono);padding:4px 8px;border-radius:6px;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .15s ease;box-shadow:0 4px 14px rgba(0,0,0,.4);z-index:40}
 .vt:hover::before{opacity:1}
@@ -478,6 +492,10 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
 .play:hover{opacity:.9}
 .play svg{width:13px;height:13px;fill:currentColor}
 .tl-steps{display:flex;align-items:center;gap:0;flex:1}
+/* 自愈回放按钮（时间线 HUD 自带；从 composer 下方 chips 迁来） */
+.tl-play{width:24px;height:24px;flex:none;border-radius:7px;color:var(--ink2);display:flex;align-items:center;justify-content:center;transition:all .15s}
+.tl-play:hover{background:var(--bg3);color:var(--ink)}
+.tl-play:active{transform:scale(.92)}
 .tl-s{display:flex;align-items:center;gap:7px;flex:none;cursor:pointer;padding:3px 2px}
 .tl-s .n{width:19px;height:19px;border-radius:50%;border:1.5px solid var(--ink3);color:var(--ink3);display:flex;align-items:center;justify-content:center;font:9.5px var(--mono);flex:none}
 .tl-s .lb{font-size:11px;color:var(--ink2);white-space:nowrap}
@@ -555,9 +573,125 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
 .rule .rst{margin-left:auto;font:9.5px var(--mono);color:var(--grn)}
 .rule .rd{font-size:11px;color:var(--ink2);margin-top:3px}
 .irpre{font:10.5px var(--mono);color:var(--ink2);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;line-height:1.6;overflow-x:auto;white-space:pre}
-.plg{border:1px solid var(--line);border-radius:8px;background:var(--bg2);padding:8px 10px;margin-bottom:6px}
-.plg .pid{font:11px var(--mono)}
-.plg .pds{font-size:11px;color:var(--ink2);margin-top:2px}
+/* 用量仪表盘（真实调用流水账聚合图形化；无数据时整组隐藏） */
+.usg-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.usg-card{border:1px solid var(--line2);border-radius:10px;background:var(--bg1);padding:12px 14px}
+.usg-k{font:10px var(--mono);letter-spacing:.06em;color:var(--ink3);text-transform:uppercase;margin-bottom:5px}
+.usg-v{font:20px var(--mono);font-weight:600;color:var(--ink);line-height:1}
+.usg-sub{font:10px var(--mono);color:var(--ink3);margin-top:5px}
+.usg-sec{border:1px solid var(--line2);border-radius:10px;background:var(--bg1);padding:12px 14px;margin-bottom:12px}
+.usg-sec-t{font:10.5px var(--mono);letter-spacing:.08em;color:var(--ink3);text-transform:uppercase;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.usg-sec-t svg{flex:none}
+.usg-bars{display:flex;align-items:flex-end;gap:5px;height:120px;padding:0 2px}
+.usg-bar{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0;cursor:default}
+.usg-bar .col{width:100%;max-width:26px;background:linear-gradient(180deg,var(--acc),hsl(var(--primary)/.45));border-radius:3px 3px 0 0;min-height:2px;transition:height .4s cubic-bezier(.2,.8,.2,1),opacity .15s;position:relative}
+.usg-bar .col span{position:absolute;top:-16px;left:50%;transform:translateX(-50%);font:9px var(--mono);color:var(--ink2);background:var(--bg3);border:1px solid var(--line2);border-radius:4px;padding:1px 5px;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .15s;z-index:5}
+.usg-bar:hover .col{opacity:.85}
+.usg-bar:hover .col span{opacity:1}
+.usg-bar .lbl{font:8.5px var(--mono);color:var(--ink3);white-space:nowrap}
+.usg-bar.empty .col{background:var(--bg3);min-height:2px}
+.usg-share{display:flex;flex-direction:column;gap:8px}
+.usg-share-row{display:flex;flex-direction:column;gap:4px}
+.usg-share-hd{display:flex;align-items:baseline;gap:8px;font:11px var(--mono)}
+.usg-share-hd .nm{color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.usg-share-hd .pc{color:var(--ink2);white-space:nowrap}
+.usg-track{height:6px;border-radius:3px;background:var(--bg3);overflow:hidden}
+.usg-fill{height:100%;border-radius:3px;background:var(--acc);transition:width .5s cubic-bezier(.2,.8,.2,1)}
+.usg-tbl{width:100%;border-collapse:collapse;font:10.5px var(--mono)}
+.usg-tbl th{text-align:left;color:var(--ink3);font-weight:500;padding:4px 6px;border-bottom:1px solid var(--line2);white-space:nowrap}
+.usg-tbl td{padding:5px 6px;border-bottom:1px solid var(--line);color:var(--ink2);white-space:nowrap}
+.usg-tbl td:first-child{color:var(--ink)}
+.usg-tbl .tk-out{color:var(--grn)}
+.usg-src{font:9.5px var(--mono);color:var(--ink3);border:1px solid var(--line2);border-radius:4px;padding:0 5px}
+/* 工具集预设三档卡（选中态高亮；403 调用门后端执行） */
+.ts-cards{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.ts-card{display:flex;align-items:flex-start;gap:10px;text-align:left;padding:11px 13px;border:1px solid var(--line2);border-radius:12px;background:var(--bg1);cursor:pointer;transition:all .15s}
+.ts-card:hover{border-color:var(--line)}
+.ts-card svg{flex:none;margin-top:2px;color:var(--ink2)}
+.ts-card .nm{font-size:12.5px;font-weight:600;color:var(--ink)}
+.ts-card .ds{font-size:11px;color:var(--ink3);margin-top:3px;line-height:1.5}
+.ts-card.on{border-color:hsl(var(--primary) / .55);background:var(--acc-dim)}
+.ts-card.on svg{color:hsl(var(--primary))}
+.ts-card.on .nm{color:hsl(var(--primary))}
+.ts-card .nm::after{content:'✓';margin-left:6px;color:var(--grn);font-size:11px}
+.ts-card:not(.on) .nm::after{content:''}
+
+/* MCP 服务器卡（ZCode 式：状态点 + 名称 + 状态徽章 + 传输信息 + 动作） */
+.mcp-card{border:1px solid var(--line2);border-radius:12px;background:var(--bg1);padding:12px 14px;margin-bottom:8px;transition:border-color .15s}
+.mcp-card:hover{border-color:var(--line)}
+.mcp-hd{display:flex;align-items:center;gap:9px}
+.mcp-dot{width:8px;height:8px;border-radius:50%;flex:none}
+.mcp-dot.up{background:var(--grn);box-shadow:0 0 6px var(--grn)}
+.mcp-dot.down{background:var(--red)}
+.mcp-dot.restarting{background:var(--amb);animation:spin 1s linear infinite}
+.mcp-dot.external{background:var(--ink3)}
+.mcp-dot.env{background:hsl(var(--primary) / .55)}
+.mcp-name{font-size:13px;font-weight:600;color:var(--ink);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mcp-badge{font:10px var(--mono);padding:2px 8px;border-radius:999px;white-space:nowrap}
+.mcp-badge.up{background:var(--grn-dim);color:var(--grn)}
+.mcp-badge.down{background:var(--red-dim);color:var(--red)}
+.mcp-badge.restarting{background:var(--amb-dim);color:var(--amb)}
+.mcp-badge.external{background:var(--bg3);color:var(--ink2)}
+.mcp-badge.env{background:var(--acc-dim);color:hsl(var(--primary))}
+.mcp-sub{font:10.5px var(--mono);color:var(--ink2);margin-top:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.mcp-sub .kv{display:inline-flex;align-items:center;gap:4px}
+.mcp-sub .kv svg{width:12px;height:12px;color:var(--ink3);flex:none}
+.mcp-detail{font-size:11px;color:var(--ink3);margin-top:5px;line-height:1.5}
+.mcp-tools{margin-top:8px;display:flex;gap:5px;flex-wrap:wrap}
+.mcp-tool{font:9.5px var(--mono);color:var(--ink2);background:var(--bg2);border:1px solid var(--line);border-radius:5px;padding:1px 6px}
+.mcp-acts{display:flex;gap:6px;margin-top:9px}
+/* ============ MCP 配置页（表格 + 高级配置，对齐宿主设置页截图） ============ */
+.mcp-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px}
+.mcpx-title{font-size:15px;font-weight:700;color:var(--ink)}
+.mcpx-path{font:10.5px var(--mono);color:var(--ink3);margin-top:4px}
+.mcp-head-btns{display:flex;gap:8px;flex:none}
+.mcpx-btn{display:inline-flex;align-items:center;gap:5px;padding:6px 14px;border-radius:8px;font-size:12px;border:1px solid var(--line2);background:var(--bg1);color:var(--ink2);cursor:pointer;transition:all .15s;white-space:nowrap}
+.mcpx-btn:hover{background:var(--bg3);color:var(--ink);border-color:var(--line)}
+.mcpx-btn.primary{background:hsl(var(--primary));color:hsl(var(--primary-foreground));border-color:transparent;font-weight:600}
+.mcpx-btn.primary:hover{filter:brightness(1.08);background:hsl(var(--primary))}
+.mcpx-card{border:1px solid var(--line2);border-radius:12px;background:var(--bg1);padding:14px 16px;margin-bottom:12px}
+.mcpx-card-hd{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+.mcpx-card-t{font-size:13px;font-weight:600;color:var(--ink)}
+.mcpx-hint{font-size:10.5px;color:var(--ink3)}
+.mcpt{width:100%;border-collapse:collapse;font-size:12px}
+.mcpt th{text-align:left;color:var(--ink3);font-weight:500;font-size:11px;padding:6px 8px;border-bottom:1px solid var(--line2);white-space:nowrap}
+.mcpt td{padding:9px 8px;border-bottom:1px solid var(--line);color:var(--ink2);vertical-align:middle}
+.mcpt tr:last-child td{border-bottom:none}
+.mcpt tr:hover td{background:var(--bg2)}
+.mcpt-name{color:var(--ink);font-weight:600;white-space:nowrap}
+.mcpt-type{font:10.5px var(--mono);white-space:nowrap}
+.mcpt-ops{white-space:nowrap;text-align:right}
+.mcpt-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;vertical-align:1px}
+.mcpt-dot.up{background:var(--grn);box-shadow:0 0 5px var(--grn)}
+.mcpt-dot.down{background:var(--red)}
+.mcpt-dot.restarting{background:var(--amb)}
+.mcpt-btn{padding:3px 10px;border-radius:6px;font-size:11px;border:1px solid var(--line2);background:var(--bg1);color:var(--ink3);cursor:pointer;transition:all .15s;margin-left:6px}
+.mcpt-btn:hover{color:var(--ink);border-color:var(--line);background:var(--bg3)}
+.mcpt-btn.danger:hover{color:var(--red);border-color:rgba(239,68,68,.3);background:var(--red-dim)}
+.mcpt-builtin{color:var(--ink3);font-size:11px}
+.mcpx-json{width:100%;min-height:200px;resize:vertical;background:var(--bg);border:1px solid var(--line2);border-radius:8px;color:var(--ink);font:11.5px/1.7 var(--mono);padding:10px 12px;outline:none}
+.mcpx-json:focus{border-color:hsl(var(--primary) / .5)}
+/* 启用/停用开关（对齐截图紫色 toggle） */
+.mcpt-switch{position:relative;display:inline-block;width:34px;height:19px;vertical-align:middle;cursor:pointer}
+.mcpt-switch input{opacity:0;width:0;height:0;position:absolute}
+.mcpt-slider{position:absolute;inset:0;background:var(--bg3);border:1px solid var(--line2);border-radius:999px;transition:all .18s}
+.mcpt-slider::before{content:'';position:absolute;width:13px;height:13px;left:2px;top:2px;background:var(--ink3);border-radius:50%;transition:all .18s}
+.mcpt-switch input:checked + .mcpt-slider{background:hsl(var(--primary) / .85);border-color:transparent}
+.mcpt-switch input:checked + .mcpt-slider::before{transform:translateX(15px);background:#fff}
+.mcpx-modal-mask{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:300;align-items:center;justify-content:center}
+.mcpx-modal-mask.show{display:flex}
+.mcpx-modal{width:400px;max-width:92vw;background:var(--bg1);border:1px solid var(--line2);border-radius:14px;padding:18px 20px;box-shadow:0 12px 40px rgba(0,0,0,.3)}
+.mcpx-modal-t{font-size:14px;font-weight:700;color:var(--ink);margin-bottom:12px}
+.mcpx-lab{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--ink2);margin-bottom:10px}
+.mcpx-lab .fin{width:100%}
+.mcpx-modal-acts{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
+/* 策略门表（capability_policies 图形化） */
+.pol-tbl{width:100%;border-collapse:collapse;font:10.5px var(--mono)}
+.pol-tbl th{text-align:left;color:var(--ink3);font-weight:500;padding:5px 8px;border-bottom:1px solid var(--line2);white-space:nowrap}
+.pol-tbl td{padding:6px 8px;border-bottom:1px solid var(--line);color:var(--ink2);vertical-align:top}
+.pol-tbl td:first-child{color:var(--ink);white-space:nowrap}
+.pol-tbl .pol-pat{color:var(--acc)}
+.pol-decision{font-size:9.5px;padding:1px 7px;border-radius:999px;background:var(--amb-dim);color:var(--amb);border:1px solid rgba(217,161,63,.35);white-space:nowrap}
 .cons{display:flex;flex-direction:column;gap:7px}
 .cons select,.cons textarea{background:var(--bg);border:1px solid var(--line2);border-radius:8px;color:var(--ink);font:11px var(--mono);padding:7px 9px;outline:none}
 .cons textarea{min-height:52px;resize:vertical}
@@ -576,7 +710,7 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
 .arch-sess-main{flex:1;min-width:0}
 .arch-sess-title{font-size:13.5px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:4px}
 .arch-sess-meta{font:11px var(--mono);color:var(--ink3);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.arch-tag{background:rgba(16,185,129,.1);color:#10b981;padding:1px 6px;border-radius:4px;font-size:10px}
+.arch-tag{background:var(--grn-dim);color:var(--grn);padding:1px 6px;border-radius:4px;font-size:10px}
 .arch-sess-acts{display:flex;align-items:center;gap:6px;flex:none}
 .arch-btn{display:flex;align-items:center;gap:4px;padding:5px 10px;border-radius:7px;font-size:11.5px;border:1px solid var(--line2);background:var(--bg1);color:var(--ink2);cursor:pointer;transition:all .15s}
 .arch-btn:hover{background:var(--bg3);color:var(--ink);border-color:var(--line)}
@@ -590,18 +724,21 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
 .composer{flex:none;padding:10px 12px 12px;border-top:1px solid var(--line)}
 .cmp{border:1px solid var(--line2);border-radius:14px;background:var(--bg2);padding:9px 11px 7px;position:relative}
 .cmp:focus-within{border-color:hsl(var(--primary) / .5)}
-.cmp textarea{width:100%;background:none;border:none;outline:none;resize:none;color:var(--ink);font:13px/1.5 inherit;max-height:110px;display:block}
+.cmp textarea{width:100%;background:none;border:none;outline:none;resize:none;color:var(--ink);font:13px/1.5 inherit;display:block;min-height:19.5px;max-height:132px;overflow-y:auto}
 .cmp textarea::placeholder{color:var(--ink3)}
 .cmp-row{display:flex;align-items:center;gap:4px;margin-top:5px}
+/* composer 附件行（上传成功的 chip 落这里；空时整行不占位） */
+.cmp-attach{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.cmp-attach:empty{display:none}
+.cmp-attach .chip{font-size:10.5px}
 .cbtn{width:27px;height:27px;border-radius:7px;color:var(--ink3);display:flex;align-items:center;justify-content:center}
 .cbtn:hover{background:var(--bg3);color:var(--ink)}
-.cbtn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.cbtn svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .mdl{font:10.5px var(--mono);color:var(--ink3);padding:4px 7px;border-radius:7px}
 .mdl:hover{background:var(--bg3);color:var(--ink2)}
 .send{margin-left:auto;width:28px;height:28px;border-radius:50%;background:var(--acc);color:var(--acc-fg);display:flex;align-items:center;justify-content:center}
 .send:hover{opacity:.9}
 .send svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-.chips{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
 .chip{font:10.5px var(--mono);color:var(--ink2);border:1px solid var(--line);border-radius:999px;padding:3px 10px}
 .chip:hover{background:var(--bg3);color:var(--ink)}
 .slash{position:absolute;left:10px;right:10px;bottom:calc(100% + 6px);background:var(--bg3);border:1px solid var(--line2);border-radius:10px;box-shadow:0 14px 44px rgba(0,0,0,.5);display:none;overflow:hidden;z-index:40}
@@ -614,27 +751,33 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
 .setpop.show{display:block}
 .sp-sec{padding:11px 14px;border-bottom:1px solid var(--line)}
 .sp-sec:last-child{border-bottom:none}
-.sp-t{font:10px var(--mono);letter-spacing:.08em;color:var(--ink3);text-transform:uppercase;margin-bottom:8px}
+.sp-t{font:10.5px var(--mono);letter-spacing:.08em;color:var(--ink3);text-transform:uppercase;margin-bottom:8px}
 .sp-row{display:flex;align-items:center;gap:8px;font-size:12px;padding:4px 0;color:var(--ink2)}
 .sp-row .v{margin-left:auto;font:11px var(--mono);color:var(--ink)}
 .opt{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:7px;cursor:pointer;font:12px var(--mono)}
 .opt:hover{background:var(--bg3)}
 .opt.on{color:var(--acc)}
-.modal-mask{display:none;position:fixed;inset:0;background:rgba(4,6,9,.6);backdrop-filter:blur(3px);z-index:80;align-items:center;justify-content:center}
+.modal-mask{display:none;position:fixed;inset:0;background:rgba(4,6,9,.6);backdrop-filter:blur(3px);z-index:205;align-items:center;justify-content:center}
 .modal-mask.show{display:flex}
 .modal{width:420px;background:var(--bg1);border:1px solid var(--line2);border-radius:16px;padding:18px;box-shadow:0 24px 80px rgba(0,0,0,.6)}
 .modal h3{font-size:14px;margin-bottom:8px}
 .modal p{font-size:12.5px;color:var(--ink2);line-height:1.65}
 .modal pre{font:10.5px var(--mono);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px;margin:10px 0;color:var(--amb);white-space:pre-wrap}
 .modal .row{display:flex;gap:8px;margin-top:14px}
-.modal .row button{flex:1;padding:8px;border-radius:var(--r);font-weight:600}
+.modal .row button{flex:1;padding:8px;border-radius:var(--r);font-weight:600;font-size:12.5px}
 .m-ok{background:var(--grn);color:#04140d}.m-ok:hover{opacity:.92}
 .m-no{border:1px solid var(--line2);color:var(--ink2)}.m-no:hover{background:var(--bg3)}
-.toast{position:fixed;top:16px;left:50%;transform:translateX(-50%) translateY(-8px);background:var(--bg3);border:1px solid var(--line2);border-radius:10px;padding:8px 14px;font-size:12px;color:var(--ink);opacity:0;pointer-events:none;transition:all .25s;z-index:99}
+/* 全局主行动按钮（统一 .btn-pri：替代散落的 Tailwind 类按钮，主行动一律主题色） */
+.btn-pri{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:6px;background:var(--acc);color:var(--acc-fg);border:none;border-radius:var(--r);padding:8px 14px;font-size:12.5px;font-weight:600;cursor:pointer;transition:opacity .15s}
+.btn-pri:hover{opacity:.88}
+.toast{position:fixed;top:16px;left:50%;transform:translateX(-50%) translateY(-8px);background:var(--bg3);border:1px solid var(--line2);border-radius:10px;padding:8px 14px;font-size:12px;color:var(--ink);opacity:0;pointer-events:none;transition:all .25s;z-index:400}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 /* 审批待决角标（挂 .th-tabs；#tabConv 元素已不存在，勿再引用） */
 .bdg{font:10px var(--mono);color:var(--amb);background:var(--amb-dim);border:1px solid rgba(217,161,63,.4);border-radius:999px;padding:1px 8px;white-space:nowrap}
-/* 自绘 confirm/prompt 弹窗（替换原生对话框；#cfmInput 仅 prompt 模式显示） */
+/* 自绘 confirm/prompt 弹窗（替换原生对话框；#cfmInput 仅 prompt 模式显示）
+   z-index 210：必须盖过设置页 .setpage(90) 与模型弹窗 .ms-modal-mask(200)，
+   否则在「模型设置/归档」等设置分区内触发删除时弹窗被整页遮住、看似点击无反应 */
+#cfmMask{z-index:210}
 #cfmMask .modal{width:400px}
 #cfmInput{display:none}
 /* 发送按钮禁用态（空输入；运行中由 stopBtn 接管语义） */
@@ -642,6 +785,12 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
 .fl{display:block;font-size:11.5px;color:var(--ink2);margin:7px 0}
 .fin{display:block;width:100%;margin-top:3px;background:var(--bg);border:1px solid var(--line2);border-radius:8px;color:var(--ink);font:11.5px var(--mono);padding:7px 9px;outline:none}
 .fin:focus{border-color:hsl(var(--primary) / .5)}
+/* 表单提示/空态统一组件（各分区共用，替代散落的内联 style 空态写法） */
+.hint{font-size:11px;color:var(--ink3);line-height:1.55;margin-top:4px}
+.hint code{font:10px var(--mono);color:var(--ink2);background:var(--bg2);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.emptybox{text-align:center;padding:30px 20px;font-size:12px;color:var(--ink3);border:1px dashed var(--line2);border-radius:10px;line-height:1.6;background:var(--bg1)}
+.emptybox .et{display:block;font-size:13px;font-weight:600;color:var(--ink2);margin-bottom:5px}
+.emptybox .ed{display:block;font-size:11.5px;max-width:400px;margin:0 auto}
 .fk{font:9.5px var(--mono);color:var(--grn);margin-left:6px}
 /* 设置全屏页（ZCode 式：左分区导航 + 右内容独立滚动，关闭入口恒在） */
 .setpage{display:none;position:fixed;inset:0;background:var(--bg);z-index:90}
@@ -690,6 +839,23 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
     <div class="crumb" id="stageCrumb"><span style="color:var(--ink2);font-size:12px" id="stageLabel">视口</span><span style="color:var(--ink3)">/</span><b id="stageModelName">等待模型数据</b></div>
     <span class="pill g" id="stagePill" style="display:none"><span class="dot g" id="stageDot"></span><span id="stagePillText">未收敛</span></span>
     <div class="sp"></div>
+    <!-- 导出 CAD（下拉：Blender / Vectorworks；HITL 审批门）——从 composer 下方的 chips 迁来，保持对话框下方干净 -->
+    <div class="exp-wrap">
+      <button class="pill exp-pill" onclick="toggleExpMenu(event)" title="导出当前 IR 至 CAD 宿主（HITL 审批门）">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        导出 CAD <span class="arr">▾</span>
+      </button>
+      <div class="exp-menu" id="expMenu">
+        <button class="it" onclick="askConfirm('blender')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M21 16V8l-9-5-9 5v8l9 5 9-5z"/><path d="M3.3 7.9 12 12.8l8.7-4.9"/><line x1="12" y1="22" x2="12" y2="12.8"/></svg>
+          <span class="nm">Blender</span><span class="fmt">.blend · 在线宿主</span>
+        </button>
+        <button class="it" onclick="askConfirm('vectorworks')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+          <span class="nm">Vectorworks</span><span class="fmt">.vwx · 外部 runner</span>
+        </button>
+      </div>
+    </div>
     <div class="seg" id="viewSeg">
       <button class="on" data-v="3d" onclick="setView('3d',this)">3D</button>
       <button data-v="plan" onclick="setView('plan',this)">平面</button>
@@ -709,7 +875,7 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
 
     <div class="vp-tools">
       <button class="vt on" id="tgGrid" data-tip="地面网格" title="地面网格" onclick="toggleOpt('grid',this)"><svg viewBox="0 0 24 24"><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg></button>
-      <button class="vt on" id="tgEx" data-tip="垂直夸大 ×3" title="垂直夸大 ×3" onclick="toggleOpt('exag',this)"><svg viewBox="0 0 24 24"><path d="M12 3v18M8 7l4-4 4 4M8 17l4 4 4-4"/></svg></button>
+      <button class="vt on" id="tgEx" data-tip="垂直夸大 ×3" title="垂直夸大 ×3（3D 高程放大 3 倍；纵断面为制图式纵向 ×20）" onclick="toggleOpt('exag',this)"><svg viewBox="0 0 24 24"><path d="M12 3v18M8 7l4-4 4 4M8 17l4 4 4-4"/></svg></button>
       <button class="vt" id="tgSpin" data-tip="自动旋转" title="自动旋转" onclick="toggleOpt('spin',this)"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 11-3-6.7"/><path d="M21 3v6h-6"/></svg></button>
       <button class="vt" id="tgReset" data-tip="复位视角" title="复位视角" onclick="resetCam()"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></button>
       <button class="vt" id="tgFull" data-tip="视口全屏" title="视口全屏" onclick="toggleFullscreen()"><svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg></button>
@@ -718,6 +884,7 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
     <div class="vp-scale"><div class="bar"></div><span id="scaleLbl">—</span></div>
 
     <div class="vp-tl">
+      <button class="tl-play" id="tlPlayBtn" data-tip="自愈回放" title="自愈回放：iter 0 碰撞 → 膨胀重路由 → 收敛" onclick="playTimeline()"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M6 4l14 8-14 8z"/></svg></button>
       <div class="tl-steps" id="tlSteps"></div>
       <div class="tl-note" id="tlNote">初始 A* 路径 · 碰撞检测中</div>
     </div>
@@ -754,7 +921,7 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
       <div class="hd"><span class="tag">HITL · prompt 策略门</span>等待人工确认</div>
       <div class="ds">能力 <code>cad_host:blender.execute</code> 被策略表标记为 <b>prompt</b>：将向授权根目录写入真实产物（typed plan，对象数由执行回执回填）。确认后执行。</div>
       <div class="row">
-        <button id="approveBtn" onclick="askConfirm('blender')" class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground w-full">批准导出</button>
+        <button id="approveBtn" onclick="askConfirm('blender')" class="btn-pri">批准导出</button>
         <button class="reject" onclick="rejectExport()">拒绝</button>
       </div>
     </div>
@@ -785,6 +952,7 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
   <div class="composer">
     <div class="cmp">
       <textarea id="cmpTa" rows="1" placeholder="与基线模型对话，或输入 / 调用命令（/solve 调度自愈求解器）…"></textarea>
+      <div class="cmp-attach" id="cmpAttach"></div>
       <div class="slash" id="slash">
         <div class="sl" onclick="pickCmd('/solve')"><span class="c">/solve</span><span class="d">重新调度自愈求解器</span></div>
         <div class="sl" onclick="pickCmd('/rules')"><span class="c">/rules</span><span class="d">打开 GB 50289 规则树</span></div>
@@ -802,13 +970,6 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
         <button class="send" onclick="sendMsg()" title="发送"><svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
       </div>
     </div>
-    <div class="chips">
-      <button class="chip" onclick="askConfirm('blender')">导出 Blender</button>
-      <button class="chip" onclick="askConfirm('vectorworks')">导出 Vectorworks</button>
-      <button class="chip" onclick="openInspector('rules')">规则树</button>
-      <button class="chip" onclick="openInspector('usage');loadUsage()">用量</button>
-      <button class="chip" onclick="playTimeline()">▶ 自愈回放</button>
-    </div>
   </div>
 </section>
 
@@ -823,7 +984,7 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
 { "confirm": true }</pre>
     <div class="row">
       <button class="m-no" onclick="closeModal()">取消</button>
-      <button onclick="doExport()" class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground w-full">确认执行</button>
+      <button class="btn-pri" onclick="doExport()">确认执行</button>
     </div>
   </div>
 </div>
@@ -857,7 +1018,7 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
     </label>
     <div class="row">
       <button class="m-no" onclick="$('runMask').classList.remove('show')">取消</button>
-      <button class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground" style="flex:1" onclick="startRun()">启动运行</button>
+      <button class="btn-pri" style="flex:1" onclick="startRun()">启动运行</button>
     </div>
   </div>
 </div>
@@ -891,7 +1052,7 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
       <div class="sethead"><h3 id="setTitle">外观设置</h3><button class="setclose" onclick="toggleSettings()" title="关闭 (Esc)">✕</button></div>
       <div class="setbody">
         <section data-setsec="general" style="display:none">
-          <p class="setdesc">openBIMAgent 数字化工程工作台运行环境与当前实例状态（实时取自真实端点）。</p>
+          <p class="setdesc">本实例的<b>运行环境只读体检表</b>——当前连的 API 端点、对话用的基线模型、微内核插件/能力规模、规则集指纹。排查"对话怎么调不通 / 规则是否更新"先看这里（全部实时取自真实端点，非缓存）。</p>
           <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">
             <label class="fl">API 端点<input class="fin" id="genEndpoint" value="…" readonly></label>
             <label class="fl">LLM 基线<input class="fin" id="genLLM" value="…" readonly></label>
@@ -973,23 +1134,34 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
               </button>
             </div>
             <div class="ms-main" id="msDetail">
-              <div style="font-size:12px;color:var(--ink3);text-align:center;padding:40px 0">选择左侧供应商进行配置</div>
+              <div class="emptybox"><span class="et">选择供应商</span><span class="ed">从左侧列表选择一个供应商进行配置，或添加自定义供应商</span></div>
             </div>
           </div>
         </section>
         <section data-setsec="toolset" style="display:none">
-          <p class="setdesc">能力面收敛：过滤 <code>/api/v1/plugins</code> 清单可见面 + <code>invoke</code> 调用门（被滤能力 403）。即时生效，无需保存。</p>
-          <label class="fl">工具集预设
-            <select id="setToolset" class="fin" onchange="saveToolset(this.value)">
-              <option value="full">full · 全部能力</option>
-              <option value="modeling">modeling · solver + cad_host</option>
-              <option value="minimal">minimal · 仅 solver（不触宿主写盘）</option>
-            </select>
-          </label>
+          <p class="setdesc">限制 Agent 能调用哪些能力的<b>安全档位</b>：选低档位后，被滤掉的能力在清单里不可见、直接调用返回 403。即时生效，无需保存——适合演示或交给别人操作时收窄风险面。</p>
+          <div class="ts-cards" id="tsCards">
+            <button class="ts-card" data-v="full" onclick="saveToolset('full');markToolset('full')">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 019 9"/><path d="M12 7v5l3 3"/></svg>
+              <span class="nm">full · 全部能力</span>
+              <span class="ds">求解器 + 规则核验 + CAD 写盘 + 外部 MCP——开发调试用，交付动作有审批门兜底</span>
+            </button>
+            <button class="ts-card" data-v="modeling" onclick="saveToolset('modeling');markToolset('modeling')">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M21 16V8l-9-5-9 5v8l9 5 9-5z"/><path d="M3.3 7.9 12 12.8l8.7-4.9"/><line x1="12" y1="22" x2="12" y2="12.8"/></svg>
+              <span class="nm">modeling · 建模档</span>
+              <span class="ds">solver + cad_host——可生成管线并导出 CAD，但不开放其余能力</span>
+            </button>
+            <button class="ts-card" data-v="minimal" onclick="saveToolset('minimal');markToolset('minimal')">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 12h6"/></svg>
+              <span class="nm">minimal · 最小档</span>
+              <span class="ds">仅 solver——只算不写盘，任何宿主导出一律 403，给别人演示最安全</span>
+            </button>
+          </div>
+          <div class="hint" id="tsHint" style="margin-top:8px">当前档位加载中…</div>
         </section>
         <section data-setsec="memory" style="display:none">
-          <p class="setdesc">跨会话长期记忆（<code>memory/MEMORY.md</code> · <code>USER.md</code>，gitignored）。读取免费；写入走 prompt 策略门，逐条确认。片段自动注入新任务上下文。</p>
-          <div id="memList" style="max-height:280px;overflow-y:auto;font:10.5px var(--mono);color:var(--ink2);background:var(--bg2);border:1px solid var(--line);border-radius:6px;padding:8px 10px">加载中…</div>
+          <p class="setdesc"><b>跨会话长期记忆</b>：Agent 在这里记住你的项目偏好和常用约定（存 <code>memory/MEMORY.md</code> 和 <code>USER.md</code>，不入库）。新开任务时相关片段会自动注入上下文——所以它"越用越懂你"。查看免费；写入/删除都要经你确认（上面的策略门里那两条 memory 记录就是这个）。</p>
+          <div id="memList" style="max-height:280px;overflow-y:auto;font:10.5px var(--mono);color:var(--ink2);background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:8px 10px">加载中…</div>
           <div class="row" style="margin-top:8px">
             <select id="memFile" class="fin" style="width:110px;flex:none">
               <option value="memory">MEMORY</option>
@@ -1000,19 +1172,78 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
           </div>
         </section>
         <section data-setsec="skills" style="display:none">
-          <p class="setdesc">SKILL.md 技能库（渐进披露：上下文只见目录，调用才给正文）。调用与候选批准在对话线程 <code>/skills</code> 面板操作。</p>
-          <div id="setSkillsList"><div style="font-size:11px;color:var(--ink3)">加载中…</div></div>
+          <p class="setdesc"><b>技能 = 可复用的操作手册</b>（SKILL.md 文件，Markdown 写法）。Agent 执行任务时按需取用：平时只看目录不占上下文，用到才读正文（"渐进披露"）。下面是当前生效清单；对话里输 <code>/skills</code> 可直接调用；每次成功交付后系统自动沉淀"候选技能"，需你在 <code>/skills</code> 面板人工批准才转正——不自动生效。</p>
+          <div id="setSkillsList"><div class="emptybox">加载中…</div></div>
         </section>
         <section data-setsec="mcp" style="display:none">
-          <p class="setdesc">CAD 宿主即 MCP 连接：Blender MCP（TCP 实探 + supervisor 有界退避重启）；Vectorworks 为外部 IPC runner（恒 external 不伪探测）。第三方 MCP server 经 <code>OPENBIMAGENT_MCP_SERVERS</code> env JSON 挂载，默认 prompt 策略门。</p>
-          <div class="sp-t">内置宿主</div>
-          <div id="hostSettings"><div style="font-size:11px;color:var(--ink3)">加载中…</div></div>
-          <div class="sp-t" style="margin-top:12px">第三方 MCP server</div>
-          <div id="setMcpList"><div style="font-size:11px;color:var(--ink3)">加载中…</div></div>
+          <div class="mcp-head">
+            <div>
+              <div class="mcpx-title">MCP 配置</div>
+              <div class="mcpx-path">配置文件路径：<span id="mcpCfgPath">…</span></div>
+            </div>
+            <div class="mcp-head-btns">
+              <button class="mcpx-btn" onclick="mcpResetDefault()">恢复默认</button>
+              <button class="mcpx-btn primary" onclick="mcpSave()">保存 MCP</button>
+              <button class="mcpx-btn" onclick="mcpRefreshStatus()" title="重新探测内置宿主与第三方 server 状态">
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                刷新状态
+              </button>
+              <button class="mcpx-btn" onclick="mcpOpenAddModal()">新增</button>
+            </div>
+          </div>
+          <div class="mcpx-card">
+            <div class="mcpx-card-hd">
+              <span class="mcpx-card-t">MCP Servers</span>
+              <span class="mcpx-hint" id="mcpTableHint"></span>
+            </div>
+            <table class="mcpt">
+              <thead><tr><th>名称</th><th>状态</th><th>类型</th><th style="text-align:right">操作</th></tr></thead>
+              <tbody id="mcpTableBody"><tr><td colspan="4" class="mcpt-builtin">加载中…</td></tr></tbody>
+            </table>
+          </div>
+          <div class="mcpx-card">
+            <div class="mcpx-card-hd">
+              <span class="mcpx-card-t">高级配置</span>
+              <span class="mcpx-hint">mcpServers JSON 格式 · 支持 description/alwaysLoad/disabled 元数据 · 保存后重启服务挂载生效</span>
+            </div>
+            <textarea id="mcpJson" class="mcpx-json" spellcheck="false" placeholder='{"mcpServers": {"my-server": {"url": "https://example.com/mcp"}}}'></textarea>
+          </div>
         </section>
+        <!-- MCP 新增/编辑弹窗 -->
+        <div class="mcpx-modal-mask" id="mcpModalMask">
+          <div class="mcpx-modal">
+            <div class="mcpx-modal-t" id="mcpModalTitle">新增 MCP Server</div>
+            <label class="mcpx-lab">名称（slug，字母/数字/连字符）
+              <input id="mcpModalName" class="fin" placeholder="my-server">
+            </label>
+            <label class="mcpx-lab">类型
+              <select id="mcpModalType" class="fin" onchange="mcpModalSyncType()">
+                <option value="stdio">STDIO（本地命令）</option>
+                <option value="url">URL（远程 HTTP）</option>
+              </select>
+            </label>
+            <div id="mcpModalStdioFields">
+              <label class="mcpx-lab">命令
+                <input id="mcpModalCmd" class="fin" placeholder="npx">
+              </label>
+              <label class="mcpx-lab">参数（JSON 数组）
+                <input id="mcpModalArgs" class="fin" placeholder='["-y","@mcp/server-xxx"]'>
+              </label>
+            </div>
+            <div id="mcpModalUrlFields" style="display:none">
+              <label class="mcpx-lab">URL
+                <input id="mcpModalUrl" class="fin" placeholder="https://example.com/mcp">
+              </label>
+            </div>
+            <div class="mcpx-modal-acts">
+              <button class="mcpx-btn" onclick="mcpCloseModal()">取消</button>
+              <button class="mcpx-btn primary" onclick="mcpSubmitModal()">确定</button>
+            </div>
+          </div>
+        </div>
         <section data-setsec="rules" style="display:none">
           <div class="insp-sec-t">市政管网规则树 · GB 50289-2016（白盒约束求解硬门禁 · 自检 33/33）</div>
-          <p class="setdesc" style="margin-bottom:12px">规则树为工程几何提供白盒合规背书，消除大模型空间幻觉，强制满足国家强条避让与覆土标准。支持分类筛选与工程条文核验。</p>
+          <p class="setdesc" style="margin-bottom:12px">这是管线的<b>合规门禁</b>：每次生成/自愈求解后，系统用这 12 条国家规范逐条核验几何（净距、覆土、管径），违规会在审批前自动拦截并给出行文依据。想调整规则：改 domain pack 的规则集文件（<code>out/municipal_rule_set.json</code> 为当前生效副本），重启后生效——规则只拦"生成结果违规"，不会破坏你的既有项目；若某条规则误伤，可在 pack 内调整或删除该条后重跑自愈。</p>
           <div class="rule-search-box">
             <input id="ruleSearchInput" class="fin" placeholder="输入关键词搜索规则条文、管线类别或国标编号…" oninput="filterRules()" style="flex:1">
           </div>
@@ -1028,29 +1259,34 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
         </section>
         <section data-setsec="plugins" style="display:none">
           <div class="insp-sec-t">微内核插件 · 能力清单与策略门</div>
+          <p class="setdesc">本系统是<b>微内核插件架构</b>：求解器、规则库、CAD 宿主驱动都是插件，对外暴露"能力"（capability，如 <code>solver:self_healing</code>）。下方清单是当前启用的插件及其能力；策略门表列出哪些能力在执行前<b>必须人工确认</b>（写盘、删数据、外部进程——fail-closed，默认拒绝直到你批准）。</p>
           <div id="plgList"></div>
           <div class="insp-sec-t" style="margin-top:12px">能力调度控制台</div>
+          <p class="setdesc">直接调度任意能力的高级入口：选能力 → 填 payload JSON（可留空 <code>{}</code>）→ 运行。带 prompt 策略的能力按 <code>confirm=true</code> 语义发起（不再二次弹窗）；系统满载时返回 503 + 错误码 -32001（背压保护，稍后重试）。</p>
           <div class="cons">
             <select id="capSel">
               <option>solver:self_healing</option><option>solver:grid_route</option><option>solver:hydraulic</option>
               <option>rules:gb50289.verify</option><option>cad_host:blender.execute</option><option>cad_host:vectorworks.execute</option>
             </select>
-            <textarea placeholder='payload JSON（可选）'>{}</textarea>
-            <button onclick="invokeCap()" class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground">运行（经 registry.invoke）</button>
-            <div class="cons-out">prompt 策略能力以 confirm=true 语义直接发起调度；满载返回 503 + -32001 背压</div>
+            <textarea placeholder='payload JSON（可选，如 {"confirm": true} 或求解器入参）'>{}</textarea>
+            <button onclick="invokeCap()" class="btn-pri" style="align-self:flex-start">运行（经 registry.invoke）</button>
+            <div class="cons-out">结果为结构化 JSON 回执（converged/violations/receipt），直接回显于此</div>
           </div>
         </section>
         <section data-setsec="ir" style="display:none">
           <div class="insp-sec-t">CompiledUtilityIR v1（不可变 · 哈希寻址）</div>
+          <p class="setdesc"><b>IR = Intermediate Representation（中间表示）</b>：求解器输出的管网几何"合同"——6 个井、5 个管段的坐标/管径/坡度/高程，配 SHA256 哈希防篡改。它是 CAD 导出的唯一依据（.blend/.vwx 的对象由此生成），也是右侧 3D 视口的数据源。任何修改都会换哈希——历史版本不覆盖。</p>
           <pre class="irpre" id="irPre"></pre>
         </section>
         <section data-setsec="uploads" style="display:none">
           <div class="insp-sec-t">上传附件（真实落盘 out/uploads/ · sha256 manifest）</div>
-          <div id="uplList"><div class="rd" style="color:var(--ink3);font-size:11px">加载中…</div></div>
+          <p class="setdesc">给任务提供<b>输入资料</b>的地方：点输入框左侧回形针可上传 DXF / IFC / GIS / 规范文件，落盘到 <code>out/uploads/</code> 并计算 SHA256 指纹（防篡改溯源）。目前清单可查可删；管线摄取（把 DXF 转成求解器入参）在后续里程碑接入。</p>
+          <div id="uplList"><div class="emptybox">加载中…</div></div>
         </section>
         <section data-setsec="usage" style="display:none">
-          <div class="insp-sec-t">LLM 用量与成本（out/usage_summary.json 真实数据）</div>
-          <div id="usageBody"><div style="font-size:11px;color:var(--ink3)">加载中…</div></div>
+          <div class="insp-sec-t">LLM 用量与成本（真实调用流水账 out/usage_log.jsonl 聚合）</div>
+          <p class="setdesc">每次<b>真实 LLM 调用</b>（对话 + pipeline）的 token 消耗自动记账：总量、按日趋势、按模型占比、最近调用明细。不是估算——是上游 API 回报的真实用量。</p>
+          <div id="usageBody"><div class="emptybox">加载中…</div></div>
         </section>
         <section data-setsec="archive" style="display:none">
           <div class="arch-tabs-bar">
@@ -1069,7 +1305,7 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
           <div id="archSessView">
             <div class="arch-desc">已归档的会话不会显示在左侧活动列表中。您可以随时恢复回会话列表、查阅历史，或彻底清理。</div>
             <div id="archSessList" class="arch-list">
-              <div style="font-size:12px;color:var(--ink3);text-align:center;padding:30px 0">加载中…</div>
+              <div class="emptybox">加载中…</div>
             </div>
           </div>
 
@@ -1077,7 +1313,7 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
           <div id="archArtifactsView" style="display:none">
             <div class="arch-desc">Domain Pack 交付资产不可变留存（每次完成设计交付时增量沉淀，用于管网经验检索与溯源）。</div>
             <div id="archiveBody" class="arch-list">
-              <div style="font-size:12px;color:var(--ink3);text-align:center;padding:30px 0">加载中…</div>
+              <div class="emptybox">加载中…</div>
             </div>
           </div>
         </section>
@@ -1157,18 +1393,21 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
       <div class="ms-form-group">
         <label class="ms-form-label">供应商名称</label>
         <input class="fin" id="msProvName" placeholder="例如：商汤-jy、阿里、火山agent、DeepSeek">
+        <div class="hint">仅作界面标识，可随时重命名。</div>
       </div>
       <div class="ms-form-group">
         <label class="ms-form-label">Base URL</label>
         <input class="fin" id="msProvBaseUrl" placeholder="https://api.example.com/v1">
+        <div class="hint">OpenAI 兼容地址填到 <code>/v1</code> 为止（平台网关一般到网关域名根）；末尾斜杠会自动去掉。例：<code>https://api.openai.com/v1</code> · <code>https://api.deepseek.com/v1</code> · <code>https://open.bigmodel.cn/api/paas/v4</code></div>
       </div>
       <div class="ms-form-group">
         <label class="ms-form-label">API 格式</label>
         <select class="fin" id="msProvFormat">
-          <option value="Chat Completions (/chat/completions)">Chat Completions (/chat/completions)</option>
-          <option value="OpenAI Responses">OpenAI Responses</option>
-          <option value="Anthropic Messages">Anthropic Messages</option>
+          <option value="Chat Completions (/chat/completions)">Chat Completions · OpenAI 兼容（绝大多数供应商）</option>
+          <option value="OpenAI Responses">OpenAI Responses · /v1/responses（OpenAI 新接口）</option>
+          <option value="Anthropic Messages">Anthropic Messages · /v1/messages（Claude 系）</option>
         </select>
+        <div class="hint">不确定就选第一个：国内主流（GLM / DeepSeek / Qwen / Kimi / vLLM 网关等）都是 Chat Completions。接口路径由本项决定，不用填在 Base URL 里。</div>
       </div>
       <div class="ms-form-group">
         <label class="ms-form-label">API Key</label>
@@ -1178,6 +1417,7 @@ html[data-theme="dark"] .ms-btn-save{background:#f4f4f5;color:#09090b}
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
           </button>
         </div>
+        <div class="hint">只写不回显，保存后仅显示「已配置」；存放在 gitignored 的本地配置中。</div>
       </div>
     </div>
     <div class="ms-modal-foot">
@@ -1259,7 +1499,7 @@ const cv=document.getElementById('gl'),cx=cv.getContext('2d');
 let W=0,H=0,DPR=1;
 const cam={yaw:-0.9,pitch:0.62,dist:120,tx:66,ty:8,tz:9.6};
 const opt={grid:true,exag:true,spin:false};
-let view='3d', tlStep=0, bendT=1; /* bendT: 0=初始直线 1=完全绕行 */
+let view='3d', tlStep=2, bendT=1; /* 默认呈现收敛终态（绿=自愈绕行）；此前 tlStep=0+bendT=1 标签与几何互相矛盾 */
 const VSCALE=()=>opt.exag?3:1;
 const z0=10.3; /* 高程基准偏移 */
 const nz=z=>(z-z0)*VSCALE(); /* 归一化+夸大后的显示高程 */
@@ -1342,12 +1582,25 @@ function draw(){
   draw3D();updateScale();
 }
 function drawEmptyState(){
-  if(opt.grid){
-    const gz=0;
-    const P=p=>project(p);
-    const gc=isL()?'rgba(0,0,0,.08)':'rgba(255,255,255,.05)';
-    for(let x=-40;x<=40;x+=10){const a=P([x,-40,gz]),b=P([x,40,gz]);if(a&&b){cx.strokeStyle=gc;cx.lineWidth=1;cx.beginPath();cx.moveTo(a[0],a[1]);cx.lineTo(b[0],b[1]);cx.stroke();}}
-    for(let y=-40;y<=40;y+=10){const a=P([-40,y,gz]),b=P([40,y,gz]);if(a&&b){cx.strokeStyle=gc;cx.lineWidth=1;cx.beginPath();cx.moveTo(a[0],a[1]);cx.lineTo(b[0],b[1]);cx.stroke();}}
+  const gc=isL()?'rgba(0,0,0,.08)':'rgba(255,255,255,.05)';
+  cx.strokeStyle=gc;cx.lineWidth=1;
+  if(view==='plan'){
+    /* 平面空态：正交平面网格（此前误用 3D 相机投影，平面视图里呈歪斜网格） */
+    for(let x=0;x<=W;x+=40){cx.beginPath();cx.moveTo(x,0);cx.lineTo(x,H);cx.stroke();}
+    for(let y=0;y<=H;y+=40){cx.beginPath();cx.moveTo(0,y);cx.lineTo(W,y);cx.stroke();}
+    hudCam.textContent='2D 平面 · 暂无管线数据';
+  }else if(view==='prof'){
+    /* 纵断面空态：淡横线（标尺意象） */
+    for(let y=0;y<=H;y+=40){cx.beginPath();cx.moveTo(0,y);cx.lineTo(W,y);cx.stroke();}
+    hudCam.textContent='纵断面 · 暂无管线数据';
+  }else{
+    if(opt.grid){
+      const gz=0;
+      const P=p=>project(p);
+      for(let x=-40;x<=40;x+=10){const a=P([x,-40,gz]),b=P([x,40,gz]);if(a&&b){cx.strokeStyle=gc;cx.lineWidth=1;cx.beginPath();cx.moveTo(a[0],a[1]);cx.lineTo(b[0],b[1]);cx.stroke();}}
+      for(let y=-40;y<=40;y+=10){const a=P([-40,y,gz]),b=P([40,y,gz]);if(a&&b){cx.strokeStyle=gc;cx.lineWidth=1;cx.beginPath();cx.moveTo(a[0],a[1]);cx.lineTo(b[0],b[1]);cx.stroke();}}
+    }
+    hudCam.textContent=`yaw ${(cam.yaw*57.3).toFixed(0)}° · pitch ${(cam.pitch*57.3).toFixed(0)}° · d ${cam.dist.toFixed(0)}m`;
   }
   cx.save();
   cx.textAlign='center';
@@ -1356,9 +1609,8 @@ function drawEmptyState(){
   cx.fillText('当前会话暂无 CompiledUtilityIR 管网模型',W/2,H/2-10);
   cx.fillStyle=isL()?'rgba(71,85,105,.55)':'rgba(154,164,178,.25)';
   cx.font='11px '+getFontMono();
-  cx.fillText('在右侧会话面板发送指令或执行 /solve 调度自愈求解',W/2,H/2+14);
+  cx.fillText('在右侧会话面板发送指令或执行 /solve 调度自愈求解器',W/2,H/2+14);
   cx.restore();
-  hudCam.textContent=`yaw ${(cam.yaw*57.3).toFixed(0)}° · pitch ${(cam.pitch*57.3).toFixed(0)}° · d ${cam.dist.toFixed(0)}m`;
 }
 /* ---------- 3D ---------- */
 function draw3D(){
@@ -1459,12 +1711,26 @@ const getFontMono=()=>"ui-monospace,Consolas,monospace";
 function drawPlan(){
   if(!NODES||NODES.length<2){drawEmptyState();return;}
   const pad=56;
-  const pxs=NODES.map(n=>n.x),pys=NODES.map(n=>n.y);
-  const x0=Math.min(...pxs)-15,x1=Math.max(...pxs)+15,y0=Math.min(...pys)-15,y1=Math.max(...pys)+15;
-  const sx=(W-2*pad)/(x1-x0), sy=(H-2*pad)/(y1-y0), s=Math.min(sx,sy);
-  const X=x=>pad+(x-x0)*s, Y=y=>H-pad-(y-y0)*s;
+  /* 全景包围盒：节点 + 绕行折线 + 障碍物含净距圈（任一超界元素不再被裁掉） */
+  const xs=[],ys=[];
+  NODES.forEach(n=>{xs.push(n.x);ys.push(n.y);});
+  if(HEALED_BEND&&HEALED_BEND.pts)HEALED_BEND.pts.forEach(q=>{xs.push(q[0]);ys.push(q[1]);});
+  OBST.forEach(o=>{const R=Math.max(o.w,o.d)/2+(o.clear||2.5);xs.push(o.x-R,o.x+R);ys.push(o.y-R,o.y+R);});
+  const x0=Math.min(...xs)-6,x1=Math.max(...xs)+6,y0=Math.min(...ys)-6,y1=Math.max(...ys)+6;
+  /* 居中映射：图幅按包围盒适配，画布中心 = 场景中心（修掉宽场景顶贴/大片留白） */
+  const s=Math.min((W-2*pad)/(x1-x0),(H-2*pad)/(y1-y0));
+  const cxMid=(x0+x1)/2, cyMid=(y0+y1)/2;
+  const X=x=>W/2+(x-cxMid)*s, Y=y=>H/2-(y-cyMid)*s;
+  /* 动态网格：步长按图幅自适应（10/25/50/100m），不再按硬编码范围画到界外 */
+  const span=Math.max(x1-x0,y1-y0);
+  const step=span>240?50:span>120?25:10;
+  const gx0=Math.ceil(x0/step)*step, gx1=Math.floor(x1/step)*step;
+  const gy0=Math.ceil(y0/step)*step, gy1=Math.floor(y1/step)*step;
   cx.strokeStyle=isL()?'rgba(0,0,0,.08)':'rgba(255,255,255,.05)';cx.lineWidth=1;
-  if(opt.grid){for(let x=0;x<=150;x+=10){cx.beginPath();cx.moveTo(X(x),Y(y0));cx.lineTo(X(x),Y(y1));cx.stroke();}for(let y=-20;y<=40;y+=10){cx.beginPath();cx.moveTo(X(x0),Y(y));cx.lineTo(X(x1),Y(y));cx.stroke();}}
+  if(opt.grid){
+    for(let x=gx0;x<=gx1;x+=step){cx.beginPath();cx.moveTo(X(x),Y(y0));cx.lineTo(X(x),Y(y1));cx.stroke();}
+    for(let y=gy0;y<=gy1;y+=step){cx.beginPath();cx.moveTo(X(x0),Y(y));cx.lineTo(X(x1),Y(y));cx.stroke();}
+  }
   OBST.forEach(o=>{
     cx.fillStyle='rgba(120,140,165,.2)';cx.strokeStyle='rgba(160,180,205,.55)';
     cx.fillRect(X(o.x-o.w/2),Y(o.y+o.d/2),o.w*s,o.d*s);cx.strokeRect(X(o.x-o.w/2),Y(o.y+o.d/2),o.w*s,o.d*s);
@@ -1491,9 +1757,15 @@ function drawPlan(){
     cx.strokeStyle=isL()?'rgba(30,41,59,.35)':'rgba(232,235,240,.4)';cx.beginPath();cx.arc(X(n.x),Y(n.y),8,0,7);cx.stroke();
     cx.fillStyle=isL()?'#0f172a':'rgba(232,235,240,.8)';cx.font='10.5px '+getFontMono();cx.fillText(n.id,X(n.x)+10,Y(n.y)-8);
   });
-  if(tlStep===0&&OBST.length){cx.fillStyle='#e5636c';cx.font='700 11px '+getFontMono();cx.fillText('✕ '+TIMELINE[0].note,X(24),Y(16));}
+  /* 违规/收敛注记：锚定首个障碍物净距圈上缘（死坐标 X(24)/Y(16) 在真实包围盒外会溢出画布） */
+  if(tlStep===0&&OBST.length){
+    const o0=OBST[0];
+    cx.fillStyle='#e5636c';cx.font='700 11px '+getFontMono();cx.textAlign='center';
+    cx.fillText('✕ '+TIMELINE[0].note,X(o0.x),Y(o0.y-o0.d/2-(o0.clear||2.5))-10);
+    cx.textAlign='left';
+  }
   cx.fillStyle=isL()?'#64748b':'rgba(154,164,178,.6)';cx.font='10px '+getFontMono();
-  cx.fillText('平面布置图 · 红=初始碰撞路径 绿=自愈绕行',pad,20);
+  cx.fillText('平面布置图 · 红=初始碰撞路径 绿=自愈绕行 · '+step+'m 网格',pad,20);
 }
 /* ---------- 纵断面 ---------- */
 function drawProf(){
@@ -1504,8 +1776,16 @@ function drawProf(){
   const x0=0,x1=chain[chain.length-1]||100;
   const zs=NODES.map(n=>n.ground).concat(NODES.map(n=>n.invert));
   const zMin=Math.min(...zs)-0.6,zMax=Math.max(...zs)+0.6;
-  const X=x=>padL+(x-x0)/(Math.max(x1-x0,1))*(W-padL-padR);
-  const Y=z=>padT+(zMax-z)/(Math.max(zMax-zMin,0.1))*(H-padT-padB);
+  const boxW=W-padL-padR, boxH=H-padT-padB;
+  /* 垂直夸大（工程制图口径）：纵向 px/m = 横向 px/m × 因子。
+     浅埋管线（覆土 ~2m / 链长 ~135m）真实 1:1 会被压成一条线——制图惯例纵向夸大；
+     开关在纵断面从此有直观效果：开=×20 可读制图，关=1:1 真实比例。 */
+  const exagF=opt.exag?20:1;
+  const sxm=boxW/Math.max(x1-x0,1);
+  const sym=Math.min(sxm*exagF, boxH/Math.max(zMax-zMin,0.1));
+  const zMid=(zMin+zMax)/2;
+  const X=x=>padL+(x-x0)/(Math.max(x1-x0,1))*boxW;
+  const Y=z=>H/2-(z-zMid)*sym; /* 垂直居中：1:1 模式下贴中呈现，不再顶贴 */
   /* 网格与标尺 */
   cx.strokeStyle=isL()?'rgba(0,0,0,.08)':'rgba(255,255,255,.06)';cx.fillStyle=isL()?'#334155':'rgba(154,164,178,.7)';cx.font='10px '+getFontMono();cx.lineWidth=1;
   for(let z=Math.ceil(zMin*2)/2;z<=zMax;z+=0.5){cx.beginPath();cx.moveTo(padL,Y(z));cx.lineTo(W-padR,Y(z));cx.stroke();cx.fillText(z.toFixed(1)+'m',18,Y(z)+3);}
@@ -1539,7 +1819,7 @@ function drawProf(){
     cx.fillText('覆土 1.42m ≥ 0.7m (MU-COVER-001 ✓)',X(chain[2])+6,(Y(NODES[2].ground)+Y(NODES[2].invert))/2);
   }
   cx.fillStyle='rgba(154,164,178,.6)';cx.font='10px '+getFontMono();
-  cx.fillText('纵断面 · 垂直比例 1:1（根据工件井段动态插值）',padL,20);
+  cx.fillText('纵断面 · 垂直比例 '+(opt.exag?'纵向 ×20（制图夸大）':'1:1（真实比例）')+' · 横向链age '+(x1.toFixed(0))+'m',padL,20);
 }
 
 /* ================================================================
@@ -1600,7 +1880,7 @@ function updateScale(){
   if(!NODES||NODES.length<2){el.textContent='—';return;}
   if(view==='prof'){
     let chain=0;SEGS.forEach(s=>chain+=(s.len||25));
-    el.textContent='链age '+chain.toFixed(0)+'m';return;
+    el.textContent='链age '+chain.toFixed(0)+'m · 纵向 '+(opt.exag?'×20':'1:1');return;
   }
   const xs=NODES.map(n=>n.x),ys=NODES.map(n=>n.y);
   const span=Math.max(Math.max(...xs)-Math.min(...xs),Math.max(...ys)-Math.min(...ys),10);
@@ -1611,7 +1891,14 @@ function updateScale(){
   const v=candidates.find(c=>c>=perPx*40)||200;
   el.textContent=v+' m';
 }
-function setView(v,el){view=v;document.querySelectorAll('#viewSeg button').forEach(b=>b.classList.toggle('on',b===el));updateScale();draw();}
+function setView(v,el){
+  view=v;document.querySelectorAll('#viewSeg button').forEach(b=>b.classList.toggle('on',b===el));
+  /* 视口工具按钮按视图语义启停：垂直夸大在平面（俯视 2D）无意义；自旋只在 3D；网格纵断面自带标尺 */
+  const disMap={plan:{tgEx:1,tgSpin:1},prof:{tgSpin:1,tgGrid:1},'3d':{}};
+  const dm=disMap[v]||{};
+  ['tgGrid','tgEx','tgSpin'].forEach(id=>{const b=document.getElementById(id);if(b)b.classList.toggle('off-dis',!!dm[id]);});
+  updateScale();draw();
+}
 (function spinLoop(){if(opt.spin&&!dragging&&view==='3d'){cam.yaw+=0.0035;draw();}requestAnimationFrame(spinLoop);})();
 
 /* ================================================================
@@ -1669,15 +1956,20 @@ function rejectExport(){
 }
 /* composer */
 const ta=$('cmpTa'),slash=$('slash');
-/* 输入态三件套：发送禁用态 / ↑↓历史 / 草稿持久化（切会话不丢字） */
+/* 输入态四件套：发送禁用态 / ↑↓历史 / 草稿持久化（切会话不丢字） / 长文自动长高（≤6 行后内滚） */
 var _hist=window._hist||[];window._hist=_hist;var _histIdx=-1;
 function updateSendState(){
   const b=document.querySelector('.send');
   if(b)b.classList.toggle('disabled',!ta.value.trim());
 }
+function cmpAutoGrow(){
+  ta.style.height='auto';
+  ta.style.height=Math.min(ta.scrollHeight,132)+'px';
+}
 ta.addEventListener('input',()=>{
   slash.classList.toggle('show',ta.value==='/');
   updateSendState();
+  cmpAutoGrow();
   try{localStorage.setItem('wb_draft',ta.value);}catch(e){}
 });
 ta.addEventListener('keydown',e=>{
@@ -1693,6 +1985,7 @@ ta.addEventListener('keydown',e=>{
   }
 });
 try{const _d=localStorage.getItem('wb_draft');if(_d){ta.value=_d;}}catch(e){}
+cmpAutoGrow();
 updateSendState();
 function threadMode(m){const t=$('thread');t.classList.remove('ins-mode');}
 function toggleThread(){
@@ -1748,6 +2041,16 @@ let _lastIR=null,_curSession=null,_pollTimer=null;
 
 /* ---------- 真实 IR → 渲染器 ---------- */
 let _currentModelSession=null;
+/* 顶栏「导出 CAD」下拉（HITL 交付入口；从 composer 下方 chips 迁来）。
+   端点为自带演示工件的 /api/v1/demo/export-*（不依赖当前会话 IR），故恒可用。 */
+function toggleExpMenu(e){
+  e.stopPropagation();
+  const m=$('expMenu');if(m)m.classList.toggle('show');
+}
+document.addEventListener('click',ev=>{
+  const m=$('expMenu');
+  if(m&&m.classList.contains('show')&&!ev.target.closest('.exp-wrap'))m.classList.remove('show');
+});
 function applyRealIR(mp, sid=null){
   if(!mp||!mp.nodes||mp.nodes.length<2){
     renderEmptyViewport(sid);
@@ -1792,6 +2095,7 @@ function applyRealIR(mp, sid=null){
 }
 function renderEmptyViewport(sid){
   _currentModelSession=null;
+  _lastIR=null;
   NODES.length=0;SEGS.length=0;
   updateStageCrumb(null);
   $('hudStat').textContent='暂无几何实体';
@@ -1974,7 +2278,7 @@ async function loadSessions(selectId){
   const allItems=ss&&ss.ok&&ss.data?ss.data.items:[];
   const items=allItems.filter(s=>!s.archived);
   const list=$('sessList');
-  if(!items.length){list.innerHTML='<div style="padding:14px 12px;font-size:11.5px;color:var(--ink3);text-align:center;line-height:1.6">暂无活动会话<br><span style="font-size:10.5px;opacity:.8">点「新任务」开始，或在设置中恢复已归档</span></div>';return items;}
+  if(!items.length){list.innerHTML='<div class="emptybox"><span class="et">暂无活动会话</span><span class="ed">点「新任务」开始，或在设置 → 归档中恢复已归档会话</span></div>';return items;}
   /* 按 playbook 分组成可折叠文件夹 */
   const groups={};
   for(const s of items){const k=s.playbook||'';(groups[k]=groups[k]||[]).push(s);}
@@ -2119,6 +2423,8 @@ function pollRun(sid){
 }
 /* 停止运行（Codex/ZCode 的 stop 语义）：拒绝待决审批门，线程在门处安全退出 */
 async function stopCurrentRun(){
+  /* 语义分流：正在流式对话 → 中断流（已生成内容保留并落盘）；否则 → 拒绝审批门停止运行 */
+  if(_chatAbort){_chatAbort.abort();return;}
   const sid=_curSession;
   if(!sid){toast('当前无会话');return;}
   try{
@@ -2158,19 +2464,17 @@ async function loadRuntimeInfo(){
   /* 模型名只落在 composer 的 .mdl 芯片上（侧栏模型行已删，切换/管理走芯片下拉与设置） */
   if(ri&&ri.llm&&ri.llm.model){document.querySelectorAll('.mdl').forEach(e=>{e.textContent=ri.llm.model+' ▾';});}
 }
-/* ---------- 宿主状态（P0-3 supervisor；渲染进设置弹层 #hostSettings，侧栏芯片已删） ---------- */
+/* ---------- 宿主状态（MCP 卡式呈现：状态点 + 徽章 + 传输信息 + 动作） ---------- */
+const _HOST_META={
+  blender:{name:'Blender MCP',desc:'在线 CAD 宿主 · 导出 .blend',transport:'TCP',addr:'127.0.0.1:9876'},
+  vectorworks:{name:'Vectorworks IPC',desc:'外部 runner 宿主 · 导出 .vwx',transport:'外部 IPC',addr:'supervisor 不探测（external）'},
+};
+const _HOST_STATE_I18N={up:'运行中',down:'未连接',external:'外部运行',restarting:'重启中'};
 async function refreshHosts(){
-  const el=$('hostSettings');if(!el)return;
+  /* 旧宿主卡片容器已并入 MCP 表格：这里直接刷新表格（含真实探测状态） */
+  const el=$('mcpTableBody');if(!el)return;
   const hs=await _get('/api/v1/hosts');
-  if(!hs||!hs.hosts){el.innerHTML='<div style="font-size:11px;color:var(--ink3)">读取失败</div>';return;}
-  el.innerHTML=hs.hosts.map(h=>{
-    const color=h.state==='up'?'var(--grn)':h.state==='restarting'?'var(--amb)':h.state==='external'?'var(--ink3)':'var(--red)';
-    return `<div class="rule"><div class="rh"><span class="rid"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;background:${color}"></span>${_esc(h.label)}</span>`+
-      `<span class="rst">${_esc(h.state)}${h.restart_count?` · 重启×${h.restart_count}`:''}</span></div>`+
-      (h.detail?`<div class="rd">${_esc(h.detail)}</div>`:'')+
-      (h.id==='blender'&&h.state==='down'&&h.restartable?`<div style="margin-top:4px"><button class="chip" onclick="restartHost('blender')">重启（有界退避）</button></div>`:'')+
-      `</div>`;
-  }).join('');
+  mcpRenderTable(hs&&hs.hosts?hs.hosts:[]);
 }
 const _RULE_I18N={
   'MU-CLEAR-001:building': {
@@ -2369,17 +2673,21 @@ function applyFontSizeSetting(val){
     _allRules=rt.rules;
     renderRuleList();
   }
-  const pl=await _get('/api/v1/plugins');
-  if(pl&&pl.capabilities_map){
-    $('capSel').innerHTML=Object.keys(pl.capabilities_map).map(c=>`<option value="${c}">${c}</option>`).join('');
-    /* 🟡 审核修复：插件面板接真实清单（此前永远显示 mock） */
+  const plg=await _get('/api/v1/plugins');
+  if(plg&&plg.capabilities_map){
+    $('capSel').innerHTML=Object.keys(plg.capabilities_map).map(c=>`<option value="${c}">${c}</option>`).join('');
+    /* 插件面板：分组卡 + 策略门表（此前 JSON 串直接糊墙，可读性差） */
     const byPlugin={};
-    Object.entries(pl.capabilities_map).forEach(([cap,pid])=>{(byPlugin[pid]=byPlugin[pid]||[]).push(cap);});
-    const policies=pl.capability_policies||[];
+    Object.entries(plg.capabilities_map).forEach(([cap,pid])=>{(byPlugin[pid]=byPlugin[pid]||[]).push(cap);});
+    const policies=plg.capability_policies||[];
     $('plgList').innerHTML=Object.entries(byPlugin).map(([pid,caps])=>
-      `<div class="plg"><div class="pid">${_esc(pid)} <span style="color:var(--grn);font-size:9.5px">ACTIVE</span></div>`+
-      `<div class="pds">${caps.length} 能力：<span class="mono" style="color:var(--acc)">${caps.map(_esc).join(' · ')}</span></div></div>`).join('')+
-      (policies.length?`<div class="plg"><div class="pid">capability_policies <span style="color:var(--amb);font-size:9.5px">${policies.length} 条策略</span></div><div class="pds mono" style="font-size:10px">${policies.map(p=>_esc(JSON.stringify(p)).slice(0,120)).join('<br>')}</div></div>`:'');
+      `<div class="mcp-card"><div class="mcp-hd"><span class="mcp-dot up"></span><span class="mcp-name">${_esc(pid)}</span>`+
+      `<span class="mcp-badge up">ACTIVE · ${caps.length} 能力</span></div>`+
+      `<div class="mcp-tools">${caps.map(c=>`<span class="mcp-tool">${_esc(c)}</span>`).join('')}</div></div>`).join('')+
+      (policies.length?`<div class="mcp-card"><div class="mcp-hd"><span class="mcp-name" style="font-size:12px">策略门（执行前须人工确认的能力）</span><span class="mcp-badge restarting">${policies.length} 条 prompt</span></div>`+
+      `<div style="margin-top:8px;overflow-x:auto"><table class="pol-tbl"><thead><tr><th>能力模式</th><th>决策</th><th>为什么需要确认</th></tr></thead><tbody>`+
+      policies.map(p=>`<tr><td class="pol-pat">${_esc(p.pattern)}</td><td><span class="pol-decision">${_esc(p.decision)}</span></td><td style="white-space:normal">${_esc(p.justification||'')}</td></tr>`).join('')+
+      `</tbody></table></div></div>`:'');
   }
   /* 页面刷新时优先装载真实会话并按工件渲染视口；若无任何会话则加载演示作为引导 */
   loadUploads();
@@ -2459,27 +2767,171 @@ async function loadSettings(){
   const fs=localStorage.getItem('wb_font_size')||'13px';
   const selFs=$('selFontSize');if(selFs)selFs.value=fs;
   const ts=await _get('/api/v1/toolset');
-  if(ts&&ts.current)$('setToolset').value=ts.current;
+  if(ts&&ts.current)markToolset(ts.current);
   loadProviders();
   loadMemory();
   refreshHosts();
   loadGeneral();
-  /* 技能与 MCP 服务器（只读清单区） */
+  mcpLoadPage();
+  /* 技能与 MCP 服务器（卡片式清单） */
   const sk=await _get('/api/v1/skills');
   if(sk){
     $('setSkillsList').innerHTML=sk.skills.length?
-      sk.skills.map(s=>`<div class="rule"><div class="rh"><span class="rid">${_esc(s.name)}</span><span class="rst">${_esc(s.source)}</span></div><div class="rd">${_esc(s.description)}</div></div>`).join('')+
-      (sk.candidates.length?`<div class="rd" style="margin-top:6px;color:var(--amb)">${sk.candidates.length} 个自蒸馏候选待批准（线程 /skills 面板操作）</div>`:'')
-      :'<div style="font-size:11px;color:var(--ink3)">无已生效技能</div>';
+      sk.skills.map(s=>`<div class="mcp-card"><div class="mcp-hd"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" style="flex:none;color:var(--acc)"><path d="M14 3v5h5"/><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M9 13h6M9 17h6"/></svg><span class="mcp-name" style="font-size:12.5px">${_esc(s.name)}</span><span class="mcp-badge up">${_esc(s.source)}</span></div><div class="mcp-detail">${_esc(s.description)}</div></div>`).join('')+
+      (sk.candidates.length?`<div class="mcp-card" style="border-style:dashed"><div class="mcp-hd"><span class="mcp-name" style="font-size:12px">自蒸馏候选</span><span class="mcp-badge restarting">${sk.candidates.length} 个待批准</span></div><div class="mcp-detail">成功交付后自动沉淀的经验候选——人工批准（对话 <code>/skills</code> 面板）后才转正，永不自动生效</div></div>`:'')
+      :'<div class="emptybox"><span class="et">无已生效技能</span><span class="ed">技能是 Markdown 操作手册（SKILL.md）；成功交付后会自动沉淀候选，批准后出现在这里</span></div>';
   }
-  const plg=await _get('/api/v1/plugins');
-  if(plg&&plg.capabilities_map){
-    const ext={};
-    Object.entries(plg.capabilities_map).forEach(([cap,pid])=>{if(String(pid).startsWith('plugin.external.mcp.')){(ext[pid]=ext[pid]||[]).push(cap);}});
-    $('setMcpList').innerHTML=Object.keys(ext).length?
-      Object.entries(ext).map(([pid,caps])=>`<div class="rule"><div class="rh"><span class="rid">${_esc(pid.replace('plugin.external.mcp.',''))}</span><span class="rst">${caps.length} 工具</span></div><div class="rd mono" style="font-size:10px">${caps.map(_esc).join(' · ')}</div></div>`).join('')
-      :'<div style="font-size:11px;color:var(--ink3)">未挂载第三方 MCP server（配置 OPENBIMAGENT_MCP_SERVERS env JSON 后重启生效）</div>';
+  mcpLoadPage();
+}
+/* ---------- MCP 配置页（表格 + 高级配置，接线 /api/v1/settings/mcp 与 /api/v1/hosts） ---------- */
+let _mcpData={config:{},tools:{}};
+let _mcpModalEditName=null;
+async function mcpLoadPage(){
+  const d=await _get('/api/v1/settings/mcp');
+  if(d&&d.status==='success'){
+    _mcpData={config:d.config||{},tools:d.tools||{}};
+    $('mcpCfgPath').textContent=d.path||'未知';
   }
+  mcpRenderTable();
+  if(document.activeElement!==$('mcpJson')){mcpSyncJsonArea();}
+}
+function mcpTypeOf(entry){
+  if(!entry||typeof entry!=='object')return 'STDIO';
+  return entry.url?'URL':'STDIO';
+}
+function mcpRenderTable(hostStates){
+  const body=$('mcpTableBody');if(!body)return;
+  const rows=[];
+  /* 内置 CAD 宿主也入表（真实探测状态来自 /api/v1/hosts） */
+  (hostStates||[]).forEach(h=>{
+    const nm=h.id==='blender'?'Blender MCP':(h.id==='vectorworks'?'Vectorworks IPC':h.label||h.id);
+    rows.push(`<tr><td class="mcpt-name"><span class="mcpt-dot ${h.state||'down'}"></span>${_esc(nm)}</td>`+
+      `<td>${_esc(_HOST_STATE_I18N[h.state]||h.state||'—')}</td>`+
+      `<td class="mcpt-type">内置 · ${_esc(_HOST_META[h.id]?.transport||'')}</td>`+
+      `<td class="mcpt-ops"><span class="mcpt-builtin">内置宿主</span></td></tr>`);
+  });
+  Object.entries(_mcpData.config).forEach(([name,entry])=>{
+    const tools=_mcpData.tools[name]||[];
+    const up=tools.length>0;
+    const disabled=entry.disabled===true;
+    const url=mcpTypeOf(entry)==='URL';
+    rows.push(`<tr><td class="mcpt-name">${_esc(name)}${tools.length?` <span class="mcpt-builtin">${tools.length} tools</span>`:''}</td>`+
+      `<td><label class="mcpt-switch" title="${disabled?'已停用（保存并重启后不挂载）':'已启用'}"><input type="checkbox" ${disabled?'':'checked'} onchange="mcpToggleServer('${_esc(name)}',this.checked)"><span class="mcpt-slider"></span></label></td>`+
+      `<td class="mcpt-type">${url?'URL':'STDIO'}</td>`+
+      `<td class="mcpt-ops"><button class="mcpt-btn" onclick="mcpEditEntry('${_esc(name)}')">编辑</button>`+
+      `<button class="mcpt-btn danger" onclick="mcpDeleteEntry('${_esc(name)}')">删除</button></td></tr>`);
+  });
+  body.innerHTML=rows.length?rows.join(''):'<tr><td colspan="4" class="mcpt-builtin">暂无任何 server——点右上「新增」添加，或在下方高级配置中粘贴 JSON</td></tr>';
+  const n=Object.keys(_mcpData.config).length;
+  const hint=$('mcpTableHint');
+  if(hint)hint.textContent=n?`${n} 个第三方 server · ${Object.values(_mcpData.config).filter(e=>e.disabled).length} 个停用 · 保存并重启后挂载生效`:'';
+}
+async function mcpRefreshStatus(){
+  const btn=event&&event.currentTarget;if(btn)btn.disabled=true;
+  try{
+    await mcpLoadPage();
+    const hs=await _get('/api/v1/hosts');
+    mcpRenderTable(hs&&hs.hosts?hs.hosts:[]);
+    refreshHosts();
+    toast('已刷新宿主与 server 状态');
+  }finally{if(btn)btn.disabled=false;}
+}
+async function mcpSave(){
+  const cfg=mcpParseJsonArea();
+  if(cfg===null)return;
+  for(const k of Object.keys(cfg)){
+    if(!/^[a-z0-9][a-z0-9\-_]{0,31}$/.test(k)){toast(`server 名非法（需小写 slug）：${k}`);return;}
+    const v=cfg[k];
+    if(!v||typeof v!=='object'||Array.isArray(v)||(!v.url&&!v.command&&!v.disabled)){toast(`server ${k} 缺少 url 或 command`);return;}
+  }
+  const r=await fetch('/api/v1/settings/mcp',{method:'PUT',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({config:cfg})});
+  const d=await r.json().catch(()=>({}));
+  if(r.ok&&d.status==='success'){
+    _mcpData.config=cfg;
+    mcpRenderTable();
+    toast('MCP 配置已保存（重启服务后挂载生效）');
+  }else{toast('保存失败：'+(d.error||r.status));}
+}
+async function mcpResetDefault(){
+  if(!confirm('恢复默认将清空本地 MCP 配置文件并回读环境变量默认值，确定？'))return;
+  const r=await fetch('/api/v1/settings/mcp',{method:'DELETE',headers:_H({'X-Request-ID':_rid()})});
+  const d=await r.json().catch(()=>({}));
+  if(r.ok&&d.status==='success'){
+    _mcpData.config=d.config||{};
+    mcpSyncJsonArea();
+    mcpRenderTable();
+    toast('已恢复默认');
+  }else{toast('恢复失败：'+(d.error||r.status));}
+}
+function mcpOpenAddModal(){_mcpModalEditName=null;$('mcpModalTitle').textContent='新增 MCP Server';$('mcpModalName').value='';$('mcpModalType').value='stdio';$('mcpModalCmd').value='';$('mcpModalArgs').value='';$('mcpModalUrl').value='';mcpModalSyncType();$('mcpModalMask').classList.add('show');}
+function mcpEditEntry(name){
+  const entry=_mcpData.config[name];if(!entry)return;
+  _mcpModalEditName=name;
+  $('mcpModalTitle').textContent='编辑 MCP Server';
+  $('mcpModalName').value=name;$('mcpModalName').disabled=true;
+  if(entry.url){$('mcpModalType').value='url';$('mcpModalUrl').value=entry.url;}
+  else{$('mcpModalType').value='stdio';$('mcpModalCmd').value=entry.command||'';$('mcpModalArgs').value=JSON.stringify(entry.args||[]);}
+  mcpModalSyncType();$('mcpModalMask').classList.add('show');
+}
+function mcpModalSyncType(){
+  const t=$('mcpModalType').value;
+  $('mcpModalStdioFields').style.display=t==='stdio'?'':'none';
+  $('mcpModalUrlFields').style.display=t==='url'?'':'none';
+  $('mcpModalName').disabled=!!_mcpModalEditName;
+}
+function mcpCloseModal(){$('mcpModalMask').classList.remove('show');}
+function mcpSubmitModal(){
+  const name=$('mcpModalName').value.trim();
+  if(!/^[a-z0-9][a-z0-9\-_]{0,31}$/.test(name)){toast('名称需为小写 slug（字母/数字/连字符，≤32 字符）');return;}
+  let entry;
+  if($('mcpModalType').value==='url'){
+    const url=$('mcpModalUrl').value.trim();
+    if(!/^https?:\/\//.test(url)){toast('URL 需以 http(s):// 开头');return;}
+    entry={url};
+  }else{
+    const cmd=$('mcpModalCmd').value.trim();
+    if(!cmd){toast('命令不能为空');return;}
+    let args=[];
+    try{args=$('mcpModalArgs').value.trim()?JSON.parse($('mcpModalArgs').value):[];}
+    catch(e){toast('参数 JSON 数组解析失败');return;}
+    if(!Array.isArray(args)){toast('参数必须是 JSON 数组');return;}
+    entry={command:cmd,args};
+  }
+  if(!_mcpModalEditName)delete _mcpData.config[name];
+  _mcpData.config[name]=entry;
+  mcpSyncJsonArea();
+  mcpRenderTable();
+  mcpCloseModal();
+  toast(_mcpModalEditName?'已更新（记得点「保存 MCP」持久化）':'已添加（记得点「保存 MCP」持久化）');
+  _mcpModalEditName=null;
+}
+async function mcpDeleteEntry(name){
+  if(!confirm(`删除 MCP server「${name}」？（保存后生效）`))return;
+  delete _mcpData.config[name];
+  mcpSyncJsonArea();
+  mcpRenderTable();
+  toast('已删除（记得点「保存 MCP」持久化）');
+}
+function mcpToggleServer(name,on){
+  if(!_mcpData.config[name])return;
+  if(on)delete _mcpData.config[name].disabled;
+  else _mcpData.config[name].disabled=true;
+  mcpSyncJsonArea();
+  mcpRenderTable();
+  toast(on?`已启用 ${name}（保存并重启后挂载）`:`已停用 ${name}（保存并重启后不挂载）`);
+}
+/* 高级配置区统一 mcpServers 包装格式（对齐截图）；后端两种格式都收 */
+function mcpSyncJsonArea(){
+  const ta=$('mcpJson');
+  if(ta)ta.value=JSON.stringify({mcpServers:_mcpData.config},null,2);
+}
+function mcpParseJsonArea(){
+  let cfg;
+  try{cfg=JSON.parse($('mcpJson').value||'{}');}
+  catch(e){toast('JSON 解析失败：'+e.message);return null;}
+  if(cfg&&typeof cfg==='object'&&cfg.mcpServers&&typeof cfg.mcpServers==='object')cfg=cfg.mcpServers;
+  if(!cfg||typeof cfg!=='object'||Array.isArray(cfg)){toast('高级配置必须是对象或含 mcpServers 包装');return null;}
+  return cfg;
 }
 /* ---------- 现代化模型设置：供应商与模型管理（对齐图二、三、四） ---------- */
 let _modelData = { presets: [], custom: [], providers: [], current: '' };
@@ -2566,15 +3018,17 @@ function renderProvDetail(provId){
       <div class="ms-form-item">
         <label>Base URL</label>
         <input class="fin" id="msCurBaseUrl" value="${_esc(p.base_url || '')}" placeholder="https://api.openai.com/v1" onblur="saveProviderField('${p.id}', 'base_url', this.value)">
+        <div class="hint">OpenAI 兼容地址填到 <code>/v1</code> 为止，末尾斜杠自动去除；对话端点会按此拼接 chat 接口。</div>
       </div>
 
       <div class="ms-form-item">
         <label>API 格式</label>
         <select class="fin" id="msCurApiFormat" onchange="saveProviderField('${p.id}', 'api_format', this.value)">
-          <option value="Chat Completions (/chat/completions)"${(p.api_format||'').includes('Chat Completions') ? ' selected' : ''}>Chat Completions (/chat/completions)</option>
-          <option value="OpenAI Responses"${(p.api_format||'').includes('Responses') ? ' selected' : ''}>OpenAI Responses</option>
-          <option value="Anthropic Messages"${(p.api_format||'').includes('Anthropic') ? ' selected' : ''}>Anthropic Messages</option>
+          <option value="Chat Completions (/chat/completions)"${(p.api_format||'').includes('Chat Completions') ? ' selected' : ''}>Chat Completions · OpenAI 兼容（绝大多数供应商）</option>
+          <option value="OpenAI Responses"${(p.api_format||'').includes('Responses') ? ' selected' : ''}>OpenAI Responses · /v1/responses（OpenAI 新接口）</option>
+          <option value="Anthropic Messages"${(p.api_format||'').includes('Anthropic') ? ' selected' : ''}>Anthropic Messages · /v1/messages（Claude 系）</option>
         </select>
+        <div class="hint">不确定就选第一个：国内主流（GLM / DeepSeek / Qwen / Kimi / vLLM 网关等）都是 Chat Completions。</div>
       </div>
 
       <div class="ms-form-item">
@@ -2621,7 +3075,7 @@ function renderProvDetail(provId){
       `;
     }).join('');
   } else {
-    html += '<div style="font-size:12px;color:var(--ink3);text-align:center;padding:24px 0;background:var(--bg2);border-radius:8px;border:1px dashed var(--line2)">暂无配置模型，点击右上角「+ 添加模型」添加</div>';
+    html += '<div class="emptybox"><span class="et">暂无配置模型</span><span class="ed">点击右上角「+ 添加模型」为该供应商添加模型</span></div>';
   }
 
   html += `
@@ -2830,6 +3284,9 @@ async function saveNewProvider(){
   const base_url = $('msProvBaseUrl').value.trim();
   const api_format = $('msProvFormat').value;
   const api_key = $('msProvKey').value.trim();
+  if(!base_url){toast('请填写 Base URL（如 https://api.openai.com/v1）');return;}
+  if(!/^https?:\/\//.test(base_url)){toast('Base URL 须以 http:// 或 https:// 开头');return;}
+  if(!api_key){toast('请填写 API Key（供应商控制台获取，只写不回显）');return;}
 
   try{
     const r = await fetch('/api/v1/settings/providers', {
@@ -2855,7 +3312,7 @@ async function loadMemory(){
     `<div style="display:flex;gap:6px;align-items:flex-start"><span style="color:${r.k==='M'?'var(--acc)':'var(--amb)'};flex:none">[${r.k}]</span>`+
     `<span style="flex:1;min-width:0;word-break:break-all">${_esc(r.text)}</span>`+
     `<span class="forkbtn" title="删除此条记忆（策略门确认）" onclick="delMemory('${r.k==='M'?'memory':'user'}',${r.line})">✕</span></div>`).join('')
-    :'<div style="color:var(--ink3)">暂无长期记忆（写入需逐条确认，文件存 memory/）</div>';
+    :'<div class="emptybox"><span class="et">暂无长期记忆</span><span class="ed">写入需逐条确认，文件存 memory/（gitignored），片段自动注入新任务上下文</span></div>';
 }
 async function delMemory(file,line){
   if(!(await uiConfirm(`确认删除该记忆条目？（${file} 第 ${line} 行，不可撤销）`,'删除记忆')))return;
@@ -2917,7 +3374,12 @@ document.addEventListener('click',e=>{
   const m=$('mdlMenu');
   if(m&&m.classList.contains('show')&&!m.contains(e.target)&&e.target.id!=='mdlChip')m.classList.remove('show');
 });
-/* ---------- 工具集预设：选中即生效（无需保存按钮） ---------- */
+/* ---------- 工具集预设：三档卡选中即生效（403 调用门后端执行） ---------- */
+function markToolset(v){
+  document.querySelectorAll('.ts-card').forEach(c=>c.classList.toggle('on',c.dataset.v===v));
+  const hint=$('tsHint');
+  if(hint)hint.textContent='当前档位：'+v+'（被滤能力清单不可见、调用 403；即时生效）';
+}
 async function saveToolset(name){
   try{
     const r=await fetch('/api/v1/toolset',{method:'PUT',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({name})});
@@ -2933,8 +3395,8 @@ $('fileInput').addEventListener('change',async e=>{
       const d=await r.json();
       if(r.ok&&d.status==='success'){
         toast(`已上传：${d.item.name}（${d.item.size} B）`);
-        document.querySelector('.chips').insertAdjacentHTML('beforeend',
-          `<button class="chip" title="sha256 ${d.item.sha256.slice(0,12)}…" onclick="openInspector('uploads')">📎 ${d.item.name}</button>`);
+        $('cmpAttach').insertAdjacentHTML('beforeend',
+          `<button class="chip" title="sha256 ${d.item.sha256.slice(0,12)}…" onclick="openInspector('uploads')">📎 ${_esc(d.item.name)}</button>`);
         loadUploads();
       }else toast('上传失败：'+(d.error||r.status));
     }catch(err){toast('上传失败：'+err);}
@@ -2948,7 +3410,7 @@ async function loadUploads(){
     `<div class="rule"><div class="rh"><span class="rid">${it.name}</span><span class="rst">${it.size} B</span>`+
     `<span class="forkbtn" title="删除此附件（文件+manifest 条目）" onclick="delUpload('${_esc(it.id)}')">✕</span></div>`+
     `<div class="rd">${it.id}<br>sha256 <b class="mono">${it.sha256.slice(0,16)}…</b> · ${it.uploaded_at}</div></div>`).join('')
-    :'<div style="font-size:11px;color:var(--ink3)">暂无上传</div>';
+    :'<div class="emptybox"><span class="et">暂无上传附件</span><span class="ed">composer 回形针按钮可上传 DXF / IFC / GIS / 规范文件（落盘 out/uploads/ + sha256 manifest）</span></div>';
 }
 async function delUpload(id){
   if(!(await uiConfirm(`确认删除附件？\n\n${id}`,'删除附件')))return;
@@ -3040,7 +3502,7 @@ function showApprovalCard(it){
     card.innerHTML=`<div class="hd"><span class="tag">审批门 · ${_esc(it.operation)}</span>等待人工决策<span style="margin-left:auto;font:10px var(--mono);color:var(--ink3)">已挂起 ${Math.round(it.waiting_s||0)}s</span></div>`+
       `<div class="ds">运行会话 <code>${it.session_id.slice(0,8)}</code> 触达审批门（pipeline 线程已阻塞，决策前不会继续）。参数：<br><code style="color:var(--ink2);word-break:break-all">${_esc(JSON.stringify(it.params)).slice(0,300)}</code></div>`+
       `<input class="fin" id="instr-${it.id}" placeholder="附带指令（可选，写入决策回执 · steer 语义）" style="margin-bottom:8px">`+
-      `<div class="row"><button class="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground" style="flex:1" onclick="decideApproval('${it.id}','approved')">批准</button>`+
+      `<div class="row"><button class="btn-pri" style="flex:1" onclick="decideApproval('${it.id}','approved')">批准</button>`+
       `<button class="reject" onclick="decideApproval('${it.id}','rejected')">拒绝</button></div>`;
   }
   sc.appendChild(card);riseIn(card);sc.scrollTop=sc.scrollHeight;
@@ -3062,14 +3524,62 @@ async function decideApproval(id,decision){
 }
 setInterval(pollApprovals,3000);pollApprovals();
 
-/* ---------- 用量（P3）与归档（P2）面板 ---------- */
+/* ---------- 用量（真实调用流水账 → 图形化仪表盘）与归档面板 ---------- */
+const _fmtTok=n=>n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'k':String(n||0);
+const _fmtLat=ms=>ms==null?'—':ms>=1000?(ms/1000).toFixed(1)+'s':ms+'ms';
 async function loadUsage(){
   const d=await _get('/api/v1/usage');
   const u=d&&d.usage;
-  $('usageBody').innerHTML=u?
-    `<div class="mini-stat" style="margin-bottom:8px"><span><b>${u.total.calls}</b> 调用</span><span><b>${u.total.total_tokens}</b> tok</span><span><b>${u.total.prompt_tokens}</b> in</span><span><b>${u.total.completion_tokens}</b> out</span></div>`+
-    (Object.entries(u.by_model||{}).map(([m,v])=>`<div class="rule"><div class="rh"><span class="rid">${_esc(m)}</span><span class="rst">${v.total_tokens||0} tok</span></div><div class="rd">${v.calls||0} 次调用 · in ${v.prompt_tokens||0} · out ${v.completion_tokens||0}${v.cost_usd!=null?' · $'+v.cost_usd:''}</div></div>`).join('')||'<div style="font-size:11px;color:var(--ink3)">尚无分模型数据</div>')
-  :'<div style="font-size:11px;color:var(--ink3)">暂无用量记录（离线模板运行不消耗 LLM）</div>';
+  const el=$('usageBody');
+  if(!u){el.innerHTML='<div class="emptybox"><span class="et">暂无真实调用记录</span><span class="ed">在对话里发一条消息，或跑一次 CLI pipeline——真实消耗会自动出现在这里的图表中</span></div>';return;}
+  /* 兼容旧 usage_summary.json 快照（无 daily/recent 字段） */
+  const daily=u.daily||[],recent=u.recent||[],byModel=u.by_model||{};
+  const tot=u.total||{calls:0,prompt_tokens:0,completion_tokens:0,total_tokens:0};
+  const days=daily.length?daily:[{date:'今天',total_tokens:tot.total_tokens,prompt_tokens:tot.prompt_tokens,completion_tokens:tot.completion_tokens}];
+  const max=Math.max(1,...days.map(x=>x.total_tokens||0));
+  const grid=document.createElement('div');grid.className='usg-grid';
+  grid.innerHTML=
+    `<div class="usg-card"><div class="usg-k">总 tokens</div><div class="usg-v">${_fmtTok(tot.total_tokens)}</div><div class="usg-sub">in ${_fmtTok(tot.prompt_tokens)} · out ${_fmtTok(tot.completion_tokens)}</div></div>`+
+    `<div class="usg-card"><div class="usg-k">调用次数</div><div class="usg-v">${tot.calls}</div><div class="usg-sub">${Object.keys(byModel).length} 个模型</div></div>`+
+    `<div class="usg-card"><div class="usg-k">入榜模型</div><div class="usg-v">${_esc(Object.keys(byModel)[0]||'—')}</div><div class="usg-sub">${Object.keys(byModel)[0]?'占比 '+Math.round((byModel[Object.keys(byModel)[0]].total_tokens/Math.max(1,tot.total_tokens))*100)+'%':'尚未产生用量'}</div></div>`+
+    `<div class="usg-card"><div class="usg-k">近 14 日</div><div class="usg-v">${daily.filter(x=>x.total_tokens>0).length} 天有消耗</div><div class="usg-sub">${daily.length?'峰值 '+_fmtTok(max)+' tok':''}</div></div>`;
+  el.innerHTML='';
+  el.appendChild(grid);
+  /* 按日趋势柱状图（总高=tot；上段亮色=输入、下段=输出，hover 显示 in/out/tot） */
+  const chart=document.createElement('div');chart.className='usg-sec';
+  chart.innerHTML='<div class="usg-sec-t"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="3" y1="20" x2="23" y2="20"/><rect x="5" y="12" width="4" height="8"/><rect x="11" y="6" width="4" height="14"/><rect x="17" y="10" width="4" height="10"/></svg>按日 token 趋势（近 14 天 · 上段=输入 / 下段=输出）</div>';
+  const bars=document.createElement('div');bars.className='usg-bars';
+  bars.innerHTML=days.map(x=>{
+    const t=x.total_tokens||0,h=Math.round(t/max*96),p=x.prompt_tokens||0,c=x.completion_tokens||0;
+    const ph=t?Math.round(p/t*100):0;
+    const grad=t?`background:linear-gradient(180deg,var(--acc) 0 ${ph}%,hsl(var(--primary) / .45) ${ph}% 100%);`:'';
+    return `<div class="usg-bar${t?'':' empty'}"><div class="col" style="height:${Math.max(2,h)}px;${grad}"><span>${t?_fmtTok(t)+' tok · in '+_fmtTok(p)+' / out '+_fmtTok(c):'无消耗'}</span></div><div class="lbl">${(x.date||'').slice(5)}</div></div>`;
+  }).join('');
+  chart.appendChild(bars);el.appendChild(chart);
+  /* 模型占比条（stacked 单轨；宽=tokens 占比） */
+  if(Object.keys(byModel).length){
+    const share=document.createElement('div');share.className='usg-sec';
+    share.innerHTML='<div class="usg-sec-t"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 3v9l6 4"/></svg>模型占比（按 tokens）</div>';
+    const track=document.createElement('div');track.className='usg-track';track.style.height='8px';
+    const cols=['hsl(var(--primary))','var(--grn)','var(--amb)','var(--red)','hsl(var(--primary)/.5)'];
+    track.innerHTML=Object.values(byModel).map((v,i)=>`<span style="display:inline-block;height:100%;width:${(v.total_tokens/Math.max(1,tot.total_tokens))*100}%;background:${cols[i%cols.length]};float:left"></span>`).join('');
+    share.appendChild(track);
+    const rows=document.createElement('div');rows.className='usg-share';rows.style.marginTop='10px';
+    rows.innerHTML=Object.entries(byModel).map(([m,v],i)=>{
+      const pc=tot.total_tokens?Math.round(v.total_tokens/tot.total_tokens*100):0;
+      return `<div class="usg-share-row"><div class="usg-share-hd"><span class="nm" title="${_esc(m)}">${_esc(m)}</span><span class="pc">${_fmtTok(v.total_tokens)} tok · ${v.calls} 次 · ${pc}%</span></div><div class="usg-track"><div class="usg-fill" style="width:${pc}%;background:${cols[i%cols.length]}"></div></div></div>`;
+    }).join('');
+    share.appendChild(rows);el.appendChild(share);
+  }
+  /* 最近调用明细（时间/模型/来源/in/out/耗时） */
+  if(recent.length){
+    const tbl=document.createElement('div');tbl.className='usg-sec';
+    tbl.innerHTML=`<div class="usg-sec-t"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>最近调用（${recent.length}）</div>`+
+      '<div style="overflow-x:auto"><table class="usg-tbl"><thead><tr><th>时间</th><th>模型</th><th>来源</th><th>in</th><th>out</th><th>耗时</th></tr></thead><tbody>'+
+      recent.map(r=>`<tr><td>${_esc(String(r.ts||'').replace('T',' ').slice(5,16))}</td><td>${_esc(r.model)}</td><td><span class="usg-src">${_esc(r.source)}</span></td><td>${_fmtTok(r.prompt_tokens)}</td><td class="tk-out">${_fmtTok(r.completion_tokens)}</td><td>${_fmtLat(r.latency_ms)}</td></tr>`).join('')+
+      '</tbody></table></div>';
+    el.appendChild(tbl);
+  }
 }
 /* ---------- 归档管理（已归档会话 + 工程交付快照） ---------- */
 function switchArchTab(tab){
@@ -3181,7 +3691,7 @@ async function loadArchive(){
       bodyEl.innerHTML=(d&&d.items&&d.items.length)?d.items.map(it=>
         `<div class="rule"><div class="rh"><span class="rid">${_esc(it.brief||it.session_id)}</span><span class="rst">${_esc(it.pack)}</span></div>`+
         `<div class="rd">${(it.archived_at||'').slice(0,19).replace('T',' ')} · ${it.files.map(f=>`${f.name} (${f.size}B)`).join('、')}</div></div>`).join('')
-      :'<div style="font-size:11.5px;color:var(--ink3);text-align:center;padding:30px 0">暂无交付产物记录（完成管网生成交付后自动沉淀）</div>';
+      :'<div class="emptybox"><span class="et">暂无交付产物记录</span><span class="ed">完成管网生成交付后，工件快照会自动沉淀到这里</span></div>';
     }
   }catch(e){
     console.error('loadDeliverables failed:', e);
@@ -3192,7 +3702,7 @@ async function loadArchive(){
 /* _hist/_histIdx 声明在 composer 监听块（首个 script），此处仅复用 */
 function pushHistory(v){if(v&&_hist[_hist.length-1]!==v)_hist.push(v);if(_hist.length>50)_hist.shift();_histIdx=_hist.length;}
 async function sendMsg(){
-  const v=ta.value.trim();if(!v)return;ta.value='';slash.classList.remove('show');updateSendState();pushHistory(v);
+  const v=ta.value.trim();if(!v)return;ta.value='';slash.classList.remove('show');updateSendState();cmpAutoGrow();pushHistory(v);
   try{localStorage.setItem('wb_draft','');}catch(e){}
   if(v.startsWith('/recall')){doRecall(v.slice(7).trim());return;}
   if(v==='/solve'||v.startsWith('/solve ')){solveDemo();return;}
@@ -3207,32 +3717,99 @@ async function sendMsg(){
   }
   sendChat(v);
 }
-/* 对话主循环：POST /api/v1/chat → 会话事件成对落盘 → 回读渲染（与 pipeline 同一事件源） */
+/* 对话主循环（流式）：POST /api/v1/chat/stream → SSE 逐字渲染（delta=正文 reasoning=思考链）
+   对照 ZCode/Codex：思考态 → 逐字正文 + 光标 → 完成即成对落盘（服务端单一事实源） */
+const _CURSOR_CSS=document.createElement('style');
+_CURSOR_CSS.textContent='.chat-cursor{display:inline-block;width:7px;height:14px;background:var(--acc);border-radius:2px;margin-left:2px;vertical-align:-2px;animation:curBlink 0.9s steps(1) infinite}@keyframes curBlink{50%{opacity:0}}';
+document.head.appendChild(_CURSOR_CSS);
+var _chatAbort=null; /* 跨函数可见：停止按钮接管流中断（hoisted 全局，与 _hist 同法） */
 async function sendChat(v){
   const sc=$('thScroll');
   sc.insertAdjacentHTML('beforeend',`<div class="msg-you"></div>`+
-    `<div class="agentline" id="chatThinking"><span class="spin"></span> <span class="dim">模型思考中…</span></div>`);
+    `<div class="agentline" id="chatThinking"><span class="spin"></span> <span class="dim" id="chatThinkTxt">模型思考中…</span></div>`);
   const msgs=sc.querySelectorAll('.msg-you');msgs[msgs.length-1].textContent=v;
   const kids=sc.children;riseIn(kids[kids.length-2]);riseIn(kids[kids.length-1],.08);
   sc.scrollTop=sc.scrollHeight;
   const sid=_curSession;
+  _chatAbort=new AbortController();
+  const stopBtn=$('stopBtn');
+  if(stopBtn){stopBtn.style.display='inline-flex';stopBtn.title='停止生成（已生成内容保留并落盘）';}
+  let sawContent=false;
   try{
-    const r=await fetch('/api/v1/chat',{method:'POST',headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),body:JSON.stringify({message:v,session_id:sid||undefined})});
-    const d=await r.json().catch(()=>({}));
-    $('chatThinking')&&$('chatThinking').remove();
-    if(!r.ok||d.status!=='success'){
+    const r=await fetch('/api/v1/chat/stream',{method:'POST',signal:_chatAbort.signal,
+      headers:_H({'Content-Type':'application/json','X-Request-ID':_rid()}),
+      body:JSON.stringify({message:v,session_id:sid||undefined})});
+    /* 非 2xx：结构化错误一次性回显（与非流式同口径） */
+    if(!r.ok){
+      const d=await r.json().catch(()=>({}));
+      $('chatThinking')&&$('chatThinking').remove();
       const hint422=(r.status===422);
       sc.insertAdjacentHTML('beforeend',
         `<div class="agentline">${_esc(d.error||('对话失败 '+r.status))}${hint422?' <button class="chip" onclick="openSettingsAt(\'models\')">去配置模型 →</button>':''}</div>`);
       sc.scrollTop=sc.scrollHeight;return;
     }
-    if(sid===_curSession&&sid){loadSessionEvents(sid);} /* 服务端已落事件：回读即含双方消息，单一事实源 */
-    else{sc.insertAdjacentHTML('beforeend',`<div class="agentline">${_esc(d.reply)}</div>`);sc.scrollTop=sc.scrollHeight;}
-    if(d.usage&&(d.usage.prompt_tokens||d.usage.completion_tokens))toast('tokens in '+d.usage.prompt_tokens+' · out '+d.usage.completion_tokens);
+    const reader=r.body.getReader(),dec=new TextDecoder();
+    let buf='',reasoning='',thinkEl=$('chatThinking'),txtEl=$('chatThinkTxt');
+    /* 渲染升级：首个正文分片把思考行替换为正文行（带光标） */
+    const toBody=()=>{
+      if(!thinkEl)return;
+      const row=document.createElement('div');row.className='agentline';row.id='chatBody';
+      row.innerHTML='<span id="chatTxt"></span><span class="chat-cursor"></span>';
+      thinkEl.replaceWith(row);thinkEl=null;
+      sc.scrollTop=sc.scrollHeight;
+    };
+    const handle=sse=>{
+      const m=sse.match(/^event: (.+)\ndata: (.+)$/s);
+      if(!m)return;
+      let d;try{d=JSON.parse(m[2]);}catch(e){return;}
+      if(m[1]==='reasoning'){
+        reasoning+=d.text;
+        if(txtEl&&!sawContent)txtEl.textContent='思考中：'+(reasoning.length>60?reasoning.slice(-60)+'…':reasoning);
+        sc.scrollTop=sc.scrollHeight;
+      }else if(m[1]==='delta'){
+        sawContent=true;toBody();
+        const t=$('chatTxt');if(t){t.textContent+=d.text;sc.scrollTop=sc.scrollHeight;}
+      }else if(m[1]==='usage'){
+        if(d.prompt_tokens||d.completion_tokens)toast('tokens in '+(d.prompt_tokens||0)+' · out '+(d.completion_tokens||0)+(d.latency_ms!=null?' · '+_fmtLat(d.latency_ms):''));
+      }else if(m[1]==='error'){
+        toBody();
+        const cur=$('chatBody');
+        if(cur&&sawContent){ /* 中途断流：保留已见正文，追加错误注记 */ }
+        if(!sawContent&&cur)cur.remove();
+        $('chatThinking')&&$('chatThinking').remove();
+        sc.insertAdjacentHTML('beforeend',`<div class="agentline" style="color:var(--red)">${_esc(d.error||'流式对话失败')}</div>`);
+        sc.scrollTop=sc.scrollHeight;
+      }
+      /* done：服务端已落事件（含中断保留语义）——当前会话回读渲染，单一事实源 */
+      if(m[1]==='done'&&sid===_curSession&&sid){setTimeout(()=>loadSessionEvents(sid),80);}
+    };
+    for(;;){
+      const {done,value}=await reader.read();
+      if(done)break;
+      buf+=dec.decode(value,{stream:true});
+      let idx;
+      while((idx=buf.indexOf('\n\n'))>=0){handle(buf.slice(0,idx));buf=buf.slice(idx+2);}
+    }
+    if(!sawContent){ /* 空流兜底（后端已发 error 事件的情形之外） */
+      $('chatThinking')&&$('chatThinking').remove();
+    }else{
+      const cur=document.querySelector('#chatBody .chat-cursor');if(cur)cur.remove();
+    }
   }catch(e){
-    $('chatThinking')&&$('chatThinking').remove();
-    sc.insertAdjacentHTML('beforeend',`<div class="agentline" style="color:var(--red)">对话请求失败：${_esc(String(e))}</div>`);
-    sc.scrollTop=sc.scrollHeight;
+    if(e.name==='AbortError'){
+      /* 用户停止：保留已渲染内容，标注中断（服务端已把部分内容落盘） */
+      $('chatThinking')&&$('chatThinking').remove();
+      const cur=document.querySelector('#chatBody .chat-cursor');if(cur)cur.remove();
+      sc.insertAdjacentHTML('beforeend','<div class="agentline" style="color:var(--amb)">⏹ 已停止（已生成内容保留并落盘）</div>');
+      sc.scrollTop=sc.scrollHeight;
+    }else{
+      $('chatThinking')&&$('chatThinking').remove();
+      sc.insertAdjacentHTML('beforeend',`<div class="agentline" style="color:var(--red)">对话请求失败：${_esc(String(e))}</div>`);
+      sc.scrollTop=sc.scrollHeight;
+    }
+  }finally{
+    if(stopBtn){stopBtn.style.display='none';stopBtn.title='停止当前运行（拒绝待决审批门，线程在门处安全退出）';}
+    _chatAbort=null;
   }
 }
 /* /solve：确定性自愈求解器调度（演示主线；真实 pipeline 走「新任务」） */
@@ -3356,15 +3933,36 @@ setTimeout(()=>{
 """
 
 
-def add_web_ui(app: FastAPI, token: str | None = None) -> None:
-    """挂载 /static 静态资源（vendor 组件库）并注册 / 工作台页面。
+_FRONTEND_DIST = Path(__file__).resolve().parents[3] / "frontend" / "dist"
 
-    token 注入所伺服页面（window.__WB_TOKEN），前端变更请求据此携带 Bearer
-    （对齐 server/auth.py 守卫；token 不出现在任何 API 响应体中）。
+
+def add_web_ui(app: FastAPI, token: str | None = None) -> None:
+    """挂载静态资源并注册 / 工作台页面。
+
+    若检测到现代 Shadcn UI 前端产物 (frontend/dist/index.html)，优先挂载并伺服现代 SPA 应用；
+    否则平滑回退至单文件 Franken UI 工作台。
+    token 注入所伺服页面（window.__WB_TOKEN），前端变更请求据此携带 Bearer。
     """
     if _STATIC_DIR.is_dir():
         app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="web-ui-static")
 
+    if (_FRONTEND_DIST / "assets").is_dir():
+        app.mount("/assets", StaticFiles(directory=_FRONTEND_DIST / "assets"), name="frontend-dist-assets")
+
+    @app.get("/favicon.svg", include_in_schema=False)
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def _favicon() -> Response:
+        fav = _FRONTEND_DIST / "favicon.svg"
+        if fav.is_file():
+            return Response(content=fav.read_bytes(), media_type="image/svg+xml")
+        return Response(status_code=204)
+
     @app.get("/", include_in_schema=False)
     async def _web_ui(request: Request) -> HTMLResponse:
+        dist_index = _FRONTEND_DIST / "index.html"
+        if dist_index.is_file():
+            html = dist_index.read_text(encoding="utf-8")
+            html = html.replace('window.__WB_TOKEN = window.__WB_TOKEN || "";', f'window.__WB_TOKEN = "{token or ""}";')
+            return HTMLResponse(content=html, status_code=200)
         return HTMLResponse(content=PAGE.replace("__WB_TOKEN__", token or ""), status_code=200)
+

@@ -60,11 +60,15 @@ def _derive_compliant_inverts(payload: dict) -> dict[str, float]:
     return inverts
 
 
-def test_load_config_returns_none_when_missing(tmp_path: Path) -> None:
+def test_load_config_returns_none_when_missing(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("SENSENOVA_API_KEY", raising=False)
+    monkeypatch.delenv("OPENBIMAGENT_LLM_BASELINE_KEY", raising=False)
     assert load_llm_baseline_config(tmp_path / "nope.toml") is None
 
 
-def test_load_config_returns_none_for_placeholder_key(tmp_path: Path) -> None:
+def test_load_config_returns_none_for_placeholder_key(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("SENSENOVA_API_KEY", raising=False)
+    monkeypatch.delenv("OPENBIMAGENT_LLM_BASELINE_KEY", raising=False)
     cfg_file = tmp_path / "llm_baseline.local.toml"
     cfg_file.write_text(
         'base_url = "https://x/v1"\nmodel = "m"\napi_key = "sk-replace-me"\n', encoding="utf-8"
@@ -170,9 +174,9 @@ def test_run_baseline_with_llm_failure_records_unmeasured_zero() -> None:
     row = run_llm_direct_baseline(scenarios=("B1",), config=cfg, post_fn=post_fn)
 
     assert row is not None
-    assert row.measured is True
+    assert row.measured is False
     assert row.rule_compliance_rate == 0.0
-    assert "LLM-Direct 真实调用" in row.provenance
+    assert "全部 LLM 调用失败" in row.provenance
 
 
 def test_academic_benchmark_keeps_placeholder_when_not_opted_in() -> None:

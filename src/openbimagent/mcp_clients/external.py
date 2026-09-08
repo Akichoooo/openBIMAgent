@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import threading
+from pathlib import Path
 from typing import Any
 
 from openbimagent.core.plugin import BIMPlugin, BIMPluginContext, PluginRegistry
@@ -167,3 +168,53 @@ def attach_external_servers_from_env(registry: PluginRegistry) -> list[str]:
         logger.warning("OPENBIMAGENT_MCP_SERVERS 必须是对象（server 名 → 连接配置）")
         return []
     return attach_external_servers(registry, config)
+
+
+#: server 条目中的 UI 元数据键（不参与连接，挂载时剔除）
+_ENTRY_METADATA_KEYS = ("description", "alwaysLoad", "disabled")
+
+
+def _mcp_config_file() -> Path:
+    override = os.environ.get("OPENBIMAGENT_MCP_CONFIG_FILE")
+    if override:
+        return Path(override)
+    return Path(__file__).resolve().parents[3] / "config" / "mcp_servers.local.json"
+
+
+def load_mcp_servers_config() -> dict[str, dict[str, Any]]:
+    """读取第三方 MCP server 配置（原始条目，含元数据键）。
+
+    优先级：``config/mcp_servers.local.json``（设置页「保存 MCP」写入）> 进程环境
+    ``OPENBIMAGENT_MCP_SERVERS``。两者均缺省时返回空 dict。
+    """
+    path = _mcp_config_file()
+    if path.is_file():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return {str(k): v for k, v in data.items() if isinstance(v, dict)}
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("MCP 配置文件解析失败（忽略）: %s", exc)
+    raw = os.environ.get("OPENBIMAGENT_MCP_SERVERS", "").strip()
+    if raw:
+        try:
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                return {str(k): v for k, v in data.items() if isinstance(v, dict)}
+        except json.JSONDecodeError:
+            pass
+    return {}
+
+
+def attach_external_servers_from_config(registry: PluginRegistry) -> list[str]:
+    """从持久化文件/env 合并配置挂载；剔除 disabled 与元数据键后注册。"""
+    config = load_mcp_servers_config()
+    active: dict[str, Any] = {}
+    for name, entry in config.items():
+        if entry.get("disabled"):
+            logger.info("外部 MCP server %s 已停用（跳过挂载）", name)
+            continue
+        active[name] = {k: v for k, v in entry.items() if k not in _ENTRY_METADATA_KEYS}
+    if not active:
+        return []
+    return attach_external_servers(registry, active)

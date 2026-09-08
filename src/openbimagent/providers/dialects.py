@@ -15,9 +15,19 @@ import json
 import threading
 import time
 from enum import StrEnum
-from typing import Any
+from typing import Any, Iterator
 
 import httpx
+import os
+
+def _sanitize_no_proxy() -> None:
+    for k in ("NO_PROXY", "no_proxy"):
+        val = os.environ.get(k)
+        if val:
+            cleaned = ",".join(p.strip() for p in val.split(",") if not p.strip().startswith("::"))
+            os.environ[k] = cleaned
+
+_sanitize_no_proxy()
 
 ABORT_POLL_INTERVAL_S = 0.5
 """cancel_event 轮询间隔(ARCH §6.5:全程可 abort 且返回部分结果)。"""
@@ -66,6 +76,7 @@ def chat(
     timeout_s: int = 120,
     cancel_event: threading.Event | None = None,
     default_headers: dict[str, str] | None = None,
+    extra_params: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     """统一调用入口:按方言适配请求/响应;重试/熔断由 registry 套用(models.toml [resilience])。
@@ -85,6 +96,7 @@ def chat(
             timeout_s=timeout_s,
             cancel_event=cancel_event,
             default_headers=default_headers,
+            extra_params=extra_params,
         )
     if dialect is Dialect.GOOGLE_GENAI:
         return _chat_google_genai(
@@ -364,6 +376,7 @@ def _chat_openai_completions(
     timeout_s: int,
     cancel_event: threading.Event | None,
     default_headers: dict[str, str] | None,
+    extra_params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """openai-compatible 方言:POST {base_url}/chat/completions,Bearer 鉴权。
 
@@ -381,6 +394,8 @@ def _chat_openai_completions(
         "stream": True,
         "stream_options": {"include_usage": True},
     }
+    if extra_params:
+        payload.update(extra_params)  # reasoning 统一档位映射后的各家 wire 参数
     if tools:
         payload["tools"] = tools
     if tool_choice is not None:
@@ -404,7 +419,7 @@ def _chat_openai_completions(
 
     def _worker() -> None:
         try:
-            with httpx.Client(timeout=httpx.Timeout(timeout_s)) as client:
+            with httpx.Client(timeout=httpx.Timeout(timeout_s), trust_env=False) as client:
                 holder["client"] = client
                 with client.stream("POST", url, json=payload, headers=headers) as resp:
                     holder["response"] = resp
@@ -482,6 +497,119 @@ def _apply_delta(acc: dict[str, Any], data: dict[str, Any]) -> None:
             acc["finish_reason"] = choice["finish_reason"]
     if data.get("usage"):
         acc["usage"] = data["usage"]
+
+
+# ---------- reasoning 统一抽象:5 档 → 各家 wire 形态 ----------
+REASONING_LEVELS = ("off", "low", "medium", "high", "max")
+"""统一思考档位(用户 UI 只见这 5 档);方言层映射到各家 wire 参数。"""
+
+# per-model reasoning wire 兜底表(models.toml [models.*.reasoning] 可覆盖);实测 2026-09-07。
+_REASONING_WIRE: dict[str, dict[str, Any]] = {
+    "mimo-v2.5": {"wire": "thinking.type", "map": {"off": "disabled", "low": "disabled", "medium": "adaptive", "high": "adaptive", "max": "enabled"}, "can_disable": True},
+    "glm-5.2": {"wire": "effort", "map": {"off": "none", "low": "low", "medium": "high", "high": "high", "max": "max"}, "can_disable": True},
+    "deepseek-v4-flash": {"wire": "thinking.type+effort", "map": {"off": "disabled", "low": "low", "medium": "high", "high": "high", "max": "max"}, "can_disable": True},
+    "deepseek-v4-pro": {"wire": "thinking.type+effort", "map": {"off": "disabled", "low": "high", "medium": "high", "high": "high", "max": "max"}, "can_disable": True},
+    "qwen3.8-max": {"wire": "enable_thinking+budget", "map": {"off": "off", "low": "low", "medium": "medium", "high": "xhigh", "max": "xhigh"}, "can_disable": True},
+    "kimi-k3": {"wire": "effort", "map": {"off": "max", "low": "max", "medium": "max", "high": "max", "max": "max"}, "can_disable": False, "force_think": True},
+    "claude-opus-4-8": {"wire": "output_config.effort", "map": {"off": "low", "low": "low", "medium": "medium", "high": "high", "max": "max"}, "can_disable": False},
+    "gpt-5.6-luna": {"wire": "reasoning_effort", "map": {"off": "none", "low": "low", "medium": "medium", "high": "high", "max": "xhigh"}, "can_disable": True},
+    "gemini-3.1-pro": {"wire": "thinking_level", "map": {"off": "low", "low": "low", "medium": "medium", "high": "high", "max": "high"}, "can_disable": False},
+}
+
+
+def reasoning_payload(model: str, level: str) -> dict[str, Any]:
+    """统一 5 档 → 该模型 wire 参数 dict(并入 chat payload)。
+
+    force_think 模型(如 kimi-k3)的 off/low clamp 到其最低档(不报错);未知模型回退
+    effort 型通用映射。thinking.type 型(MiMo) disabled 可直出治网关 origin 超时。
+    """
+    lvl = level if level in REASONING_LEVELS else "medium"
+    spec = _REASONING_WIRE.get(
+        model,
+        {"wire": "reasoning_effort", "map": {"off": "none", "low": "low", "medium": "medium", "high": "high", "max": "xhigh"}, "can_disable": True},
+    )
+    mapped = spec["map"].get(lvl, "medium")
+    wire = spec["wire"]
+    if wire == "thinking.type":
+        return {"thinking": {"type": mapped}}
+    if wire == "thinking.type+effort":
+        if mapped == "disabled":
+            return {"thinking": {"type": "disabled"}}
+        return {"thinking": {"type": "enabled"}, "reasoning_effort": mapped}
+    if wire == "enable_thinking+budget":
+        if mapped == "off":
+            return {"enable_thinking": False}
+        budget = {"low": 4096, "medium": 16384, "xhigh": 262144}.get(mapped, 16384)
+        return {"enable_thinking": True, "thinking_budget": budget}
+    if wire == "output_config.effort":
+        return {"output_config": {"effort": mapped}}
+    if wire == "thinking_level":
+        return {"thinking_level": mapped}
+    return {"reasoning_effort": mapped}
+
+
+def stream_openai_completions(
+    *,
+    model: str,
+    messages: list[dict[str, Any]],
+    base_url: str | None,
+    api_key: str | None,
+    timeout_s: int = 120,
+    cancel_event: threading.Event | None = None,
+    default_headers: dict[str, str] | None = None,
+    extra_params: dict[str, Any] | None = None,
+) -> Iterator[dict[str, Any]]:
+    """openai-completions 方言的**真流式**消费:边收边 yield,供对话端点逐字下发前端。
+
+    与 `_chat_openai_completions` 同源(同一 URL/payload/WAF 检测/delta 解析),但不再缓冲整段:
+    每解析一行 SSE 就地产出事件 dict——
+    - ``{"type": "reasoning", "text": str}``   思维链分片(reasoning_content / reasoning)
+    - ``{"type": "delta", "text": str}``       正文分片
+    - ``{"type": "usage", "usage": {...}}``    尾包 usage(stream_options.include_usage)
+    流正常结束时自然收尾;上游异常原样抛出(调用方决定重试/报错口径)。
+    cancel_event 置位时立即关闭连接并停止产出(已产出部分即部分结果)。
+    """
+    if not base_url:
+        raise DialectError("openai-compatible provider 缺少 base_url")
+    url = f"{base_url.rstrip('/')}/chat/completions"
+    payload = {"model": model, "messages": messages, "stream": True, "stream_options": {"include_usage": True}}
+    if extra_params:
+        payload.update(extra_params)  # reasoning 统一档位映射后的各家 wire 参数
+    headers = {
+        **(default_headers or {}),
+        "Authorization": f"Bearer {api_key or ''}",
+        "Content-Type": "application/json",
+    }
+    with httpx.Client(timeout=httpx.Timeout(timeout_s), trust_env=False) as client:
+        with client.stream("POST", url, json=payload, headers=headers) as resp:
+            resp.raise_for_status()
+            ct = resp.headers.get("content-type", "").lower()
+            if "text/html" in ct:
+                raise WAFChallengeError(f"响应为 HTML(content-type={ct!r}),疑似 Aliyun WAF 挑战页(速率限流)")
+            for line in resp.iter_lines():
+                if cancel_event is not None and cancel_event.is_set():
+                    return
+                line = line.strip()
+                if not line or not line.startswith("data:"):
+                    continue
+                data_str = line[len("data:"):].strip()
+                if data_str == "[DONE]":
+                    return
+                try:
+                    data = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(data, dict):
+                    continue
+                for choice in data.get("choices") or []:
+                    delta = choice.get("delta") or {}
+                    piece = delta.get("reasoning_content") or delta.get("reasoning")
+                    if piece:
+                        yield {"type": "reasoning", "text": piece}
+                    if delta.get("content"):
+                        yield {"type": "delta", "text": delta["content"]}
+                if data.get("usage"):
+                    yield {"type": "usage", "usage": data["usage"]}
 
 
 def _assemble_completion(acc: dict[str, Any], *, aborted: bool) -> dict[str, Any]:

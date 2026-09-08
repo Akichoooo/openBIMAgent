@@ -481,13 +481,15 @@ def test_run_ok_with_mock_blender_returns_0(tmp_path, monkeypatch) -> None:
 # ---------- usage atexit 落盘(修复 2)----------
 
 
-def test_dump_usage_on_exit_writes_when_not_done(tmp_path) -> None:
+def test_dump_usage_on_exit_writes_when_not_done(tmp_path, monkeypatch) -> None:
     """atexit 兜底:done=False 时落盘 usage_summary.json,total.total_tokens 正确(修复 2)。
 
     再追加一次 chat 后以 done=True 调 → 文件内容未变(已显式落盘则跳过,不重写)。
     """
     import json
 
+    # 流水账指向 tmp:不入真实 out/usage_log.jsonl（用量仪表盘只认真实调用）
+    monkeypatch.setenv("OPENBIMAGENT_USAGE_LOG", str(tmp_path / "usage_log.jsonl"))
     from openbimagent.cli import _UsageTrackingRegistry, _dump_usage_on_exit
 
     class FakeInner:

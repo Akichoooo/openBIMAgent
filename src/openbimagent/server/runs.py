@@ -41,6 +41,11 @@ def _max_concurrent() -> int:
         return 2
 
 
+def _run_timeout_s() -> int:
+    """单 run 全局超时兜底(容错):超时自动标记 failed,不留僵尸 active 阻塞并发额度。"""
+    return max(60, int(os.environ.get("OPENBIMAGENT_RUN_TIMEOUT_S", "900")))
+
+
 def _sessions_dir() -> Path:
     override = os.environ.get("OPENBIMAGENT_SESSIONS_DIR")
     return Path(override) if override else _DEFAULT_SESSIONS_DIR
@@ -92,7 +97,14 @@ def _retrieve_exemplars(brief: str, pack: Path, *, top_k: int = 3) -> list[dict[
     return [entry for _, entry in scored[:top_k]]
 
 
-def _execute_run(brief: str, playbook: Path, session_id: str, enriched_context: str | None = None) -> None:
+def _execute_run(
+    brief: str,
+    playbook: Path,
+    session_id: str,
+    enriched_context: str | None = None,
+    workspace_id: str | None = None,
+    mode: str = "agent",
+) -> None:
     """后台线程：真跑 assembly pipeline（离线走确定性模板 + MockCritic）。"""
     from openbimagent.assembly.pipeline import run_pipeline
 
@@ -104,13 +116,17 @@ def _execute_run(brief: str, playbook: Path, session_id: str, enriched_context: 
         from openbimagent.session.store import SessionStore
 
         store = SessionStore(sessions_dir / f"{session_id}.jsonl", title=brief[:60] or session_id, playbook=playbook.parent.name)
+        # 工作区归属盖章：_sync_index 只更新已知键，workspace 字段在后续同步中保留
+        from openbimagent.server.workspaces import current_workspace_id, stamp_session_workspace
+
+        stamp_session_workspace(session_id, workspace_id if workspace_id is not None else current_workspace_id())
         # 缺陷一修复：检索范例作为会话首条用户消息注入（In-Context Retrieval 注入会话上下文；
         # 读取会话历史的角色（clarify 续跑/后续 researcher）可消费；确定性模板路径不消费——如实记录）
         if enriched_context:
             from openbimagent.session.schema import EventType
 
             store.append_new(EventType.MESSAGE, {"role": "user", "content": enriched_context})
-        # Web 审批门：触门即挂起，待前端 /api/v1/approvals 人工决策（撤掉 yes=True 自动放行）
+        # Web 审批门：触门即挂起，待前端 /api/v1/approvals 人工决策（撤掉 yes=True 自动放行；自主模式直接放行）
         from openbimagent.server.approvals import make_web_approval_fn
 
         # 市政主线补 utility_solver_input（pack 内默认输入；否则 domain_gate 因证据缺失 UNKNOWN 阻断）
@@ -125,12 +141,19 @@ def _execute_run(brief: str, playbook: Path, session_id: str, enriched_context: 
             sessions_dir=sessions_dir,
             session_id=session_id,
             input_func=lambda _prompt="": "",
-            approval_fn=make_web_approval_fn(session_id, sessions_dir),
+            approval_fn=make_web_approval_fn(session_id, sessions_dir, auto_approve=(mode == "yolo")),
             utility_solver_input=solver_input,
         )
-        _runs[session_id].update(active=False, done_at=datetime.now(timezone.utc).isoformat())
+        _runs[session_id].update(
+            active=False, status="done", done_at=datetime.now(timezone.utc).isoformat()
+        )
     except Exception as exc:  # noqa: BLE001 — 运行失败必须可视化而非吞掉
-        _runs[session_id].update(active=False, done_at=datetime.now(timezone.utc).isoformat(), error=str(exc))
+        _runs[session_id].update(
+            active=False,
+            status="failed",
+            done_at=datetime.now(timezone.utc).isoformat(),
+            error=str(exc),
+        )
     finally:
         try:
             entry = _archive_run_artifacts(playbook, session_id, brief, out_dir)
@@ -231,6 +254,39 @@ def _archive_run_artifacts(playbook: Path, session_id: str, brief: str, out_dir:
 def add_runs(app: FastAPI) -> None:
     """注册真实运行端点（由 build_m2_readonly_app 调用）。"""
 
+    @app.post("/api/v1/sessions", summary="新建对话会话：初始化 JSONL 与 index.json 索引（不跑后台管道）", tags=["Workbench"])
+    async def create_session_endpoint(request: dict[str, Any] | None = None) -> JSONResponse:
+        req = request or {}
+        raw_title = req.get("title")
+        title = str(raw_title).strip() if raw_title else "新工程对话"
+        playbook_key = str(req.get("playbook", "municipal_utility")).strip() or "municipal_utility"
+        from openbimagent.session.schema import uuid7
+        from openbimagent.session.store import SessionStore
+        from openbimagent.server.workspaces import current_workspace_id, stamp_session_workspace
+
+        session_id = f"sess-{str(uuid7())[:8]}"
+        sessions_dir = _sessions_dir()
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        SessionStore(sessions_dir / f"{session_id}.jsonl", title=title, playbook=playbook_key)
+
+        raw_ws = req.get("workspace")
+        ws_id = str(raw_ws).strip() if raw_ws else current_workspace_id()
+        if ws_id:
+            stamp_session_workspace(session_id, ws_id)
+
+        from openbimagent.audit import log_audit
+        log_audit("session_create", {"session": session_id, "title": title, "playbook": playbook_key, "workspace": ws_id})
+
+        return JSONResponse(
+            content={
+                "status": "success",
+                "session_id": session_id,
+                "title": title,
+                "playbook": playbook_key,
+                "workspace": ws_id,
+            }
+        )
+
     @app.post("/api/v1/runs", summary="新建任务：后台真跑 pipeline（有界多并发；离线模板安全；归档范例反哺）", tags=["Workbench"])
     async def start_run(request: dict[str, Any]) -> JSONResponse:
         brief = str(request.get("brief", "")).strip()
@@ -241,6 +297,13 @@ def add_runs(app: FastAPI) -> None:
         if not playbook.is_file():
             return JSONResponse(status_code=500, content={"status": "error", "error": f"playbook 缺失: {playbook}"})
         with _run_lock:
+            idem = str(request.get("idempotency_key") or "").strip()
+            if idem:
+                for sid, r in _runs.items():
+                    if r.get("idempotency_key") == idem:
+                        return JSONResponse(
+                            content={"status": "success", "session_id": sid, "idempotent_replay": True}
+                        )
             active_ids = [sid for sid, r in _runs.items() if r["active"]]
             if len(active_ids) >= _max_concurrent():
                 return JSONResponse(
@@ -276,6 +339,8 @@ def add_runs(app: FastAPI) -> None:
                 enriched_context = f"{enriched_context}\n\n{memory_fragment}"
             _runs[session_id] = {
                 "active": True,
+                "status": "active",
+                "idempotency_key": idem,
                 "session_id": session_id,
                 "brief": brief,
                 "playbook": playbook_key,
@@ -284,16 +349,44 @@ def add_runs(app: FastAPI) -> None:
                 "done_at": None,
                 "error": None,
             }
+            from openbimagent.server.workspaces import current_workspace_id, get_workspace_execution_mode
+
+            ws_id = str(request.get("workspace_id") or request.get("workspace") or "").strip() or None
+            effective_ws = ws_id or current_workspace_id()
+            req_mode = str(request.get("mode") or "").strip()
+            effective_mode = req_mode or get_workspace_execution_mode(effective_ws)
+
             thread = threading.Thread(
-                target=_execute_run, args=(brief, playbook, session_id, enriched_context), daemon=True
+                target=_execute_run,
+                args=(brief, playbook, session_id, enriched_context, effective_ws, effective_mode),
+                daemon=True,
             )
             thread.start()
+        from openbimagent.audit import log_audit
+
+        log_audit(
+            "run_start",
+            {"session": session_id, "playbook": playbook_key, "mode": effective_mode, "workspace": effective_ws},
+        )
         return JSONResponse(
-            content={"status": "success", "session_id": session_id, "playbook": playbook_key, "exemplars_used": len(exemplars)}
+            content={"status": "success", "session_id": session_id, "playbook": playbook_key, "mode": effective_mode, "workspace": effective_ws, "exemplars_used": len(exemplars)}
         )
 
     @app.get("/api/v1/runs/active", summary="运行状态（轮询用；runs 全量 + run 兼容字段）", tags=["Workbench"])
     async def run_active() -> dict:
+        # 容错:超时仍 active 的 run 标记 failed(run_timeout),不留僵尸运行阻塞并发额度
+        now = datetime.now(timezone.utc)
+        for r in _runs.values():
+            if r.get("active") and r.get("started_at"):
+                try:
+                    el = (now - datetime.fromisoformat(r["started_at"])).total_seconds()
+                    if el > _run_timeout_s():
+                        r.update(active=False, status="failed", error="run_timeout", done_at=now.isoformat())
+                        from openbimagent.audit import log_audit
+
+                        log_audit("run_timeout", {"session": r.get("session_id"), "elapsed_s": int(el)}, "failed")
+                except ValueError:
+                    pass
         runs = sorted(_runs.values(), key=lambda r: r["started_at"] or "", reverse=True)
         active = next((r for r in runs if r["active"]), runs[0] if runs else None)
         return {"status": "success", "runs": runs, "run": active, "max_concurrent": _max_concurrent()}
@@ -485,7 +578,112 @@ def add_runs(app: FastAPI) -> None:
             return JSONResponse(status_code=400, content={"status": "error", "error": str(exc)})
         except OSError as exc:
             return JSONResponse(status_code=500, content={"status": "error", "error": f"分支失败: {exc}"})
+        from openbimagent.audit import log_audit
+
+        log_audit("fork", {"session": safe, "new_session": new_store.session_id})
         return JSONResponse(content={"status": "success", "session_id": new_store.session_id, "forked_from": safe})
+
+    @app.post(
+        "/api/v1/sessions/{session_id}/rewind",
+        summary="时间旅行回滚（截断 after_event_id 之后的事件，保留主干）",
+        tags=["Workbench"],
+    )
+    async def rewind_session(session_id: str, request: dict[str, Any]) -> JSONResponse:
+        safe = "".join(c for c in session_id if c.isalnum() or c in "-_")
+        path = _sessions_dir() / f"{safe}.jsonl"
+        if not path.is_file():
+            return JSONResponse(status_code=404, content={"status": "error", "error": f"会话不存在: {safe}"})
+        from openbimagent.session.store import SessionStore
+
+        after_event_id = str(request.get("after_event_id") or "").strip()
+        if not after_event_id:
+            return JSONResponse(status_code=400, content={"status": "error", "error": "缺少 after_event_id"})
+        restore_files = bool(request.get("restore_files", False))
+        restored = 0
+        try:
+            store = SessionStore(path)
+            removed = store.truncate_after(after_event_id)
+            from openbimagent.audit import log_audit
+            from openbimagent.core.loop import restore_file_checkpoints
+
+            if restore_files:
+                restored = restore_file_checkpoints(safe)  # 文件级物理回滚(Claude 范式)
+            log_audit(
+                "rewind",
+                {"session": safe, "after": after_event_id, "removed": removed, "restored_files": restored},
+            )
+        except KeyError as exc:
+            return JSONResponse(status_code=404, content={"status": "error", "error": str(exc)})
+        except OSError as exc:
+            return JSONResponse(status_code=500, content={"status": "error", "error": f"回滚失败: {exc}"})
+        return JSONResponse(
+            content={"status": "success", "session_id": safe, "removed": removed, "restored_files": restored}
+        )
+
+    @app.get("/api/v1/audit", summary="审计日志(最近 tail 条,倒序;安全操作留痕)", tags=["Workbench"])
+    async def get_audit(tail: int = 100) -> JSONResponse:
+        from openbimagent.audit import read_audit
+
+        return JSONResponse(content={"status": "success", "items": read_audit(min(500, max(1, tail)))})
+
+    @app.post("/api/v1/audit", summary="客户端错误上报(容错:前端崩溃/异常写入审计)", tags=["Workbench"])
+    async def post_audit(request: dict[str, Any]) -> JSONResponse:
+        from openbimagent.audit import log_audit
+
+        action = str(request.get("action") or "client_error")
+        raw_detail = request.get("detail")
+        detail = raw_detail if isinstance(raw_detail, dict) else {"raw": str(raw_detail)[:300]}
+        log_audit(action, detail, str(request.get("result") or "reported"), actor="frontend")
+        return JSONResponse(content={"status": "success"})
+
+    @app.post(
+        "/api/v1/runs/{session_id}/steer",
+        summary="运行中插话纠偏(Devin 范式):指令写会话流留痕,供审批门/后续角色消费",
+        tags=["Workbench"],
+    )
+    async def steer_run(session_id: str, request: dict[str, Any]) -> JSONResponse:
+        safe = "".join(c for c in session_id if c.isalnum() or c in "-_")
+        instruction = str(request.get("instruction") or "").strip()
+        if not instruction:
+            return JSONResponse(status_code=400, content={"status": "error", "error": "缺少 instruction"})
+        with _run_lock:
+            run = _runs.get(safe)
+            if run is None or not run.get("active"):
+                return JSONResponse(
+                    status_code=409, content={"status": "error", "error": f"运行不存在或已结束: {safe}"}
+                )
+            queue = run.setdefault("steer_queue", [])
+            queue.append(instruction)
+            pending = len(queue)
+        # steer_requested 事件写会话流(schema CustomType 已预留;前端立即可见,审批人/后续角色可消费)
+        try:
+            from openbimagent.session.schema import EventType
+            from openbimagent.session.store import SessionStore
+
+            store = SessionStore(_sessions_dir() / f"{safe}.jsonl")
+            store.append_new(EventType.CUSTOM, {"customType": "steer_requested", "instruction": instruction})
+        except Exception:  # noqa: BLE001 — 事件落盘失败不影响纠偏队列本身
+            pass
+        from openbimagent.audit import log_audit
+
+        log_audit("steer", {"session": safe, "instruction": instruction[:200]})
+        return JSONResponse(content={"status": "success", "pending": pending})
+
+    @app.get(
+        "/api/v1/training/export",
+        summary="导出自愈轨迹为 SFT/DPO 微调格式(仅成功交付案例;轨迹采集非权重更新)",
+        tags=["Workbench"],
+    )
+    async def export_training(fmt: str = "sft") -> JSONResponse:
+        if fmt not in ("sft", "dpo"):
+            return JSONResponse(status_code=400, content={"status": "error", "error": "fmt 必须是 sft/dpo"})
+        from openbimagent.training.trace_export import export_traces
+
+        result = export_traces(fmt)
+        from openbimagent.audit import log_audit
+
+        log_audit("training_export", {"format": fmt, "count": result["count"]})
+        return JSONResponse(content={"status": "success", **result})
 
     @app.patch("/api/v1/sessions/{session_id}", summary="更新会话（重命名/归档/解归档）", tags=["Workbench"])
     async def rename_session(session_id: str, request: dict[str, Any]) -> JSONResponse:

@@ -22,13 +22,26 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from openbimagent.providers import dialects
-from openbimagent.providers.dialects import PROVIDER_TYPE_MAP, CircuitBreaker, DialectError
+from openbimagent.providers.dialects import PROVIDER_TYPE_MAP, CircuitBreaker, DialectError, reasoning_payload
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "models.toml"
 """仓库内置 models.toml(src/openbimagent/providers/registry.py → 上溯三级为仓库根)。"""
 
 PROFILE_ENV_VAR = "OPENBIMAGENT_PROFILE"
 DEFAULT_PROFILE = "official"
+
+#: per-role 默认思考档位(统一 5 档);质量咽喉(critic/modeler/planner)高档,杂活(clarify/deliver)低档。
+#: 与 models.toml [reasoning_defaults] 镜像;chat(reasoning_level=...) 可显式覆盖。
+_REASONING_DEFAULTS: dict[str, str] = {
+    "critic_render": "high",
+    "critic_scad": "high",
+    "modeler": "high",
+    "planner": "high",
+    "orchestrator": "medium",
+    "researcher": "medium",
+    "clarify": "low",
+    "deliver": "low",
+}
 
 
 class ProviderKeyError(RuntimeError):
@@ -156,6 +169,10 @@ class ModelRegistry(BaseModel):
 
     # ---------- 统一调用入口 ----------
 
+    def reasoning_default_for(self, role: str) -> str | None:
+        """per-role 默认思考档位;未声明返回 None(用模型自身默认)。"""
+        return _REASONING_DEFAULTS.get(role)
+
     def chat(
         self,
         role: str,
@@ -163,8 +180,13 @@ class ModelRegistry(BaseModel):
         tools: list[dict[str, Any]] | None = None,
         cancel_event: threading.Event | None = None,
         tool_choice: str | dict[str, Any] | None = None,
+        reasoning_level: str | None = None,
     ) -> dict[str, Any]:
-        """角色 → 模型 → provider 解析后统一调用;沿降级链尝试,跳过熔断冷却中的模型。"""
+        """角色 → 模型 → provider 解析后统一调用;沿降级链尝试,跳过熔断冷却中的模型。
+
+        reasoning_level:统一思考档位(off/low/medium/high/max);缺省用 per-role 默认(_REASONING_DEFAULTS)。
+        """
+        level = reasoning_level or self.reasoning_default_for(role)
         chain = self.fallback_chain(self.model_name_for_role(role))
         errors: list[str] = []
         for model_name in chain:
@@ -175,7 +197,12 @@ class ModelRegistry(BaseModel):
                 continue
             try:
                 result = self._chat_with_retry(
-                    model_name, messages, tools=tools, tool_choice=tool_choice, cancel_event=cancel_event
+                    model_name,
+                    messages,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                    cancel_event=cancel_event,
+                    reasoning_level=level,
                 )
             except ProviderKeyError:
                 raise  # 缺 key 是配置错误,不是模型故障:不走降级链,直接报清晰错误
@@ -194,6 +221,7 @@ class ModelRegistry(BaseModel):
         tools: list[dict[str, Any]] | None,
         tool_choice: str | dict[str, Any] | None,
         cancel_event: threading.Event | None,
+        reasoning_level: str | None = None,
     ) -> dict[str, Any]:
         """单模型调用 + 指数退避重试(max 次尝试,base_ms × 2^n);成功/失败都喂熔断器。"""
         model = self.models[model_name]
@@ -218,6 +246,7 @@ class ModelRegistry(BaseModel):
                     timeout_s=self.resilience.timeout_s,
                     cancel_event=cancel_event,
                     default_headers=provider.default_headers or None,
+                    extra_params=reasoning_payload(model_name, reasoning_level) if reasoning_level else None,
                 )
             except Exception as exc:
                 last_exc = exc
