@@ -352,12 +352,23 @@ export default function App() {
       <Header
         activeSessionTitle={getSessionTitle(currentSession)}
         currentPlaybook={currentSession?.playbook}
+        currentMode={currentSession?.mode}
         onDisciplineChange={(newPlaybook) => {
           if (currentSession) {
             setCurrentSession({ ...currentSession, playbook: newPlaybook })
           }
           if (currentSessionId) {
-            api.forkSession(currentSessionId, newPlaybook).then(() => {
+            api.updateSession(currentSessionId, { playbook: newPlaybook }).then(() => {
+              setRefreshTrigger((prev) => prev + 1)
+            }).catch(() => {})
+          }
+        }}
+        onModeChange={(newMode) => {
+          if (currentSession) {
+            setCurrentSession({ ...currentSession, mode: newMode })
+          }
+          if (currentSessionId) {
+            api.updateSession(currentSessionId, { mode: newMode }).then(() => {
               setRefreshTrigger((prev) => prev + 1)
             }).catch(() => {})
           }

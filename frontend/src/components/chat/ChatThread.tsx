@@ -1300,68 +1300,8 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
           </div>
         )}
 
-        <div className="relative rounded-2xl border border-border/70 bg-card/80 dark:bg-neutral-900/90 focus-within:border-primary/80 focus-within:ring-1 focus-within:ring-primary/40 transition-all shadow-sm overflow-hidden">
-          {/* 顶部环境与状态信息条 (严格 whitespace-nowrap 与 shrink-0, 杜绝文字竖向折行) */}
-          <div className="flex items-center space-x-2 px-3 py-1.5 bg-muted/40 border-b border-border/50 text-xs text-muted-foreground overflow-x-auto no-scrollbar whitespace-nowrap">
-            <div className="flex items-center space-x-1.5 font-mono shrink-0 whitespace-nowrap">
-              <Folder className="h-3.5 w-3.5 text-violet-500 shrink-0" />
-              <span className="font-medium text-foreground truncate max-w-[160px] whitespace-nowrap">
-                {sessionTitle || "openBIMAgent"}
-              </span>
-            </div>
-
-            <span className="text-border shrink-0">|</span>
-
-            <div className="flex items-center space-x-1 shrink-0 whitespace-nowrap">
-              <Laptop className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-              <span className="whitespace-nowrap">本地</span>
-            </div>
-
-            <span className="text-border shrink-0">|</span>
-
-            <div className="flex items-center space-x-1 font-mono shrink-0 whitespace-nowrap">
-              <GitBranch className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-              <span className="whitespace-nowrap">main</span>
-            </div>
-
-            <span className="text-border shrink-0">|</span>
-
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button className="flex items-center space-x-1 text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300 cursor-pointer outline-none shrink-0 whitespace-nowrap">
-                  <Code2 className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate max-w-[130px] whitespace-nowrap">{currentPlaybookObj.label}</span>
-                  <ChevronDown className="h-2.5 w-2.5 ml-0.5 shrink-0" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-56 text-xs">
-                <div className="px-2 py-1 text-[10px] font-semibold text-muted-foreground">
-                  选择工程领域 Playbook
-                </div>
-                {PLAYBOOK_OPTIONS.map((p) => (
-                  <DropdownMenuItem
-                    key={p.id}
-                    onClick={() => {
-                      if (sessionId) {
-                        api.forkSession(sessionId, p.id).then(() => {
-                          toast.success(`已切换场景模式: ${p.label}`)
-                        }).catch(() => {})
-                      }
-                    }}
-                    className="cursor-pointer"
-                  >
-                    <div>
-                      <div className="font-medium">{p.label}</div>
-                      <div className="text-[10px] text-muted-foreground">{p.desc}</div>
-                    </div>
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-
-          <div className="p-2 space-y-2">
-            <textarea
+        <div className="relative rounded-2xl border border-border/70 bg-card/80 dark:bg-neutral-900/90 focus-within:border-primary/80 focus-within:ring-1 focus-within:ring-primary/40 transition-all shadow-sm p-2.5 space-y-2">
+          <textarea
             value={inputText}
             onChange={(e) => {
               const v = e.target.value
@@ -1590,7 +1530,6 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
                 )}
               </div>
             </div>
-          </div>
           </div>
         </div>
       </div>

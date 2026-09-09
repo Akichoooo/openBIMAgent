@@ -6,6 +6,7 @@ export interface SessionItem {
   session_id: string
   title: string
   playbook?: string | null
+  mode?: string | null
   created_at: string
   last_active: string
   event_count: number
@@ -240,6 +241,17 @@ export const api = {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title }),
+    })
+  },
+
+  async updateSession(
+    sessionId: string,
+    data: { title?: string; archived?: boolean; playbook?: string; mode?: string }
+  ): Promise<any> {
+    return request(`/api/v1/sessions/${sessionId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
     })
   },
 

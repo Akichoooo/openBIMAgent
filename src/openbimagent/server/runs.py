@@ -695,9 +695,11 @@ def add_runs(app: FastAPI) -> None:
 
         new_title = request.get("title")
         archived = request.get("archived")
+        new_playbook = request.get("playbook")
+        new_mode = request.get("mode") or request.get("toolset")
 
-        if new_title is None and archived is None:
-            return JSONResponse(status_code=400, content={"status": "error", "error": "缺少更新参数(title 或 archived)"})
+        if new_title is None and archived is None and new_playbook is None and new_mode is None:
+            return JSONResponse(status_code=400, content={"status": "error", "error": "缺少更新参数(title, archived, playbook 或 mode)"})
 
         with _locked_index(index_path):
             try:
@@ -716,6 +718,12 @@ def add_runs(app: FastAPI) -> None:
                         return JSONResponse(status_code=400, content={"status": "error", "error": "标题不能为空"})
                     target["title"] = title_str
 
+                if new_playbook is not None:
+                    target["playbook"] = str(new_playbook).strip()
+
+                if new_mode is not None:
+                    target["mode"] = str(new_mode).strip()
+
                 if archived is not None:
                     is_archived = bool(archived)
                     target["archived"] = is_archived
@@ -726,6 +734,7 @@ def add_runs(app: FastAPI) -> None:
                         target.pop("archived_at", None)
 
                 _atomic_write_json(index_path, data)
+                return JSONResponse(content={"status": "success", "session": target})
             except Exception as exc:
                 return JSONResponse(status_code=500, content={"status": "error", "error": f"更新会话失败: {exc}"})
         return JSONResponse(

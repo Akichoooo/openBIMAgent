@@ -42,7 +42,9 @@ import { toast } from "sonner"
 interface HeaderProps {
   activeSessionTitle?: string
   currentPlaybook?: string | null
+  currentMode?: string | null
   onDisciplineChange?: (playbook: string) => void
+  onModeChange?: (mode: string) => void
   viewMode: "3d" | "plan" | "prof" | "trace"
   onViewModeChange: (mode: "3d" | "plan" | "prof" | "trace") => void
   onOpenSettings: (tab?: string) => void
@@ -73,7 +75,9 @@ const DISCIPLINE_MAP: Record<string, { label: string; code: string }> = {
 export const Header: React.FC<HeaderProps> = ({
   activeSessionTitle = "未选择会话",
   currentPlaybook,
+  currentMode,
   onDisciplineChange,
+  onModeChange,
   viewMode,
   onViewModeChange,
   onOpenSettings,
@@ -97,6 +101,8 @@ export const Header: React.FC<HeaderProps> = ({
   const [confirmHost, setConfirmHost] = useState<"blender" | "vectorworks" | null>(null)
   const [toolsetPreset, setToolsetPreset] = useState<string>("modeling")
   const [currentModel, setCurrentModel] = useState<string>("")
+
+  const activeMode = currentMode || toolsetPreset || "full"
 
   React.useEffect(() => {
     const refreshToolset = () => {
@@ -230,20 +236,20 @@ export const Header: React.FC<HeaderProps> = ({
               className="flex items-center space-x-1 hover:text-foreground transition-colors cursor-pointer outline-none text-[11px]"
               title="切换当前工作交互模式 (Ask / Plan / Build)"
             >
-              {toolsetPreset === "minimal" ? (
+              {activeMode === "minimal" ? (
                 <>
                   <MessageSquare className="h-3 w-3 text-sky-500" />
                   <span className="text-sky-600 dark:text-sky-400">Ask 答疑</span>
                 </>
-              ) : toolsetPreset === "full" ? (
-                <>
-                  <Hammer className="h-3 w-3 text-amber-500" />
-                  <span className="text-amber-600 dark:text-amber-400">Build 建模</span>
-                </>
-              ) : (
+              ) : activeMode === "modeling" ? (
                 <>
                   <Compass className="h-3 w-3 text-violet-500" />
                   <span className="text-violet-600 dark:text-violet-400">Plan 规划</span>
+                </>
+              ) : (
+                <>
+                  <Hammer className="h-3 w-3 text-amber-500" />
+                  <span className="text-amber-600 dark:text-amber-400">Build 建模</span>
                 </>
               )}
               <ChevronDown className="h-2.5 w-2.5 text-muted-foreground/60 ml-0.5" />
@@ -256,8 +262,9 @@ export const Header: React.FC<HeaderProps> = ({
             <DropdownMenuItem
               onClick={() => {
                 setToolsetPreset("minimal")
+                onModeChange?.("minimal")
                 api.setToolset("minimal").then(() => {
-                  window.dispatchEvent(new CustomEvent("wb-toolset-change"))
+                  window.dispatchEvent(new CustomEvent("wb-toolset-change", { detail: { preset: "minimal" } }))
                 }).catch(() => {})
                 toast.success("已切换为 Ask 方案答疑模式 (只读安全)")
               }}
@@ -272,8 +279,9 @@ export const Header: React.FC<HeaderProps> = ({
             <DropdownMenuItem
               onClick={() => {
                 setToolsetPreset("modeling")
+                onModeChange?.("modeling")
                 api.setToolset("modeling").then(() => {
-                  window.dispatchEvent(new CustomEvent("wb-toolset-change"))
+                  window.dispatchEvent(new CustomEvent("wb-toolset-change", { detail: { preset: "modeling" } }))
                 }).catch(() => {})
                 toast.success("已切换为 Plan 规划推演模式 (推荐)")
               }}
@@ -288,8 +296,9 @@ export const Header: React.FC<HeaderProps> = ({
             <DropdownMenuItem
               onClick={() => {
                 setToolsetPreset("full")
+                onModeChange?.("full")
                 api.setToolset("full").then(() => {
-                  window.dispatchEvent(new CustomEvent("wb-toolset-change"))
+                  window.dispatchEvent(new CustomEvent("wb-toolset-change", { detail: { preset: "full" } }))
                 }).catch(() => {})
                 toast.success("已切换为 Build 直接建模模式 (敏捷自愈)")
               }}
