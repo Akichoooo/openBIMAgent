@@ -223,12 +223,15 @@ export default function App() {
   }, [currentSessionId, refreshTrigger])
 
   // 创建纯净空白新对话（对标 Cursor/Codex：不跑 batch pipeline，不塞假圆柱）
-  const handleNewChat = async () => {
+  const handleNewChat = async (playbook?: string) => {
     try {
       const ws = await api.listWorkspaces().catch(() => ({ current: null }))
+      const targetPlaybook = (typeof playbook === "string" && playbook)
+        ? playbook
+        : (currentSession?.playbook || "municipal_utility")
       const newSess = await api.createSession({
         title: "新工程对话",
-        playbook: currentSession?.playbook || "municipal_utility",
+        playbook: targetPlaybook,
         workspace: ws.current || undefined,
       })
       setCurrentSessionId(newSess.session_id)
@@ -406,6 +409,7 @@ export default function App() {
             isDark={isDark}
             onToggleTheme={toggleTheme}
             width={sidebarWidth}
+            runningSessionId={agentStatus.running ? currentSessionId : null}
           />
         </div>
 

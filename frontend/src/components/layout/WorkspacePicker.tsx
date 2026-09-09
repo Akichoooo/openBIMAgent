@@ -15,14 +15,12 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import {
   Folder,
   ChevronDown,
   Check,
   X,
-  MessageSquareOff,
   Search,
   FolderPlus,
   Loader2,
@@ -238,22 +236,6 @@ export const WorkspacePicker: React.FC<WorkspacePickerProps> = ({ onChanged, onW
               )}
             </div>
           </ScrollArea>
-
-          <Separator />
-
-          {/* 操作行 */}
-          <div className="p-1">
-            <button
-              onClick={() => handleSelect(null)}
-              className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
-            >
-              <div className="flex items-center space-x-2">
-                <MessageSquareOff className="h-4 w-4" />
-                <span>不在项目中工作 (独立会话)</span>
-              </div>
-              {current === null && <Check className="h-3.5 w-3.5 text-emerald-500" />}
-            </button>
-          </div>
         </PopoverContent>
       </Popover>
 

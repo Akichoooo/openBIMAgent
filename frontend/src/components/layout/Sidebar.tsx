@@ -43,12 +43,13 @@ interface SidebarProps {
   onSelectSession: (sessionId: string) => void
   onOpenSettings: (tab?: string) => void
   onOpenNewTask: () => void
-  onNewChat?: () => void
+  onNewChat?: (playbook?: string) => void
   refreshTrigger?: number
   isDark?: boolean
   onToggleTheme?: () => void
   width?: number
   style?: React.CSSProperties
+  runningSessionId?: string | null
 }
 
 export function getSessionTitle(s?: SessionItem | null): string {
@@ -101,11 +102,64 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onToggleTheme,
   width,
   style,
+  runningSessionId,
 }) => {
   const [sessions, setSessions] = useState<SessionItem[]>([])
   const [loading, setLoading] = useState(false)
   const [pinnedIds, setPinnedIds] = useState<string[]>([])
   const [currentWorkspaceId, setCurrentWorkspaceId] = useState<string | null>(null)
+
+  // 折叠目录状态 (对齐图二: 点击目录折叠/展开)
+  const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem("openbim_collapsed_folders")
+      return saved ? JSON.parse(saved) : {}
+    } catch {
+      return {}
+    }
+  })
+
+  const toggleFolderCollapse = (key: string) => {
+    setCollapsedFolders((prev) => {
+      const next = { ...prev, [key]: !prev[key] }
+      try {
+        localStorage.setItem("openbim_collapsed_folders", JSON.stringify(next))
+      } catch {}
+      return next
+    })
+  }
+
+  // 自定义目录显示名称 (对齐图三: 目录编辑功能)
+  const [customFolderLabels, setCustomFolderLabels] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem("openbim_folder_labels")
+      return saved ? JSON.parse(saved) : {}
+    } catch {
+      return {}
+    }
+  })
+
+  // 目录编辑弹窗状态
+  const [folderEditDialogOpen, setFolderEditDialogOpen] = useState(false)
+  const [editingFolderKey, setEditingFolderKey] = useState<string | null>(null)
+  const [editingFolderTitle, setEditingFolderTitle] = useState("")
+
+  const handleOpenEditFolder = (key: string, currentTitle: string) => {
+    setEditingFolderKey(key)
+    setEditingFolderTitle(currentTitle)
+    setFolderEditDialogOpen(true)
+  }
+
+  const handleSaveEditFolder = () => {
+    if (!editingFolderKey || !editingFolderTitle.trim()) return
+    const next = { ...customFolderLabels, [editingFolderKey]: editingFolderTitle.trim() }
+    setCustomFolderLabels(next)
+    try {
+      localStorage.setItem("openbim_folder_labels", JSON.stringify(next))
+    } catch {}
+    setFolderEditDialogOpen(false)
+    toast.success("已更新目录名称")
+  }
 
   // Rename Dialog
   const [renameDialogOpen, setRenameDialogOpen] = useState(false)
@@ -257,7 +311,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <WorkspacePicker onWorkspaceCreated={() => onNewChat?.()} />
         </div>
         <button
-          onClick={onNewChat || onOpenNewTask}
+          onClick={() => (onNewChat ? onNewChat() : onOpenNewTask())}
           className="shrink-0 h-9 w-9 flex items-center justify-center rounded-xl bg-violet-600 hover:bg-violet-700 active:scale-95 text-white shadow-xs transition-all cursor-pointer group"
           title="新建对话 (⌘K)"
           aria-label="新建对话"
@@ -297,47 +351,98 @@ export const Sidebar: React.FC<SidebarProps> = ({
         ) : (
           Object.entries(groupedSessions).map(([folderKey, folderSessions]) => {
             const sorted = sortSessions(folderSessions)
-            const folderLabel = PLAYBOOK_LABELS[folderKey] || folderKey
+            const folderLabel = customFolderLabels[folderKey] || PLAYBOOK_LABELS[folderKey] || folderKey
+            const isCollapsed = !!collapsedFolders[folderKey]
 
             return (
               <div key={folderKey} className="space-y-1">
-                {/* 文件夹分组标题（对齐图三：无展开折叠箭头，文件夹图标紧贴最左侧） */}
-                <div className="flex items-center justify-between px-1 py-1 text-xs font-semibold text-neutral-700 dark:text-neutral-200">
-                  <div className="flex items-center space-x-2 truncate">
+                {/* 文件夹分组标题（对齐图二/图三：点击折叠展开，支持三点菜单与新建会话） */}
+                <div
+                  onClick={() => toggleFolderCollapse(folderKey)}
+                  className="flex items-center justify-between px-1.5 py-1 text-xs font-semibold text-neutral-700 dark:text-neutral-200 cursor-pointer hover:bg-neutral-200/50 dark:hover:bg-neutral-800/50 rounded-lg transition-colors group/folder select-none"
+                >
+                  <div className="flex items-center space-x-1.5 truncate min-w-0 flex-1">
                     <Folder className="h-3.5 w-3.5 text-neutral-500 dark:text-neutral-400 shrink-0" />
                     <span className="truncate">{folderLabel}</span>
                   </div>
-                  <div className="flex items-center space-x-1 shrink-0 text-neutral-400">
-                    <span className="text-[10px] font-mono">{folderSessions.length}</span>
+                  <div
+                    className="flex items-center space-x-1 shrink-0 text-neutral-400"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {/* 目录操作下拉菜单 (对齐图三: 复制工程名称 / 工程设置 / 编辑目录) */}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button
+                          className="p-0.5 rounded opacity-70 group-hover/folder:opacity-100 hover:bg-neutral-200/70 dark:hover:bg-neutral-800 hover:text-neutral-800 dark:hover:text-neutral-100 transition-all cursor-pointer"
+                          title="目录操作"
+                        >
+                          <MoreVertical className="h-3 w-3" />
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-44 text-xs shadow-md">
+                        <DropdownMenuItem
+                          onClick={() => {
+                            navigator.clipboard?.writeText(folderLabel)
+                            toast.success("已复制工程名称: " + folderLabel)
+                          }}
+                          className="cursor-pointer"
+                        >
+                          <Copy className="h-3.5 w-3.5 mr-2 text-neutral-500" />
+                          复制工程名称
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => onOpenSettings?.("general")}
+                          className="cursor-pointer"
+                        >
+                          <Settings className="h-3.5 w-3.5 mr-2 text-neutral-500" />
+                          工程设置
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => handleOpenEditFolder(folderKey, folderLabel)}
+                          className="cursor-pointer"
+                        >
+                          <Edit2 className="h-3.5 w-3.5 mr-2 text-neutral-500" />
+                          编辑目录名称
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+
+                    {/* 新建任务 (+) */}
                     <button
                       onClick={(e) => {
                         e.stopPropagation()
-                        onOpenNewTask()
+                        if (onNewChat) {
+                          onNewChat(folderKey)
+                        } else {
+                          onOpenNewTask()
+                        }
                       }}
-                      className="p-0.5 rounded hover:bg-neutral-200/60 dark:hover:bg-neutral-800 hover:text-neutral-700 dark:hover:text-neutral-200 transition-colors"
-                      title="新建任务"
+                      className="p-0.5 rounded opacity-70 group-hover/folder:opacity-100 hover:bg-neutral-200/70 dark:hover:bg-neutral-800 hover:text-neutral-800 dark:hover:text-neutral-100 transition-all cursor-pointer"
+                      title="在此工程目录下新建对话"
                     >
                       <Plus className="h-3 w-3" />
                     </button>
                   </div>
                 </div>
 
-                {/* 会话行清单（对齐图三：在文件夹下方缩进，具备树形层级感） */}
-                <div className="space-y-1 ml-2.5 pl-2 border-l border-neutral-200/70 dark:border-neutral-800/70">
-                  {sorted.map((s) => {
-                    const isActive = currentSessionId === s.session_id
-                    const isPinned = pinnedIds.includes(s.session_id)
+                {/* 会话行清单（对齐图二：在文件夹下方缩进，具备树形层级感，支持折叠展开） */}
+                {!isCollapsed && (
+                  <div className="space-y-1 ml-2.5 pl-2 border-l border-neutral-200/70 dark:border-neutral-800/70">
+                    {sorted.map((s) => {
+                      const isActive = currentSessionId === s.session_id
+                      const isPinned = pinnedIds.includes(s.session_id)
+                      const isRunning = runningSessionId === s.session_id
 
-                    return (
-                      <div
-                        key={s.session_id}
-                        onClick={() => onSelectSession(s.session_id)}
-                        className={`group relative flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs cursor-pointer transition-all ${
-                          isActive
-                            ? "bg-neutral-200/80 dark:bg-neutral-800/80 text-neutral-900 dark:text-neutral-100 font-medium"
-                            : "text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100 hover:bg-neutral-100/80 dark:hover:bg-neutral-800/60"
-                        }`}
-                      >
+                      return (
+                        <div
+                          key={s.session_id}
+                          onClick={() => onSelectSession(s.session_id)}
+                          className={`group relative flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs cursor-pointer transition-all ${
+                            isActive
+                              ? "bg-neutral-200/80 dark:bg-neutral-800/80 text-neutral-900 dark:text-neutral-100 font-medium"
+                              : "text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100 hover:bg-neutral-100/80 dark:hover:bg-neutral-800/60"
+                          }`}
+                        >
                           {/* 会话名称与置顶徽标 */}
                           <div className="flex items-center space-x-1.5 min-w-0 flex-1 pr-12">
                             {isPinned && (
@@ -348,10 +453,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             </span>
                           </div>
 
-                          {/* 右侧相对时间 (对齐图二: 前天 / 刚刚) */}
-                          <span className="text-[10px] text-neutral-400 group-hover:opacity-0 transition-opacity shrink-0">
-                            {formatRelativeTime(s.last_active)}
-                          </span>
+                          {/* 右侧：正在运行状态 (带缺口旋转圆圈，对齐图二) 或 相对时间 (1h) */}
+                          {isRunning ? (
+                            <div className="flex items-center shrink-0 pr-0.5" title="正在执行任务...">
+                              <div className="h-3.5 w-3.5 rounded-full border-[1.5px] border-neutral-300 dark:border-neutral-600 border-t-neutral-800 dark:border-t-neutral-100 animate-spin" />
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-neutral-400 group-hover:opacity-0 transition-opacity shrink-0">
+                              {formatRelativeTime(s.last_active)}
+                            </span>
+                          )}
 
                           {/* 悬浮操作图标 (永久 flex 占位 + 柔和透明度显隐，彻底杜绝 display:none 导致关闭退出动画时回闪到左上角) */}
                           <div className={`absolute right-1 top-1/2 -translate-y-1/2 flex items-center space-x-0.5 bg-white/95 dark:bg-neutral-900/95 py-0.5 px-1 rounded-md shadow-xs border border-neutral-200/60 dark:border-neutral-800/60 transition-opacity duration-150 ${
@@ -444,6 +555,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       )
                     })}
                   </div>
+                )}
               </div>
             )
           })
@@ -478,7 +590,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         )}
       </div>
 
-      {/* 重命名弹窗 */}
+      {/* 重命名会话弹窗 */}
       <Dialog open={renameDialogOpen} onOpenChange={setRenameDialogOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -498,7 +610,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <Button variant="outline" size="sm" onClick={() => setRenameDialogOpen(false)}>
               取消
             </Button>
-            <Button size="sm" onClick={submitRename}>
+            <Button size="sm" onClick={submitRename} className="bg-violet-600 hover:bg-violet-700 text-white">
+              保存
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 编辑目录名称弹窗 (对齐图三) */}
+      <Dialog open={folderEditDialogOpen} onOpenChange={setFolderEditDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base">编辑目录名称</DialogTitle>
+          </DialogHeader>
+          <div className="py-2">
+            <Input
+              value={editingFolderTitle}
+              onChange={(e) => setEditingFolderTitle(e.target.value)}
+              placeholder="请输入目录显示名称"
+              className="text-xs"
+              autoFocus
+              onKeyDown={(e) => e.key === "Enter" && handleSaveEditFolder()}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setFolderEditDialogOpen(false)}>
+              取消
+            </Button>
+            <Button size="sm" onClick={handleSaveEditFolder} className="bg-violet-600 hover:bg-violet-700 text-white">
               保存
             </Button>
           </DialogFooter>
