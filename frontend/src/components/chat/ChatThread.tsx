@@ -44,12 +44,23 @@ import {
   Compass,
   Hammer,
   PackageCheck,
+  Folder,
+  Laptop,
+  Code2,
 } from "lucide-react"
 import { toast } from "sonner"
 import { ModelPicker, type ReasoningLevel } from "./ModelPicker"
 import { PlanSteps, parsePlanSteps } from "./PlanSteps"
 import { DiffView } from "./DiffView"
 import { ChatHeroWelcome } from "./ChatHeroWelcome"
+
+// 工程领域 Playbook 选项
+const PLAYBOOK_OPTIONS = [
+  { id: "municipal_utility", label: "市政给排水管网", desc: "重力流管网放样、标高碰撞自愈与管件布尔求交" },
+  { id: "single_asset_hero", label: "单体资产建模", desc: "高精度单体建筑、桥梁、塔架参数化几何生成" },
+  { id: "edo_cyberpunk_district", label: "Edo 街区规划", desc: "多地块建筑群拓扑生成与空间路网协同" },
+  { id: "general", label: "常规工程任务", desc: "通用参数化 CAD 脚本编写、图纸校验与审图答疑" },
+]
 
 // 斜杠命令:通用(agent 标配)+ 建模专用(匹配 BIM 需求)
 const SLASH_COMMANDS = [
@@ -225,6 +236,7 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
   const abortRef = useRef<AbortController | null>(null)
 
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const currentPlaybookObj = PLAYBOOK_OPTIONS.find((p) => p.id === playbook) || PLAYBOOK_OPTIONS[0]
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   // Load events
@@ -876,42 +888,13 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
             )}
           </div>
         ) : events.length === 0 ? (
-          <div className="py-2 flex-1 flex flex-col justify-center">
-            <ChatHeroWelcome
-              inputText={inputText}
-              setInputText={setInputText}
-              onSend={(prompt) => handleSendMessage(undefined, prompt)}
-              sending={sending}
-              runActive={runActive}
-              onStopRun={handleStopAll}
-              currentModel={currentModel}
-              onSelectModel={handleSelectModel}
-              availableModels={
-                (modelsData?.providers || []).flatMap((p) =>
-                  (p.models || []).map((m) => m.name || m.id)
-                ).filter(Boolean)
-              }
-              effort={effort}
-              onEffortChange={setEffort}
-              playbook={playbook || "municipal_utility"}
-              onPlaybookChange={(p) => {
-                if (sessionId) {
-                  api.forkSession(sessionId, p).then(() => {
-                    toast.success(`已切换场景模式: ${p}`)
-                  }).catch(() => {})
-                }
-              }}
-              onOpenSettings={onOpenSettings}
-              onAttachFile={(f) => {
-                const syntheticEvent = { target: { files: [f] } } as any
-                handleFileUpload(syntheticEvent)
-              }}
-              voiceOn={voiceOn}
-              onToggleVoice={toggleVoice}
-              toolsetPreset={toolsetPreset}
-              onToolsetPresetChange={handleToolsetPresetChange}
-              workspaceName={sessionTitle || "openBIMAgent"}
-            />
+          <div className="flex-1 flex flex-col items-center justify-center p-8 select-none my-auto">
+            <div className="w-12 h-12 rounded-2xl bg-neutral-100 dark:bg-neutral-800/60 border border-neutral-200/80 dark:border-neutral-700/60 flex items-center justify-center text-neutral-400 dark:text-neutral-500 shadow-2xs mb-4">
+              <Sparkles className="h-6 w-6 stroke-[1.4]" />
+            </div>
+            <h1 className="text-2xl font-bold tracking-tight text-neutral-900 dark:text-neutral-100 font-sans">
+              你想构建什么？
+            </h1>
           </div>
         ) : (
           <>
@@ -1235,9 +1218,8 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
         )}
       </div>
 
-      {/* 底部输入器 Composer (当已有会话消息时呈现底栏) */}
-      {events.length > 0 && (
-        <div className="p-3 border-t border-border/70 bg-background/50 space-y-2 shrink-0">
+      {/* 底部输入器 Composer (统一贴底对话框，对齐图二与图一环境条) */}
+      <div className="p-3 border-t border-border/70 bg-background/50 space-y-2 shrink-0">
         {/* Queued Messages 排队条 (对齐现代 Agent IDE 范式) */}
         {queuedMsgs.length > 0 && (
           <div className="rounded-xl border border-border/80 bg-background/95 backdrop-blur-md shadow-xs overflow-hidden transition-all text-xs">
@@ -1318,8 +1300,68 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
           </div>
         )}
 
-        <div className="relative rounded-xl border border-border/70 bg-card/60 focus-within:border-primary focus-within:ring-1 focus-within:ring-primary transition-all p-2 space-y-2 shadow-sm">
-          <textarea
+        <div className="relative rounded-2xl border border-border/70 bg-card/80 dark:bg-neutral-900/90 focus-within:border-primary/80 focus-within:ring-1 focus-within:ring-primary/40 transition-all shadow-sm overflow-hidden">
+          {/* 顶部环境与状态信息条 (严格 whitespace-nowrap 与 shrink-0, 杜绝文字竖向折行) */}
+          <div className="flex items-center space-x-2 px-3 py-1.5 bg-muted/40 border-b border-border/50 text-xs text-muted-foreground overflow-x-auto no-scrollbar whitespace-nowrap">
+            <div className="flex items-center space-x-1.5 font-mono shrink-0 whitespace-nowrap">
+              <Folder className="h-3.5 w-3.5 text-violet-500 shrink-0" />
+              <span className="font-medium text-foreground truncate max-w-[160px] whitespace-nowrap">
+                {sessionTitle || "openBIMAgent"}
+              </span>
+            </div>
+
+            <span className="text-border shrink-0">|</span>
+
+            <div className="flex items-center space-x-1 shrink-0 whitespace-nowrap">
+              <Laptop className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              <span className="whitespace-nowrap">本地</span>
+            </div>
+
+            <span className="text-border shrink-0">|</span>
+
+            <div className="flex items-center space-x-1 font-mono shrink-0 whitespace-nowrap">
+              <GitBranch className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              <span className="whitespace-nowrap">main</span>
+            </div>
+
+            <span className="text-border shrink-0">|</span>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="flex items-center space-x-1 text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300 cursor-pointer outline-none shrink-0 whitespace-nowrap">
+                  <Code2 className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate max-w-[130px] whitespace-nowrap">{currentPlaybookObj.label}</span>
+                  <ChevronDown className="h-2.5 w-2.5 ml-0.5 shrink-0" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-56 text-xs">
+                <div className="px-2 py-1 text-[10px] font-semibold text-muted-foreground">
+                  选择工程领域 Playbook
+                </div>
+                {PLAYBOOK_OPTIONS.map((p) => (
+                  <DropdownMenuItem
+                    key={p.id}
+                    onClick={() => {
+                      if (sessionId) {
+                        api.forkSession(sessionId, p.id).then(() => {
+                          toast.success(`已切换场景模式: ${p.label}`)
+                        }).catch(() => {})
+                      }
+                    }}
+                    className="cursor-pointer"
+                  >
+                    <div>
+                      <div className="font-medium">{p.label}</div>
+                      <div className="text-[10px] text-muted-foreground">{p.desc}</div>
+                    </div>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
+          <div className="p-2 space-y-2">
+            <textarea
             value={inputText}
             onChange={(e) => {
               const v = e.target.value
@@ -1549,9 +1591,9 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
               </div>
             </div>
           </div>
+          </div>
         </div>
       </div>
-      )}
     </div>
   )
 }
