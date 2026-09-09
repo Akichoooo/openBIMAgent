@@ -251,23 +251,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
       style={{ width: width ? `${width}px` : undefined, ...style }}
       className="shrink-0 border-r border-neutral-200/80 dark:border-neutral-800 bg-neutral-50/70 dark:bg-neutral-950/70 flex flex-col justify-between select-none h-full min-h-0 overflow-hidden"
     >
-      {/* 醒目的紫罗兰「+ 新建对话」胶囊按钮 (位于侧边栏顶部，去掉冗余 openBIMAgent 标头) */}
-      <div className="p-3 pb-2 shrink-0">
+      {/* 侧边栏顶部整合栏：工程文件夹切换 + 新建对话快捷入口 */}
+      <div className="p-2.5 pb-2 shrink-0 flex items-center gap-1.5">
+        <div className="flex-1 min-w-0">
+          <WorkspacePicker onWorkspaceCreated={() => onNewChat?.()} />
+        </div>
         <button
           onClick={onNewChat || onOpenNewTask}
-          className="w-full flex items-center justify-center space-x-1.5 py-2.5 px-3 rounded-xl bg-violet-50 hover:bg-violet-100/90 text-violet-700 dark:bg-violet-950/50 dark:hover:bg-violet-900/60 dark:text-violet-300 border border-violet-200/70 dark:border-violet-800/60 font-semibold text-xs shadow-xs transition-all cursor-pointer group"
+          className="shrink-0 h-9 w-9 flex items-center justify-center rounded-xl bg-violet-600 hover:bg-violet-700 active:scale-95 text-white shadow-xs transition-all cursor-pointer group"
+          title="新建对话 (⌘K)"
+          aria-label="新建对话"
         >
-          <Plus className="h-4 w-4 text-violet-600 dark:text-violet-400 stroke-[2.5]" />
-          <span>新建对话</span>
-          <kbd className="text-[9px] font-mono text-violet-500/80 dark:text-violet-400/70 ml-1 px-1 py-0.2 rounded bg-violet-100/70 dark:bg-violet-900/70">
-            ⌘K
-          </kbd>
+          <Plus className="h-4 w-4 stroke-[2.5] group-hover:rotate-90 transition-transform duration-200" />
         </button>
-      </div>
-
-      {/* 工作区选择器 */}
-      <div className="px-3 pb-2 shrink-0">
-        <WorkspacePicker />
       </div>
 
       {/* 任务列表分类条 (包含刷新按钮，对齐图三) */}
