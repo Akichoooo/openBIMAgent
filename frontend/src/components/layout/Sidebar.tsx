@@ -369,7 +369,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     className="flex items-center space-x-1 shrink-0 text-neutral-400"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    {/* 目录操作下拉菜单 (对齐图三: 复制工程名称 / 工程设置 / 编辑目录) */}
+                    {/* 目录操作下拉菜单 (对齐图二: 复制工程名称 / 目录设置，靠左对齐避免遮挡目录文本，打开图一工程目录设置) */}
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <button
@@ -379,30 +379,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           <MoreVertical className="h-3 w-3" />
                         </button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-44 text-xs shadow-md">
+                      <DropdownMenuContent align="start" sideOffset={4} className="w-36 min-w-[130px] text-xs shadow-md p-1">
                         <DropdownMenuItem
                           onClick={() => {
                             navigator.clipboard?.writeText(folderLabel)
                             toast.success("已复制工程名称: " + folderLabel)
                           }}
-                          className="cursor-pointer"
+                          className="cursor-pointer py-1.5"
                         >
                           <Copy className="h-3.5 w-3.5 mr-2 text-neutral-500" />
                           复制工程名称
                         </DropdownMenuItem>
                         <DropdownMenuItem
-                          onClick={() => onOpenSettings?.("general")}
-                          className="cursor-pointer"
+                          onClick={() => onOpenSettings?.("workspace")}
+                          className="cursor-pointer py-1.5"
                         >
                           <Settings className="h-3.5 w-3.5 mr-2 text-neutral-500" />
-                          工程设置
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() => handleOpenEditFolder(folderKey, folderLabel)}
-                          className="cursor-pointer"
-                        >
-                          <Edit2 className="h-3.5 w-3.5 mr-2 text-neutral-500" />
-                          编辑目录名称
+                          目录设置
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>

@@ -110,25 +110,34 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
   const [workspaces, setWorkspaces] = useState<WorkspaceItem[]>([])
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null)
 
-  React.useEffect(() => {
-    if (initialTab && open) {
-      setActiveTab(initialTab as TabKey)
-      setSelectedWorkspaceId(null)
-    }
-  }, [initialTab, open])
-
   const loadWorkspaces = async () => {
     try {
       const res = await api.listWorkspaces()
-      setWorkspaces(res.items || [])
+      const items = res.items || []
+      setWorkspaces(items)
+      return { current: res.current, items }
     } catch (e) {
       console.error(e)
+      return { current: null, items: [] }
     }
   }
 
   React.useEffect(() => {
-    if (open) loadWorkspaces()
-  }, [open])
+    if (open) {
+      loadWorkspaces().then(({ current, items }) => {
+        if (initialTab && (initialTab === "workspace" || initialTab === "project" || initialTab.startsWith("workspace:"))) {
+          const parts = initialTab.split(":")
+          const targetId = parts[1] || current || items[0]?.id
+          if (targetId) {
+            setSelectedWorkspaceId(targetId)
+          }
+        } else if (initialTab) {
+          setActiveTab(initialTab as TabKey)
+          setSelectedWorkspaceId(null)
+        }
+      })
+    }
+  }, [initialTab, open])
 
   const renderContent = () => {
     if (selectedWorkspaceId) {
