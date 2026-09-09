@@ -17,7 +17,9 @@ import {
 } from "@/components/ui/dropdown-menu"
 import {
   Boxes,
+  Box,
   Layers,
+  PackageCheck,
   Download,
   Settings,
   Moon,
@@ -184,13 +186,10 @@ export const Header: React.FC<HeaderProps> = ({
     <header className="h-12 border-b border-border/70 bg-background/80 backdrop-blur-md px-3.5 flex items-center justify-between shrink-0 select-none z-20">
       {/* 左侧：Logo 与会话面包屑 */}
       <div className="flex items-center space-x-3 min-w-0">
-        <div className="flex items-center space-x-2">
-          <div className="w-7 h-7 rounded-lg bg-primary text-primary-foreground flex items-center justify-center font-bold text-xs shadow-sm">
-            <Boxes className="h-4 w-4" />
-          </div>
-          <span className="font-semibold text-sm tracking-tight text-foreground hidden sm:inline">
-            openBIMAgent
-          </span>
+        <div className="flex items-baseline select-none cursor-pointer tracking-tight">
+          <span className="text-sm font-normal text-muted-foreground/80 font-sans">open</span>
+          <span className="text-sm font-extrabold text-foreground font-sans tracking-tight">BIM</span>
+          <span className="text-sm font-semibold text-foreground/90 font-sans ml-1">Agent</span>
         </div>
 
         <div className="h-4 w-[1px] bg-border/80" />
@@ -357,6 +356,86 @@ export const Header: React.FC<HeaderProps> = ({
                 </DropdownMenuItem>
               )
             })}
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <span className="w-px h-2.5 bg-neutral-300 dark:bg-neutral-700" />
+
+        {/* 真实 CAD 高精度导出 (含前置健康探活门禁) */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              className="flex items-center space-x-1 text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300 transition-colors cursor-pointer outline-none text-[11px]"
+              title="导出当前已收敛几何到本地高精度 CAD 宿主软件"
+            >
+              <PackageCheck className="h-3 w-3 shrink-0" />
+              <span>导出 CAD</span>
+              <ChevronDown className="h-2.5 w-2.5 text-muted-foreground/60 ml-0.5" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-60 p-1 text-xs">
+            <div className="px-2 py-1 text-[10px] font-semibold text-muted-foreground flex items-center justify-between">
+              <span>高精度 CAD 实体导出</span>
+              <span className="text-[9px] text-muted-foreground/80 font-mono">前置连通检测</span>
+            </div>
+            <DropdownMenuItem
+              onClick={async () => {
+                const toastId = toast.loading("正在检测 Blender MCP (127.0.0.1:9876) 连通性...")
+                try {
+                  const hosts = await api.listHosts()
+                  const blender = hosts.find((h) => h.id === "blender")
+                  if (!blender || blender.status !== "up") {
+                    toast.error("Blender MCP (127.0.0.1:9876) 未连接：请先在本地启动 Blender 5.2 并开启 Blender-MCP 插件后再执行导出", { id: toastId, duration: 4500 })
+                    return
+                  }
+                  toast.loading("Blender 已就绪，正在执行高精度几何装配与导出...", { id: toastId })
+                  const res = await api.exportCad("blender")
+                  if (res && res.status === "success") {
+                    toast.success("已成功导出至 Blender 5.2 宿主环境", { id: toastId })
+                  } else {
+                    toast.error(`导出失败: ${res?.error || "未知错误"}`, { id: toastId })
+                  }
+                } catch (e: any) {
+                  toast.error(`检测或导出异常: ${e.message}`, { id: toastId })
+                }
+              }}
+              className="gap-2 cursor-pointer"
+            >
+              <Box className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+              <div>
+                <div className="font-medium">Blender (blender-mcp)</div>
+                <div className="text-[10px] text-muted-foreground">三维几何装配 · 光追渲染通道</div>
+              </div>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={async () => {
+                const toastId = toast.loading("正在检测 Vectorworks 宿主连通性...")
+                try {
+                  const hosts = await api.listHosts()
+                  const vw = hosts.find((h: any) => h.id === "vectorworks")
+                  if (vw && vw.status === "down") {
+                    toast.error("Vectorworks 宿主未就绪：请先启动 Vectorworks 并配置 runner jobs 目录", { id: toastId, duration: 4500 })
+                    return
+                  }
+                  toast.loading("正在执行 Vectorworks 高精度实体导出...", { id: toastId })
+                  const res = await api.exportCad("vectorworks")
+                  if (res && res.status === "success") {
+                    toast.success("已成功导出至 Vectorworks 实体工程", { id: toastId })
+                  } else {
+                    toast.error(`Vectorworks 导出失败: ${res?.error || "宿主无响应"}`, { id: toastId })
+                  }
+                } catch (e: any) {
+                  toast.error(`检测或导出异常: ${e.message}`, { id: toastId })
+                }
+              }}
+              className="gap-2 cursor-pointer"
+            >
+              <Layers className="h-3.5 w-3.5 text-sky-500 shrink-0" />
+              <div>
+                <div className="font-medium">Vectorworks (VW)</div>
+                <div className="text-[10px] text-muted-foreground">BIM 实体构件 · 平立剖施工图</div>
+              </div>
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

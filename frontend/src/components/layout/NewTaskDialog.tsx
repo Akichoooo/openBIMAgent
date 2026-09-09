@@ -142,7 +142,11 @@ export const NewTaskDialog: React.FC<NewTaskDialogProps> = ({
                 </SelectItem>
                 {workspaces.map((w) => (
                   <SelectItem key={w.id} value={w.id} className="text-xs">
-                    📁 {w.name} ({w.path})
+                    <span className="flex items-center gap-1.5">
+                      <Folder className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                      <span>{w.name}</span>
+                      <span className="text-muted-foreground">({w.path})</span>
+                    </span>
                   </SelectItem>
                 ))}
                 <SelectItem value="custom" className="text-xs text-primary font-medium">
