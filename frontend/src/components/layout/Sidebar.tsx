@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react"
-import { api, SessionItem } from "@/services/api"
+import React, { useState, useEffect, useMemo } from "react"
+import { api, SessionItem, WorkspaceItem } from "@/services/api"
 import { WorkspacePicker } from "./WorkspacePicker"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -43,7 +43,7 @@ interface SidebarProps {
   onSelectSession: (sessionId: string) => void
   onOpenSettings: (tab?: string) => void
   onOpenNewTask: () => void
-  onNewChat?: (playbook?: string) => void
+  onNewChat?: (workspaceOrPlaybook?: string) => void
   refreshTrigger?: number
   isDark?: boolean
   onToggleTheme?: () => void
@@ -84,13 +84,6 @@ function formatRelativeTime(dateStr?: string): string {
   return new Date(dateStr).toLocaleDateString()
 }
 
-const PLAYBOOK_LABELS: Record<string, string> = {
-  municipal_utility: "市政给排水管网",
-  single_asset_hero: "单体资产建模",
-  edo_cyberpunk_district: "Edo 街区规划",
-  general: "常规任务",
-}
-
 export const Sidebar: React.FC<SidebarProps> = ({
   currentSessionId,
   onSelectSession,
@@ -108,6 +101,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [loading, setLoading] = useState(false)
   const [pinnedIds, setPinnedIds] = useState<string[]>([])
   const [currentWorkspaceId, setCurrentWorkspaceId] = useState<string | null>(null)
+  const [workspaces, setWorkspaces] = useState<WorkspaceItem[]>([])
 
   // 折叠目录状态 (对齐图二: 点击目录折叠/展开)
   const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>(() => {
@@ -193,6 +187,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     try {
       const res = await api.listWorkspaces()
       setCurrentWorkspaceId(res.current)
+      setWorkspaces(res.items || [])
     } catch {}
   }
 
@@ -276,19 +271,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   }
 
-  // 按当前工作区过滤（「不在项目中工作」时仅显示无归属会话）
-  const visibleSessions = sessions.filter((s) =>
-    currentWorkspaceId ? s.workspace === currentWorkspaceId : !s.workspace
-  )
-
-  // Group sessions by playbook
-  const groupedSessions = visibleSessions.reduce<Record<string, SessionItem[]>>((acc, session) => {
-    const key = session.playbook || "general"
-    if (!acc[key]) acc[key] = []
-    acc[key].push(session)
-    return acc
-  }, {})
-
   // Sort: pinned first
   const sortSessions = (list: SessionItem[]) => {
     return [...list].sort((a, b) => {
@@ -299,6 +281,64 @@ export const Sidebar: React.FC<SidebarProps> = ({
       return new Date(b.last_active || 0).getTime() - new Date(a.last_active || 0).getTime()
     })
   }
+
+  // 以真实工程文件夹 (Workspace) 严谨组织目录分组，严格使用真实工程文件夹名称，绝不以规范领域 (Playbook) 命名
+  interface FolderGroup {
+    id: string
+    name: string
+    path?: string
+    sessions: SessionItem[]
+  }
+
+  const folderGroups = useMemo<FolderGroup[]>(() => {
+    if (workspaces.length === 0) {
+      return [
+        {
+          id: currentWorkspaceId || "default",
+          name: "openBIMAgent",
+          sessions: sortSessions(sessions),
+        },
+      ]
+    }
+
+    const wsMap = new Map<string, FolderGroup>()
+    workspaces.forEach((ws) => {
+      wsMap.set(ws.id, {
+        id: ws.id,
+        name: ws.name,
+        path: ws.path,
+        sessions: [],
+      })
+    })
+
+    const unassigned: SessionItem[] = []
+    sessions.forEach((s) => {
+      if (s.workspace && wsMap.has(s.workspace)) {
+        wsMap.get(s.workspace)!.sessions.push(s)
+      } else if (currentWorkspaceId && wsMap.has(currentWorkspaceId)) {
+        wsMap.get(currentWorkspaceId)!.sessions.push(s)
+      } else if (workspaces.length > 0) {
+        wsMap.get(workspaces[0].id)!.sessions.push(s)
+      } else {
+        unassigned.push(s)
+      }
+    })
+
+    const result: FolderGroup[] = Array.from(wsMap.values()).map((g) => ({
+      ...g,
+      sessions: sortSessions(g.sessions),
+    }))
+
+    if (unassigned.length > 0) {
+      result.push({
+        id: "unassigned",
+        name: "其他工程会话",
+        sessions: sortSessions(unassigned),
+      })
+    }
+
+    return result
+  }, [workspaces, sessions, currentWorkspaceId, pinnedIds])
 
   return (
     <aside
@@ -324,7 +364,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="px-3 pt-1 pb-1 flex items-center justify-between text-[11px] font-semibold text-neutral-500 dark:text-neutral-400 shrink-0">
         <div className="flex items-center space-x-1.5">
           <span>任务</span>
-          <span className="font-mono text-[10px] text-neutral-400">({visibleSessions.length})</span>
+          <span className="font-mono text-[10px] text-neutral-400">({sessions.length})</span>
         </div>
         <button
           onClick={() => {
@@ -343,27 +383,36 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="flex-1 overflow-y-auto overflow-x-hidden p-2 space-y-3 min-h-0">
         {loading && sessions.length === 0 ? (
           <div className="py-6 text-center text-xs text-neutral-400">正在同步会话...</div>
-        ) : visibleSessions.length === 0 ? (
+        ) : folderGroups.length === 0 ? (
           <div className="py-8 text-center text-xs text-neutral-400">
             <MessageSquare className="h-6 w-6 mx-auto mb-2 text-neutral-300 dark:text-neutral-600" />
-            <p>{currentWorkspaceId ? "当前项目暂无会话" : "暂无活跃工程会话"}</p>
+            <p>暂无活跃工程会话</p>
           </div>
         ) : (
-          Object.entries(groupedSessions).map(([folderKey, folderSessions]) => {
-            const sorted = sortSessions(folderSessions)
-            const folderLabel = customFolderLabels[folderKey] || PLAYBOOK_LABELS[folderKey] || folderKey
-            const isCollapsed = !!collapsedFolders[folderKey]
+          folderGroups.map((group) => {
+            const folderLabel = customFolderLabels[group.id] || group.name
+            const isCollapsed = !!collapsedFolders[group.id]
+            const isCurrentWs = currentWorkspaceId === group.id
 
             return (
-              <div key={folderKey} className="space-y-1">
+              <div key={group.id} className="space-y-1">
                 {/* 文件夹分组标题（对齐图二/图三：点击折叠展开，支持三点菜单与新建会话） */}
                 <div
-                  onClick={() => toggleFolderCollapse(folderKey)}
-                  className="flex items-center justify-between px-1.5 py-1 text-xs font-semibold text-neutral-700 dark:text-neutral-200 cursor-pointer hover:bg-neutral-200/50 dark:hover:bg-neutral-800/50 rounded-lg transition-colors group/folder select-none"
+                  onClick={() => toggleFolderCollapse(group.id)}
+                  className={`flex items-center justify-between px-1.5 py-1 text-xs font-semibold rounded-lg transition-colors group/folder select-none cursor-pointer ${
+                    isCurrentWs
+                      ? "text-neutral-900 dark:text-neutral-100 bg-neutral-200/50 dark:bg-neutral-800/50"
+                      : "text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200/40 dark:hover:bg-neutral-800/40"
+                  }`}
                 >
                   <div className="flex items-center space-x-1.5 truncate min-w-0 flex-1">
-                    <Folder className="h-3.5 w-3.5 text-neutral-500 dark:text-neutral-400 shrink-0" />
+                    <Folder className={`h-3.5 w-3.5 shrink-0 ${isCurrentWs ? "text-violet-600 dark:text-violet-400" : "text-neutral-500 dark:text-neutral-400"}`} />
                     <span className="truncate">{folderLabel}</span>
+                    {group.sessions.length > 0 && (
+                      <span className="text-[10px] text-neutral-400 dark:text-neutral-500 font-mono shrink-0 ml-1">
+                        {group.sessions.length}
+                      </span>
+                    )}
                   </div>
                   <div
                     className="flex items-center space-x-1 shrink-0 text-neutral-400"
@@ -391,7 +440,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           复制工程名称
                         </DropdownMenuItem>
                         <DropdownMenuItem
-                          onClick={() => onOpenSettings?.("workspace")}
+                          onClick={() => {
+                            const tabParam = group.id && group.id !== "default" && group.id !== "unassigned" ? `workspace:${group.id}` : "workspace"
+                            onOpenSettings?.(tabParam)
+                          }}
                           className="cursor-pointer py-1.5"
                         >
                           <Settings className="h-3.5 w-3.5 mr-2 text-neutral-500" />
@@ -405,13 +457,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       onClick={(e) => {
                         e.stopPropagation()
                         if (onNewChat) {
-                          onNewChat(folderKey)
+                          onNewChat(group.id)
                         } else {
                           onOpenNewTask()
                         }
                       }}
                       className="p-0.5 rounded opacity-70 group-hover/folder:opacity-100 hover:bg-neutral-200/70 dark:hover:bg-neutral-800 hover:text-neutral-800 dark:hover:text-neutral-100 transition-all cursor-pointer"
-                      title="在此工程目录下新建对话"
+                      title={`在「${folderLabel}」工程目录下新建对话`}
                     >
                       <Plus className="h-3 w-3" />
                     </button>
@@ -421,7 +473,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 {/* 会话行清单（对齐图二：在文件夹下方缩进，具备树形层级感，支持折叠展开） */}
                 {!isCollapsed && (
                   <div className="space-y-1 ml-2.5 pl-2 border-l border-neutral-200/70 dark:border-neutral-800/70">
-                    {sorted.map((s) => {
+                    {group.sessions.length === 0 ? (
+                      <div className="py-1 px-2 text-[11px] text-neutral-400 dark:text-neutral-500 italic">
+                        暂无会话
+                      </div>
+                    ) : (
+                      group.sessions.map((s) => {
                       const isActive = currentSessionId === s.session_id
                       const isPinned = pinnedIds.includes(s.session_id)
                       const isRunning = runningSessionId === s.session_id
@@ -546,7 +603,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           </div>
                         </div>
                       )
-                    })}
+                    })
+                  )}
                   </div>
                 )}
               </div>

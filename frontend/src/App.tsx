@@ -222,17 +222,34 @@ export default function App() {
     })
   }, [currentSessionId, refreshTrigger])
 
-  // 创建纯净空白新对话（对标 Cursor/Codex：不跑 batch pipeline，不塞假圆柱）
-  const handleNewChat = async (playbook?: string) => {
+  // 创建纯净空白新对话（支持指定 workspace 或 playbook）
+  const handleNewChat = async (param?: string | { playbook?: string; workspace?: string }) => {
     try {
-      const ws = await api.listWorkspaces().catch(() => ({ current: null }))
-      const targetPlaybook = (typeof playbook === "string" && playbook)
-        ? playbook
-        : (currentSession?.playbook || "municipal_utility")
+      const ws = await api.listWorkspaces().catch(() => ({ current: null, items: [] }))
+      let targetPlaybook = currentSession?.playbook || "municipal_utility"
+      let targetWorkspace = ws.current || undefined
+
+      if (typeof param === "string") {
+        const isKnownWs = ws.items?.some((it) => it.id === param)
+        if (isKnownWs || param.startsWith("ws-") || param === "default") {
+          targetWorkspace = param === "default" ? (ws.current || undefined) : param
+        } else {
+          targetPlaybook = param
+        }
+      } else if (param && typeof param === "object") {
+        if (param.playbook) targetPlaybook = param.playbook
+        if (param.workspace) targetWorkspace = param.workspace
+      }
+
+      if (targetWorkspace && ws.current !== targetWorkspace) {
+        await api.setCurrentWorkspace(targetWorkspace).catch(() => {})
+        window.dispatchEvent(new CustomEvent("workspace-changed"))
+      }
+
       const newSess = await api.createSession({
         title: "新工程对话",
         playbook: targetPlaybook,
-        workspace: ws.current || undefined,
+        workspace: targetWorkspace,
       })
       setCurrentSessionId(newSess.session_id)
       setCurrentSession({
@@ -308,8 +325,22 @@ export default function App() {
     return () => window.removeEventListener("workspace-changed", handler)
   }, [currentSessionId])
 
-  const handleSelectSession = (sessionId: string) => {
+  const handleSelectSession = async (sessionId: string) => {
     setCurrentSessionId(sessionId)
+    try {
+      const list = await api.listSessions()
+      const found = list.find((s) => s.session_id === sessionId)
+      if (found) {
+        setCurrentSession(found)
+        if (found.workspace) {
+          const ws = await api.listWorkspaces().catch(() => ({ current: null, items: [] }))
+          if (ws.current !== found.workspace) {
+            await api.setCurrentWorkspace(found.workspace).catch(() => {})
+            window.dispatchEvent(new CustomEvent("workspace-changed"))
+          }
+        }
+      }
+    } catch {}
   }
 
   const handleTaskStarted = (sessionId: string) => {
