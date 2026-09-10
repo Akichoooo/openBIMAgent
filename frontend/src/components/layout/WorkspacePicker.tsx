@@ -47,8 +47,16 @@ export const WorkspacePicker: React.FC<WorkspacePickerProps> = ({ onChanged, onW
   const load = async () => {
     try {
       const res = await api.listWorkspaces()
-      setCurrent(res.current)
-      setItems(res.items)
+      const list = res.items || []
+      setItems(list)
+      if (res.current) {
+        setCurrent(res.current)
+      } else if (list.length > 0) {
+        setCurrent(list[0].id)
+        api.setCurrentWorkspace(list[0].id).catch(() => {})
+      } else {
+        setCurrent(null)
+      }
     } catch (e) {
       console.error(e)
     }
@@ -136,8 +144,12 @@ export const WorkspacePicker: React.FC<WorkspacePickerProps> = ({ onChanged, onW
 
   const handleRemove = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation()
+    const target = items.find((it) => it.id === id)
+    if (!confirm(`确定从工程列表移除「${target?.name || id}」吗？（不会删除本地磁盘实际文件）`)) return
     try {
       await api.deleteWorkspace(id)
+      toast.success("已从列表移除工程: " + (target?.name || id))
+      notifyChanged()
       await load()
     } catch (err: any) {
       toast.error("移除失败: " + err.message)
@@ -151,7 +163,7 @@ export const WorkspacePicker: React.FC<WorkspacePickerProps> = ({ onChanged, onW
       it.path.toLowerCase().includes(filter.trim().toLowerCase())
   )
 
-  const currentItem = items.find((it) => it.id === current)
+  const currentItem = items.find((it) => it.id === current) || items[0]
 
   return (
     <>
@@ -163,7 +175,7 @@ export const WorkspacePicker: React.FC<WorkspacePickerProps> = ({ onChanged, onW
           >
             <div className="flex items-center space-x-2 min-w-0">
               <Folder className="h-4 w-4 text-violet-600 dark:text-violet-400 shrink-0" />
-              <span className="truncate">{currentItem ? currentItem.name : "选择工程项目"}</span>
+              <span className="truncate">{currentItem ? currentItem.name : "openBIMAgent"}</span>
             </div>
             <ChevronDown className="h-3.5 w-3.5 text-neutral-400 shrink-0 ml-1" />
           </button>

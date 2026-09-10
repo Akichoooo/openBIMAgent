@@ -117,13 +117,22 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({
   }
 
   const handleRemoveFolder = async (index: number) => {
-    if (folders.length <= 1) {
-      toast.error("项目至少需要保留一个目录")
-      return
-    }
     const updated = folders.filter((_, i) => i !== index)
     setFolders(updated)
     await saveChanges({ folders: updated })
+    toast.success("已移除关联目录")
+  }
+
+  const handleDeleteWorkspace = async () => {
+    if (!confirm(`确定从工程工作区列表移除「${workspace.name}」吗？（不会删除磁盘实际文件）`)) return
+    try {
+      await api.deleteWorkspace(workspace.id)
+      toast.success(`已移除工程: ${workspace.name}`)
+      window.dispatchEvent(new CustomEvent("workspace-changed"))
+      onUpdated?.()
+    } catch (e: any) {
+      toast.error("移除失败: " + e.message)
+    }
   }
 
   return (
@@ -172,24 +181,30 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({
       <div className="space-y-3">
         <h3 className="text-sm font-semibold text-foreground">Folders（工程目录）</h3>
         <div className="space-y-2 rounded-xl border border-border/70 bg-card/40 p-2.5">
-          {folders.map((f, i) => (
-            <div
-              key={i}
-              className="flex items-center justify-between px-3 py-2 rounded-lg bg-background/80 border border-border/50 text-xs group"
-            >
-              <div className="flex items-center space-x-2.5 min-w-0">
-                <Folder className="h-4 w-4 text-primary shrink-0" />
-                <span className="font-mono text-foreground truncate">{f}</span>
-              </div>
-              <button
-                onClick={() => handleRemoveFolder(i)}
-                className="text-muted-foreground/60 hover:text-rose-500 p-1 rounded transition-colors"
-                title="移除该目录"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
+          {folders.length === 0 ? (
+            <div className="py-3 text-center text-xs text-muted-foreground italic">
+              当前暂未关联磁盘子目录，可点击下方按钮添加
             </div>
-          ))}
+          ) : (
+            folders.map((f, i) => (
+              <div
+                key={i}
+                className="flex items-center justify-between px-3 py-2 rounded-lg bg-background/80 border border-border/50 text-xs group"
+              >
+                <div className="flex items-center space-x-2.5 min-w-0">
+                  <Folder className="h-4 w-4 text-primary shrink-0" />
+                  <span className="font-mono text-foreground truncate">{f}</span>
+                </div>
+                <button
+                  onClick={() => handleRemoveFolder(i)}
+                  className="text-muted-foreground/60 hover:text-rose-500 p-1 rounded transition-colors"
+                  title="移除该目录"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))
+          )}
 
           {showAddFolder ? (
             <div className="flex items-center space-x-2 p-1">
@@ -372,6 +387,24 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({
             Open
           </Button>
         </div>
+      </div>
+
+      {/* 移除工作区行动项 (对齐用户需求：允许从工作台移除目录，不会删磁盘文件) */}
+      <div className="pt-6 border-t border-border/60 flex items-center justify-between">
+        <div className="space-y-0.5">
+          <div className="text-xs font-medium text-destructive">移除该工程工作区</div>
+          <div className="text-[11px] text-muted-foreground">
+            从工作台注册表注销「{workspace.name}」配置，不会删除本地磁盘中的任何实际文件。
+          </div>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleDeleteWorkspace}
+          className="text-xs text-destructive border-destructive/30 hover:bg-destructive/10"
+        >
+          从列表移除
+        </Button>
       </div>
     </div>
   )

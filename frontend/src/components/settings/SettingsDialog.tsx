@@ -98,6 +98,17 @@ const navGroups: NavGroup[] = [
   },
 ]
 
+const DEFAULT_WORKSPACE_ITEM: WorkspaceItem = {
+  id: "ws-default",
+  name: "openBIMAgent",
+  path: "d:\\devloop\\workSpace\\app_codex\\GenerativeBIM\\openBIMAgent",
+  execution_mode: "agent",
+  outside_file_access: "allow",
+  terminal_auto_exec: "ask",
+  artifact_review_policy: "proceed",
+  folders: ["d:\\devloop\\workSpace\\app_codex\\GenerativeBIM\\openBIMAgent"],
+}
+
 export const SettingsDialog: React.FC<SettingsDialogProps> = ({
   open,
   onOpenChange,
@@ -109,6 +120,11 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
   const [activeTab, setActiveTab] = useState<TabKey>((initialTab as TabKey) || "general")
   const [workspaces, setWorkspaces] = useState<WorkspaceItem[]>([])
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null)
+
+  const effectiveWorkspaces: WorkspaceItem[] = React.useMemo(() => {
+    if (workspaces.length > 0) return workspaces
+    return [DEFAULT_WORKSPACE_ITEM]
+  }, [workspaces])
 
   const loadWorkspaces = async () => {
     try {
@@ -125,12 +141,12 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
   React.useEffect(() => {
     if (open) {
       loadWorkspaces().then(({ current, items }) => {
+        const list = items.length > 0 ? items : [DEFAULT_WORKSPACE_ITEM]
         if (initialTab && (initialTab === "workspace" || initialTab === "project" || initialTab.startsWith("workspace:"))) {
           const parts = initialTab.split(":")
-          const targetId = parts[1] || current || items[0]?.id
-          if (targetId) {
-            setSelectedWorkspaceId(targetId)
-          }
+          const targetId = parts[1] || current || list[0]?.id
+          setSelectedWorkspaceId(targetId || list[0]?.id)
+          setActiveTab("workspace" as TabKey)
         } else if (initialTab) {
           setActiveTab(initialTab as TabKey)
           setSelectedWorkspaceId(null)
@@ -140,10 +156,20 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
   }, [initialTab, open])
 
   const renderContent = () => {
-    if (selectedWorkspaceId) {
-      const ws = workspaces.find((w) => w.id === selectedWorkspaceId)
+    if (selectedWorkspaceId || activeTab === ("workspace" as any)) {
+      const ws = effectiveWorkspaces.find((w) => w.id === selectedWorkspaceId) || effectiveWorkspaces[0]
       if (ws) {
-        return <ProjectSettingsTab workspace={ws} onUpdated={loadWorkspaces} />
+        return (
+          <ProjectSettingsTab
+            workspace={ws}
+            onUpdated={async () => {
+              const res = await loadWorkspaces()
+              if (!res.items.some((w) => w.id === ws.id)) {
+                setSelectedWorkspaceId(res.items[0]?.id || null)
+              }
+            }}
+          />
+        )
       }
     }
 
@@ -246,33 +272,38 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
                 </div>
               ))}
 
-              {/* 工程工作区 */}
-              {workspaces.length > 0 && (
-                <div className="space-y-1 pt-2 border-t border-neutral-200/50 dark:border-neutral-800/50">
-                  <div className="px-2.5 py-1 text-[11px] text-neutral-400 dark:text-neutral-500 font-normal">
-                    工程工作区
-                  </div>
-                  <div className="space-y-0.5">
-                    {workspaces.map((ws) => {
-                      const isWsActive = selectedWorkspaceId === ws.id
-                      return (
-                        <button
-                          key={ws.id}
-                          onClick={() => setSelectedWorkspaceId(ws.id)}
-                          className={`w-full flex items-center space-x-2.5 px-3 py-2 rounded-xl text-xs transition-all ${
-                            isWsActive
-                              ? "border border-violet-300 dark:border-violet-700 bg-violet-50/70 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300 font-medium shadow-2xs"
-                              : "border border-transparent text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100 hover:bg-neutral-100/60 dark:hover:bg-neutral-800/40"
-                          }`}
-                        >
-                          <Folder className="h-4 w-4 shrink-0 text-neutral-500" />
-                          <span className="truncate">{ws.name}</span>
-                        </button>
-                      )
-                    })}
-                  </div>
+              {/* 工程目录设置（管理任务里的目录配置与权限，永不丢失） */}
+              <div className="space-y-1 pt-2 border-t border-neutral-200/50 dark:border-neutral-800/50">
+                <div className="px-2.5 py-1 text-[11px] text-neutral-400 dark:text-neutral-500 font-normal">
+                  工程目录设置
                 </div>
-              )}
+                <div className="space-y-0.5">
+                  {effectiveWorkspaces.map((ws) => {
+                    const isWsActive =
+                      selectedWorkspaceId === ws.id ||
+                      (selectedWorkspaceId === null &&
+                        activeTab === ("workspace" as any) &&
+                        ws.id === effectiveWorkspaces[0]?.id)
+                    return (
+                      <button
+                        key={ws.id}
+                        onClick={() => {
+                          setSelectedWorkspaceId(ws.id)
+                          setActiveTab("workspace" as TabKey)
+                        }}
+                        className={`w-full flex items-center space-x-2.5 px-3 py-2 rounded-xl text-xs transition-all cursor-pointer ${
+                          isWsActive
+                            ? "border border-violet-300 dark:border-violet-700 bg-violet-50/70 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300 font-medium shadow-2xs"
+                            : "border border-transparent text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100 hover:bg-neutral-100/60 dark:hover:bg-neutral-800/40"
+                        }`}
+                      >
+                        <Folder className="h-4 w-4 shrink-0 text-neutral-500" />
+                        <span className="truncate">{ws.name}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
             </div>
           </div>
 
