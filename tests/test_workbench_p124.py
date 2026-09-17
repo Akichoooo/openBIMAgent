@@ -29,11 +29,12 @@ def client(tmp_path_factory: pytest.TempPathFactory) -> TestClient:
     from openbimagent.server.fastapi_app import build_demo_app
 
     class _RidClient(TestClient):
-        def request(self, method: str, url: str, **kwargs):  # type: ignore[override]
+        def build_request(self, method: str, url: str, **kwargs):  # type: ignore[override]
+            # stream() 走 build_request 路径,不经过 request(),必须在这里注入认证头。
             headers = dict(kwargs.pop("headers", {}) or {})
             headers.setdefault("X-Request-ID", f"test-{uuid.uuid4().hex[:16]}")
             headers.setdefault("Authorization", "Bearer test-wb-token")
-            return super().request(method, url, headers=headers, **kwargs)
+            return super().build_request(method, url, headers=headers, **kwargs)
 
     yield _RidClient(build_demo_app())
     os.environ.pop("OPENBIMAGENT_SESSIONS_DIR", None)
