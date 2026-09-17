@@ -20,9 +20,10 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("OPENBIMAGENT_SESSIONS_DIR", str(tmp_path / "sessions"))
     monkeypatch.setenv("OPENBIMAGENT_WORKSPACES_FILE", str(tmp_path / "workspaces.json"))
     monkeypatch.setenv("OPENBIMAGENT_USAGE_LOG", str(tmp_path / "usage_log.jsonl"))
-    from openbimagent.server.fastapi_app import build_demo_app
+    from openbimagent.server.fastapi_app import AppSettings, create_app
 
-    c = TestClient(build_demo_app())
+    c = TestClient(create_app(AppSettings(mode="test", workspace_roots=(tmp_path,))),
+                   base_url="http://localhost", headers={"X-Request-ID": "test-workspaces"})
     c.headers["Authorization"] = "Bearer test-wb-token"
     return c
 

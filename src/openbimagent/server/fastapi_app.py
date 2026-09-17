@@ -13,6 +13,10 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import os
+import json
+from dataclasses import dataclass
+from typing import Literal
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
@@ -26,11 +30,6 @@ from openbimagent.server.readonly_http import (
 )
 from openbimagent.server.sse_endpoint import M2SseStreamBudget, add_sse_endpoint
 from openbimagent.server.web_ui import add_web_ui
-from openbimagent.server.chat import add_chat, add_chat_stream
-from openbimagent.server.workbench_io import add_workbench_io
-from openbimagent.server.runs import add_runs
-from openbimagent.server.approvals import add_approvals
-from openbimagent.server.auth import add_auth
 
 M2_FASTAPI_APP_TITLE = "openBIMAgent M2 Read-Only API"
 M2_FASTAPI_APP_VERSION = "0.1"
@@ -81,6 +80,7 @@ def build_m2_readonly_app(
     sessions_dir: Path | None = None,
     sse_budget: M2SseStreamBudget | None = None,
     invoke_max_concurrency: int = 4,
+    settings: AppSettings | None = None,
 ) -> FastAPI:
     """构建只读 FastAPI 应用；adapter 由调用方注入（持有注入的 service）。
 
@@ -94,31 +94,64 @@ def build_m2_readonly_app(
         docs_url="/api/v1/docs",
         openapi_url="/api/v1/openapi.json",
     )
-    if sessions_dir is not None:
+    from openbimagent.server.auth import add_auth, load_or_create_token
+
+    if settings is not None:
+        app.state.mode = settings.mode
+        app.state.workspace_roots = settings.workspace_roots
+        from openbimagent.server.chat import add_chat, add_chat_stream
+        from openbimagent.server.runs import add_runs
+        from openbimagent.server.approvals import add_approvals
+        from openbimagent.server.workspaces import register_workspace_routes
+        from openbimagent.server.workbench_io import add_workbench_io
+
+        add_chat(app)
+        add_chat_stream(app)
+        add_runs(app)
+        add_approvals(app)
+        register_workspace_routes(app)
+        add_workbench_io(app)
+    elif sessions_dir is not None:
         add_sse_endpoint(app, sessions_dir=sessions_dir, budget=sse_budget)
-    # P1-1：挂载第三方 MCP server（mcp:* 能力，默认 prompt 策略门）
-    # 配置来源：config/mcp_servers.local.json（设置页「保存 MCP」写入）> OPENBIMAGENT_MCP_SERVERS env
-    from openbimagent.core.plugin import default_plugin_registry
-    from openbimagent.mcp_clients.external import attach_external_servers_from_config
-
-    attach_external_servers_from_config(default_plugin_registry)
-    from openbimagent.server.auth import load_or_create_token
-
-    workbench_token = load_or_create_token()
-    add_auth(app, workbench_token)
+    workbench_token = (settings.token if settings else None) or load_or_create_token()
     add_web_ui(app, token=workbench_token)
-    add_workbench_io(app)
-    add_runs(app)
-    add_approvals(app)
-    add_chat(app)
-    add_chat_stream(app)
 
-    from openbimagent.server.workspaces import register_workspace_routes
+    @app.middleware("http")
+    async def feature_availability(request: Request, call_next):
+        path = request.url.path
+        # These legacy exports have no parameter/plan-bound approval receipt.
+        # Never turn a browser confirm flag into host execution authorization.
+        if path in ("/api/v1/demo/export-blender", "/api/v1/demo/export-vectorworks"):
+            # Authentication middleware must run first (registered last below).
+            return JSONResponse(status_code=503, content={
+                "status": "unavailable", "code": "approval_binding_required",
+                "error": "Use the run approval workflow; direct demo exports are disabled",
+            })
+        if getattr(app.state, "control_plane_unavailable", False) and (
+            path.startswith("/api/v1/attempts") or path.startswith("/api/v1/lineages")
+        ):
+            return JSONResponse(status_code=503, content={"status": "unavailable", "code": "control_plane_unavailable"})
+        if settings and settings.mode != "demo" and path.startswith("/api/v1/demo/"):
+            return JSONResponse(status_code=503, content={"status": "unavailable", "code": "demo_mode_required"})
+        return await call_next(request)
 
-    register_workspace_routes(app)
+    # Starlette executes last-added middleware first: auth before availability/handlers.
+    add_auth(app, workbench_token, protect_reads=settings is not None)
 
     invoke_guard = InvokeConcurrencyGuard(invoke_max_concurrency)
     export_guard = InvokeConcurrencyGuard(1)  # 真机导出串行：Blender/VW 共用，防并发多宿主写盘
+
+    @app.get("/api/v1/runtime", tags=["Workbench"])
+    async def runtime_mode() -> dict:
+        return {"status": "success", "mode": settings.mode if settings else "readonly",
+                "direct_host_exports": False, "direct_prompt_invocation": False}
+
+    @app.get("/api/v1/hooks", tags=["Workbench"])
+    async def hooks_unavailable() -> JSONResponse:
+        return JSONResponse(status_code=503, content={
+            "status": "unavailable", "code": "hooks_configuration_unavailable",
+            "error": "Lifecycle hooks exist; HTTP configuration is not implemented",
+        })
 
     @app.get("/healthz", include_in_schema=False, tags=["Health"])
     async def healthz() -> dict:
@@ -146,13 +179,15 @@ def build_m2_readonly_app(
             },
         )
 
-    @app.get("/api/v1/plugins", summary="获取已加载插件清单与 Profile 列表（按当前工具集预设过滤可见面）", tags=["Plugins"])
+    @app.get("/api/v1/plugins", summary="获取已加载插件清单与 Profile 列表", tags=["Plugins"])
     async def get_plugins_inventory() -> dict:
         from openbimagent.core.plugin import default_plugin_registry
+
         from openbimagent.core.toolset import current_toolset, filter_capabilities
 
         inventory = default_plugin_registry.export_inventory()
         inventory["capabilities_map"] = filter_capabilities(inventory["capabilities_map"])
+        inventory["total_capabilities"] = len(inventory["capabilities_map"])
         inventory["toolset"] = current_toolset()
         return inventory
 
@@ -174,19 +209,25 @@ def build_m2_readonly_app(
                 status_code=400,
                 content={"status": "error", "error": "缺少 capability 参数"},
             )
-        payload = body.get("payload", {})
-        confirm = bool(body.get("confirm", False))
         from openbimagent.core.toolset import current_toolset, is_allowed
 
         if not is_allowed(capability):
-            return JSONResponse(
-                status_code=403,
-                content={
-                    "status": "error",
-                    "capability": capability,
-                    "error": f"能力被当前工具集预设 {current_toolset()} 过滤（/api/v1/toolset 可切换）",
-                },
-            )
+            return JSONResponse(status_code=403, content={
+                "status": "error", "code": "toolset_denied",
+                "error": f"工具集 {current_toolset()} 不允许能力 {capability}",
+            })
+        payload = body.get("payload", {})
+        from openbimagent.core.plugin import CapabilityPolicyDecision
+
+        policy = default_plugin_registry.capability_policy_for(capability)
+        if policy and policy.decision is CapabilityPolicyDecision.FORBIDDEN:
+            return JSONResponse(status_code=403, content={"status": "error", "code": "policy_denied"})
+        if policy and policy.decision is CapabilityPolicyDecision.PROMPT:
+            return JSONResponse(status_code=503, content={
+                "status": "unavailable", "code": "approval_binding_required",
+                "error": "Direct invocation has no bound approval; use the run approval workflow",
+            })
+        confirm = False
         if not invoke_guard.try_acquire():
             return JSONResponse(
                 status_code=INVOKE_OVERLOADED_STATUS_CODE,
@@ -285,15 +326,6 @@ def build_m2_readonly_app(
             }
             for it in res.iteration_history
         ]
-        # P1-2 hooks：一轮"指令→求解"回合结束（观测型）
-        from openbimagent.core.hooks import default_hook_bus
-
-        default_hook_bus().emit(
-            "turn_end",
-            endpoint="demo/municipal-pipeline",
-            converged=res.converged,
-            iterations=res.iterations_spent,
-        )
         return {
             "status": "success",
             "converged": res.converged,
@@ -478,16 +510,10 @@ def build_m2_readonly_app(
         include_in_schema=False,
     )
     async def _readonly_gateway(request: Request) -> Response:
-        headers = _request_headers_to_m2(request)
-        # 🔵 审核修复：只读 GET 缺 X-Request-ID 时自动兜底补全（变更方法仍强制由客户端提供，保幂等语义）
-        if request.method in ("GET", "HEAD") and not any(h.name.lower() == "x-request-id" for h in headers):
-            import uuid as _uuid
-
-            headers = (*headers, M2HttpHeader(name="X-Request-ID", value=f"gw-{_uuid.uuid4().hex[:16]}"))
         m2_request = M2ReadonlyHttpRequest(
             method=request.method,
             target=request.url.path + (f"?{request.url.query}" if request.url.query else ""),
-            headers=headers,
+            headers=_request_headers_to_m2(request),
             body_size=_body_size(request),
         )
         m2_response: M2ReadonlyHttpResponse = adapter.dispatch(m2_request)
@@ -500,51 +526,56 @@ def build_m2_readonly_app(
     return app
 
 
+@dataclass(frozen=True)
+class AppSettings:
+    mode: Literal["local-production", "demo", "test"] = "local-production"
+    token: str | None = None
+    workspace_roots: tuple[Path, ...] = (Path(__file__).resolve().parents[3],)
+
+
+@dataclass(frozen=True)
+class AppServices:
+    readonly_adapter: M2ReadonlyHttpAdapter | None = None
+
+
+def create_app(settings: AppSettings | None = None, services: AppServices | None = None) -> FastAPI:
+    settings = settings or AppSettings()
+    if settings.mode not in ("local-production", "demo", "test"):
+        raise ValueError("unknown app mode")
+    adapter = services.readonly_adapter if services else None
+    if adapter is None:
+        from openbimagent.server.service import M2ReadOnlyService
+        from openbimagent.server.workspaces import _sessions_dir
+
+        class UnavailableControlPlane:
+            def __getattr__(self, name):
+                def unavailable(*args, **kwargs):
+                    raise RuntimeError("control plane is not configured")
+                return unavailable
+
+        def read_index():
+            path = _sessions_dir() / "index.json"
+            return json.loads(path.read_text(encoding="utf-8")).get("sessions", []) if path.is_file() else []
+
+        class WorkbenchReadOnlyService(M2ReadOnlyService):
+            @staticmethod
+            def _session_metadata(entry):
+                return {**M2ReadOnlyService._session_metadata(entry),
+                        **{key: entry[key] for key in ("workspace", "playbook", "archived", "mode") if key in entry}}
+
+        adapter = M2ReadonlyHttpAdapter(WorkbenchReadOnlyService(
+            control_plane=UnavailableControlPlane(), session_index_reader=read_index,
+            artifact_lookup=lambda _: None,
+        ))
+    app = build_m2_readonly_app(adapter, settings=settings)
+    app.state.control_plane_unavailable = not (services and services.readonly_adapter)
+    return app
+
+
 def build_demo_app() -> FastAPI:
-    """本地演示装配：空只读 service（无 Runtime lease）+ 默认微内核。
-
-    供 `uvicorn openbimagent.server.fastapi_app:app` 直接启动；
-    生产装配请自行构造 M2ReadOnlyService 并调用 build_m2_readonly_app。
-    """
-
-    class _EmptyControlPlaneReader:
-        """最小 stub：演示模式不持有任何真实 Runtime 工件。"""
-
-        def list_attempts(self, **_: object) -> tuple:
-            return ()
-
-        def get_attempt(self, _: object) -> object:
-            raise ValueError("no runtime")
-
-        def get_lineage(self, _: object) -> tuple:
-            return ()
-
-        def list_approvals(self, **_: object) -> tuple:
-            return ()
-
-    from openbimagent.server.readonly_http import M2ReadonlyHttpAdapter
-    from openbimagent.server.service import M2ReadOnlyService
-    from openbimagent.session.store import SessionStore
-
-    def _session_index_reader() -> list:
-        """真实会话索引：读 out/sessions/index.json（OPENBIMAGENT_SESSIONS_DIR 可覆盖）。"""
-        import os
-
-        default_sessions = Path(__file__).resolve().parents[3] / "out" / "sessions"
-        sessions_dir = Path(os.environ.get("OPENBIMAGENT_SESSIONS_DIR", default_sessions))
-        try:
-            return SessionStore.list_sessions(sessions_dir)
-        except Exception:  # noqa: BLE001 — 索引缺失/损坏时返回空列表而非 500
-            return []
-
-    service = M2ReadOnlyService(
-        control_plane=_EmptyControlPlaneReader(),
-        session_index_reader=_session_index_reader,
-        artifact_lookup=lambda _: None,
-    )
-    return build_m2_readonly_app(M2ReadonlyHttpAdapter(service))
+    """Explicit demo mode, with the same authentication and business routes."""
+    return create_app(AppSettings(mode="demo"))
 
 
-# 模块级默认入口（本地演示装配）：
-#   uv run uvicorn openbimagent.server.fastapi_app:app --host 127.0.0.1 --port 8000
-app = build_demo_app()
+# Bind uvicorn to 127.0.0.1; middleware also rejects non-local peers/hosts.
+app = create_app(AppSettings(mode=os.environ.get("OPENBIMAGENT_APP_MODE", "local-production")))

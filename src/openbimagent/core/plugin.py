@@ -200,11 +200,6 @@ DEFAULT_CAPABILITY_POLICIES: tuple[CapabilityPolicyRule, ...] = (
         decision=CapabilityPolicyDecision.PROMPT,
         justification="删除长期记忆条目（跨会话持久化数据减损），需人工确认",
     ),
-    CapabilityPolicyRule(
-        pattern="mcp:*",
-        decision=CapabilityPolicyDecision.PROMPT,
-        justification="外部第三方 MCP server 工具（进程/网络面未知），fail-closed 需人工确认",
-    ),
 )
 
 
@@ -771,17 +766,13 @@ class MunicipalDirectPlugin(BIMPlugin):
 
 
 class MemoryPlugin(BIMPlugin):
-    """轻量记忆层插件（P0-4）：record 写长期记忆（prompt 策略门），recall 读取免费。"""
+    """长期记忆能力；写入/删除由注册表的 prompt 策略保护。"""
 
     plugin_id = "plugin.core.memory"
     name = "轻量记忆层"
     version = "1.0.0"
-    description = "MEMORY.md/USER.md 追加式长期记忆；record 需人工确认，recall 读取自由"
-    provides_capabilities = (
-        "memory:record",
-        "memory:recall",
-        "memory:delete",
-    )
+    description = "MEMORY.md/USER.md 持久化记忆；写入和删除需人工确认"
+    provides_capabilities = ("memory:record", "memory:recall", "memory:delete")
 
     def setup(self, ctx: BIMPluginContext) -> None:
         super().setup(ctx)
@@ -792,14 +783,11 @@ class MemoryPlugin(BIMPlugin):
 
         def _recall(max_entries: int = 8) -> dict:
             store = default_memory_store()
-            return {
-                "memory": store.tail("memory", max_entries),
-                "user": store.tail("user", max_entries),
-            }
+            return {"memory": store.tail("memory", max_entries), "user": store.tail("user", max_entries)}
 
         def _delete(file: str = "memory", line: int = 0) -> dict:
-            ok = default_memory_store().delete_line(file, int(line))
-            return {"deleted": ok, "file": file, "line": int(line)}
+            deleted = default_memory_store().delete_line(file, int(line))
+            return {"deleted": deleted, "file": file, "line": int(line)}
 
         self.register_handler("memory:record", _record)
         self.register_handler("memory:recall", _recall)

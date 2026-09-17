@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from pathlib import Path
 
 import pytest
@@ -24,9 +25,19 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     )
     from openbimagent.server.fastapi_app import build_demo_app
 
-    c = TestClient(build_demo_app())
-    c.headers["Authorization"] = "Bearer test-wb-token"
-    return c
+    # Keep legacy fallback reads away from the developer's real out/ directory.
+    monkeypatch.setattr("openbimagent.server.workbench_io._REPO_ROOT", tmp_path)
+    monkeypatch.setenv("OPENBIMAGENT_PENDING_APPROVALS", str(tmp_path / "pending.json"))
+
+    class _RidClient(TestClient):
+        def build_request(self, method: str, url: str, **kwargs):  # type: ignore[override]
+            request = super().build_request(method, url, **kwargs)
+            request.headers.setdefault("X-Request-ID", f"test-{uuid.uuid4().hex[:16]}")
+            request.headers.setdefault("Authorization", "Bearer test-wb-token")
+            return request
+
+    with _RidClient(build_demo_app()) as test_client:
+        yield test_client
 
 
 def _stub_llm(monkeypatch: pytest.MonkeyPatch, reply: str = "ok") -> None:
@@ -55,15 +66,16 @@ def test_chat_records_into_ledger(client: TestClient, tmp_path: Path, monkeypatc
     assert entry["model"] == "glm-5.2"
     assert entry["prompt_tokens"] == 100
     assert entry["completion_tokens"] == 40
-    assert entry["total_tokens"] == 0 or entry["total_tokens"] == 140  # 方言缺 total 时 in+out 兜底发生在聚合端
+    assert entry["total_tokens"] == 0  # Missing total is stored as zero; aggregation supplies in+out.
     assert entry["source"] == "chat"
     assert "sk-test" not in json.dumps(entry)  # 账本绝不记 key
 
 
 def test_usage_endpoint_aggregates_ledger(client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _stub_llm(monkeypatch)
-    client.post("/api/v1/chat", json={"message": "第一问"})
-    client.post("/api/v1/chat", json={"message": "第二问"})
+    for message in ("第一问", "第二问"):
+        response = client.post("/api/v1/chat", json={"message": message})
+        assert response.status_code == 200, response.text
 
     resp = client.get("/api/v1/usage")
     assert resp.status_code == 200
@@ -89,10 +101,7 @@ def test_usage_endpoint_aggregates_ledger(client: TestClient, tmp_path: Path, mo
 def test_usage_endpoint_empty_returns_null(client: TestClient) -> None:
     resp = client.get("/api/v1/usage")
     assert resp.status_code == 200
-    assert resp.json() in (
-        {"status": "success", "usage": None},
-        {"status": "success", "usage": None, "source": "legacy"},
-    )
+    assert resp.json() == {"status": "success", "usage": None}
 
 
 def test_ledger_tolerates_corrupt_lines(client: TestClient, tmp_path: Path) -> None:
@@ -100,6 +109,4 @@ def test_ledger_tolerates_corrupt_lines(client: TestClient, tmp_path: Path) -> N
     ledger.write_text('{"ts": "bad-ts", "model": "glm-5.2"\nnot-json\n', encoding="utf-8")  # 半行/坏行
     resp = client.get("/api/v1/usage")
     assert resp.status_code == 200
-    body = resp.json()
-    if body.get("usage"):  # 坏行全被跳过后若无 legacy 快照，usage 为 None；聚合不抛异常即可
-        assert body["usage"]["logged_calls"] == 0
+    assert resp.json() == {"status": "success", "usage": None}

@@ -51,8 +51,17 @@ def _make_mock_client(tmp_path: Path) -> tuple[Any, dict[str, AsyncMock]]:
     async def _execute_code(code: str):
         snap_counter[0] += 1
         snap = str(snap_dir / f"snap_{snap_counter[0]}.blend")
-        Path(snap).write_bytes(b"mock")
-        return {"executed": True, "result": "ok", "snapshot": snap, "scope_checked": True}
+        Path(snap).write_bytes(b"old-scene")
+        accepted = str(snap_dir / f"snap_{snap_counter[0]}_post_exec.blend")
+        Path(accepted).write_bytes(b"new-scene")
+        return {
+            "executed": True,
+            "result": "ok",
+            "snapshot": snap,
+            "accepted_snapshot": accepted,
+            "accepted_snapshot_phase": "post_exec",
+            "scope_checked": True,
+        }
 
     async def _screenshot(*, filepath, max_size=512, format="png"):
         _write_png(Path(filepath))
@@ -182,7 +191,8 @@ def test_render_loop_saves_best_snapshot(tmp_path: Path) -> None:
     ))
     assert result.best_score == 8.0
     assert result.best_snapshot is not None
-    assert "snap_2" in str(result.best_snapshot)  # iter2 的 snapshot(8.0 最高分)
+    assert result.best_snapshot.name == "best_iter002.blend"  # iter2 的 snapshot(8.0 最高分)
+    assert result.best_snapshot.name.startswith("best_iter")  # 受控 best 副本,防轮转删除
 
 
 def test_render_loop_scope_lock_enabled(tmp_path: Path) -> None:

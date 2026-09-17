@@ -25,7 +25,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
         monkeypatch.delenv(key, raising=False)
     from openbimagent.server.fastapi_app import build_demo_app
 
-    client = TestClient(build_demo_app())
+    client = TestClient(build_demo_app(), base_url="http://localhost", headers={"X-Request-ID": "test-workbench"})
     client.headers["Authorization"] = "Bearer test-wb-token"
     return client
 
@@ -107,11 +107,13 @@ def test_mutation_requires_bearer_token(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.setenv("OPENBIMAGENT_ENV_FILE", str(tmp_path / ".env"))
     from openbimagent.server.fastapi_app import build_demo_app
 
-    anon = TestClient(build_demo_app())
+    anon = TestClient(build_demo_app(), base_url="http://localhost", headers={"X-Request-ID": "test-auth"})
     assert anon.put("/api/v1/settings/llm", json={"model": "x"}).status_code == 401
     assert anon.post("/api/v1/uploads?name=x.bin", content=b"1").status_code == 401
     assert anon.post("/api/v1/runs", json={"brief": "x"}).status_code == 401
     assert anon.post("/api/v1/approvals/t/decide", json={"decision": "approved"}).status_code == 401
-    # GET 只读端点保持开放（M2 只读语义不变）
+    # 工作台敏感读取亦需认证；显式 M2 只读 adapter 的开放读取另有契约测试。
+    assert anon.get("/api/v1/settings/llm").status_code == 401
+    assert anon.get("/api/v1/hosts").status_code == 401
+    anon.headers["Authorization"] = "Bearer test-wb-token"
     assert anon.get("/api/v1/settings/llm").status_code == 200
-    assert anon.get("/api/v1/hosts").status_code == 200

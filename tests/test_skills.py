@@ -1,6 +1,5 @@
 """P0-1 Skill 系统测试：SKILL.md 加载校验 / 多源发现 / 渐进披露 / 自蒸馏候选·人工批准流转。"""
 
-import os
 import uuid
 from pathlib import Path
 
@@ -91,21 +90,25 @@ class TestDistill:
 @pytest.fixture(scope="module")
 def client(tmp_path_factory: pytest.TempPathFactory) -> TestClient:
     tmp = tmp_path_factory.mktemp("skills-api")
-    os.environ["OPENBIMAGENT_WORKBENCH_TOKEN"] = "test-wb-token"
-    os.environ["OPENBIMAGENT_SKILLS_ROOT"] = str(tmp / "skills")
-    reload_skills()  # 全局注册表可能已被先前模块按旧 root 实例化，强制按新 env 重建
     from openbimagent.server.fastapi_app import build_demo_app
 
     class _RidClient(TestClient):
-        def request(self, method: str, url: str, **kwargs):  # type: ignore[override]
-            headers = dict(kwargs.pop("headers", {}) or {})
-            headers.setdefault("X-Request-ID", f"test-{uuid.uuid4().hex[:16]}")
-            headers.setdefault("Authorization", "Bearer test-wb-token")
-            return super().request(method, url, headers=headers, **kwargs)
+        def build_request(self, method: str, url: str, **kwargs):  # type: ignore[override]
+            request = super().build_request(method, url, **kwargs)
+            request.headers.setdefault("X-Request-ID", f"test-{uuid.uuid4().hex[:16]}")
+            request.headers.setdefault("Authorization", "Bearer test-wb-token")
+            return request
 
-    yield _RidClient(build_demo_app())
-    os.environ.pop("OPENBIMAGENT_SKILLS_ROOT", None)
-    reload_skills()
+    try:
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setenv("OPENBIMAGENT_WORKBENCH_TOKEN", "test-wb-token")
+            patch.setenv("OPENBIMAGENT_SKILLS_ROOT", str(tmp / "skills"))
+            patch.setenv("OPENBIMAGENT_PENDING_APPROVALS", str(tmp / "pending.json"))
+            reload_skills()
+            with _RidClient(build_demo_app()) as test_client:
+                yield test_client
+    finally:
+        reload_skills()
 
 
 class TestSkillEndpoints:
@@ -135,8 +138,14 @@ class TestSkillEndpoints:
         filename = cand.name
         # 候选出现在列表但未生效
         listing = client.get("/api/v1/skills").json()
-        assert filename in listing["candidates"]
-        skill_name = load_skill(cand, source="distilled").name
+        skill = load_skill(cand, source="distilled")
+        candidate = next(c for c in listing["candidates"] if c["file"] == filename)
+        assert candidate["id"] == filename
+        assert candidate["name"] == skill.name
+        assert candidate["description"] == skill.description
+        assert candidate["when_to_use"] == skill.when_to_use
+        assert "body" not in candidate  # Candidate listing also uses progressive disclosure.
+        skill_name = skill.name
         assert all(s["name"] != skill_name for s in listing["skills"])
         # 批准：转正 + 文件移动 + reload 生效
         ok = client.post("/api/v1/skills/candidates/approve", json={"file": filename})
@@ -146,7 +155,7 @@ class TestSkillEndpoints:
         assert (root / skill_name / "SKILL.md").is_file()
         after = client.get("/api/v1/skills").json()
         assert any(s["name"] == skill_name for s in after["skills"])
-        assert filename not in after["candidates"]
+        assert all(c["file"] != filename for c in after["candidates"])
         # 重复批准 → 404（候选已消费）
         again = client.post("/api/v1/skills/candidates/approve", json={"file": filename})
         assert again.status_code == 404

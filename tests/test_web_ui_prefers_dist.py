@@ -3,9 +3,12 @@ dist 缺失才回退内嵌单文件 Franken UI（防止"权威源倒退"，见�
 
 from __future__ import annotations
 
-import os
+import pytest
 
-os.environ.setdefault("OPENBIMAGENT_WORKBENCH_TOKEN", "test-wb-token")
+
+@pytest.fixture(autouse=True)
+def isolated_token(monkeypatch):
+    monkeypatch.setenv("OPENBIMAGENT_WORKBENCH_TOKEN", "test-wb-token")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -24,6 +27,7 @@ def _make_spa_dist(tmp_path):
         '<script type="module" src="/assets/index-abc.js"></script></body></html>',
         encoding="utf-8",
     )
+    (dist / "assets" / "index-abc.js").write_text("window.fixtureLoaded = true;", encoding="utf-8")
     return dist
 
 
@@ -36,6 +40,10 @@ def test_serves_spa_when_dist_present(monkeypatch, tmp_path) -> None:
     assert 'id="root"' in resp.text
     # token 注入到 SPA
     assert "test-wb-token" in resp.text
+    # assets 由静态挂载点伺服（权威源为 frontend/dist）
+    asset = client.get("/assets/index-abc.js")
+    assert asset.status_code == 200
+    assert "window.fixtureLoaded" in asset.text
 
 
 def test_falls_back_to_embedded_when_dist_absent(monkeypatch, tmp_path) -> None:

@@ -50,27 +50,29 @@ class TestMemoryStore:
 @pytest.fixture(scope="module")
 def client(tmp_path_factory: pytest.TempPathFactory) -> TestClient:
     tmp = tmp_path_factory.mktemp("memory-api")
-    os.environ["OPENBIMAGENT_WORKBENCH_TOKEN"] = "test-wb-token"
-    os.environ["OPENBIMAGENT_MEMORY_DIR"] = str(tmp / "memory")
     from openbimagent.server.fastapi_app import build_demo_app
 
     class _RidClient(TestClient):
-        def request(self, method: str, url: str, **kwargs):  # type: ignore[override]
-            headers = dict(kwargs.pop("headers", {}) or {})
-            headers.setdefault("X-Request-ID", f"test-{uuid.uuid4().hex[:16]}")
-            headers.setdefault("Authorization", "Bearer test-wb-token")
-            return super().request(method, url, headers=headers, **kwargs)
+        def build_request(self, method: str, url: str, **kwargs):  # type: ignore[override]
+            request = super().build_request(method, url, **kwargs)
+            request.headers.setdefault("X-Request-ID", f"test-{uuid.uuid4().hex[:16]}")
+            request.headers.setdefault("Authorization", "Bearer test-wb-token")
+            return request
 
-    yield _RidClient(build_demo_app())
-    os.environ.pop("OPENBIMAGENT_MEMORY_DIR", None)
-    # 注意：不 pop OPENBIMAGENT_WORKBENCH_TOKEN——test_m2_fastapi 在 import 期 setdefault 依赖它存活
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("OPENBIMAGENT_WORKBENCH_TOKEN", "test-wb-token")
+        patch.setenv("OPENBIMAGENT_MEMORY_DIR", str(tmp / "memory"))
+        patch.setenv("OPENBIMAGENT_PENDING_APPROVALS", str(tmp / "pending.json"))
+        with _RidClient(build_demo_app()) as test_client:
+            yield test_client
 
 
 class TestMemoryEndpoints:
     def test_record_requires_confirm_then_succeeds(self, client: TestClient) -> None:
         # 无 confirm：prompt 策略门拦截（409 + need_confirm）
         r1 = client.post("/api/v1/memory/record", json={"entry": "项目代号 Terra"})
-        assert r1.status_code == 409 and r1.json()["need_confirm"] is True
+        assert r1.status_code == 409, r1.text
+        assert r1.json()["need_confirm"] is True
         # 策略门拦截后记忆确实未写入
         assert client.get("/api/v1/memory").json()["memory"] == []
         # confirm=true（人工点击确认语义）：写入成功
@@ -83,21 +85,27 @@ class TestMemoryEndpoints:
 
     def test_record_user_file(self, client: TestClient) -> None:
         r = client.post("/api/v1/memory/record", json={"entry": "习惯先看 domain_gate 报告", "file": "user", "confirm": True})
-        assert r.status_code == 200
+        assert r.status_code == 200, r.text
         mem = client.get("/api/v1/memory").json()
         assert len(mem["user"]) == 1 and len(mem["memory"]) == 1  # 与上一用例隔离到不同文件
 
     def test_record_invalid(self, client: TestClient) -> None:
-        assert client.post("/api/v1/memory/record", json={"entry": "", "confirm": True}).status_code == 400
-        assert client.post("/api/v1/memory/record", json={"entry": "x", "file": "nope", "confirm": True}).status_code == 400
+        empty = client.post("/api/v1/memory/record", json={"entry": "", "confirm": True})
+        assert empty.status_code == 400, empty.text
+        assert "不能为空" in empty.json()["error"], empty.text
+        unknown = client.post("/api/v1/memory/record", json={"entry": "x", "file": "nope", "confirm": True})
+        assert unknown.status_code == 400, unknown.text
+        assert "未知记忆文件" in unknown.json()["error"], unknown.text
 
     def test_delete_requires_confirm_and_removes_line(self, client: TestClient) -> None:
-        client.post("/api/v1/memory/record", json={"entry": "待删除条目 X", "confirm": True})
+        recorded = client.post("/api/v1/memory/record", json={"entry": "待删除条目 X", "confirm": True})
+        assert recorded.status_code == 200, recorded.text
         mem = client.get("/api/v1/memory").json()["memory"]
         target = next(e for e in mem if "待删除条目 X" in e["text"])
         # 无 confirm：策略门拦截
         r1 = client.post("/api/v1/memory/delete", json={"file": "memory", "line": target["line"]})
-        assert r1.status_code == 409 and r1.json()["need_confirm"] is True
+        assert r1.status_code == 409, r1.text
+        assert r1.json()["need_confirm"] is True
         # confirm：真实删除该行
         r2 = client.post("/api/v1/memory/delete", json={"file": "memory", "line": target["line"], "confirm": True})
         assert r2.status_code == 200 and r2.json()["deleted"]["deleted"] is True

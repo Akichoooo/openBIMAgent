@@ -54,7 +54,7 @@ def approved_run(client: TestClient) -> str:
         for item in client.get("/api/v1/approvals").json()["items"]:
             if item["id"] in decided_ids:
                 continue
-            resp = client.post(f"/api/v1/approvals/{item['id']}/decide", json={"decision": "approved", "actor": "human:test"})
+            resp = client.post(f"/api/v1/approvals/{item['id']}/decide", json={"decision": "approved"})
             assert resp.status_code == 200, resp.text
             decided_ids.add(item["id"])
         run = client.get("/api/v1/runs/active").json()["run"]

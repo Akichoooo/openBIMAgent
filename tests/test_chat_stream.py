@@ -24,7 +24,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     # 注意：基线文件不在此写——未配置用例（422）依赖它不存在；配置用例显式调 _write_baseline
     from openbimagent.server.fastapi_app import build_demo_app
 
-    c = TestClient(build_demo_app())
+    c = TestClient(build_demo_app(), base_url="http://localhost", headers={"X-Request-ID": "test-stream"})
     c.headers["Authorization"] = "Bearer test-wb-token"
     return c
 
@@ -76,7 +76,7 @@ def test_stream_requires_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("OPENBIMAGENT_USAGE_LOG", str(tmp_path / "u.jsonl"))
     from openbimagent.server.fastapi_app import build_demo_app
 
-    c = TestClient(build_demo_app())
+    c = TestClient(build_demo_app(), base_url="http://localhost", headers={"X-Request-ID": "test-stream"})
     resp = c.post("/api/v1/chat/stream", json={"message": "hello"})
     assert resp.status_code == 401
 

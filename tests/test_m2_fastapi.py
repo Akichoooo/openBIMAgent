@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
-import os
-
 import pytest
 from fastapi.testclient import TestClient
-
-os.environ.setdefault("OPENBIMAGENT_WORKBENCH_TOKEN", "test-wb-token")
 from openbimagent.server.fastapi_app import build_m2_readonly_app
 from openbimagent.server.readonly_http import M2ReadonlyHttpAdapter
 from openbimagent.server.service import M2ReadOnlyService
@@ -31,17 +27,19 @@ def _app() -> TestClient:
         artifact_lookup=lambda _: None,
     )
     adapter = M2ReadonlyHttpAdapter(service)
-    client = TestClient(build_m2_readonly_app(adapter))
-    client.headers["Authorization"] = "Bearer test-wb-token"
-    return client
+    from openbimagent.server.auth import load_or_create_token
+
+    return TestClient(build_m2_readonly_app(adapter), headers={
+        "Authorization": f"Bearer {load_or_create_token()}", "X-Request-ID": "test-m2",
+    })
 
 
-def test_health_without_correlation_id_gets_gateway_fallback() -> None:
-    """🔵 网关兜底：只读 GET 缺 X-Request-ID 时自动补全（外部调试不再 400）；变更方法仍严格。"""
+def test_health_requires_correlation_id() -> None:
     client = _app()
+    client.headers.pop("X-Request-ID")
     resp = client.get("/api/v1/health")
-    assert resp.status_code == 200
-    assert resp.json()["ok"] is True
+    assert resp.status_code == 400
+    assert resp.json()["ok"] is False
 
 
 def test_health_with_correlation_id() -> None:
@@ -101,8 +99,8 @@ def test_web_ui_accessible() -> None:
     client = _app()
     resp = client.get("/")
     assert resp.status_code == 200
-    # 前端产物存在时伺服 React SPA（frontend/dist），否则回退旧单文件 workbench
-    assert 'id="root"' in resp.text or "/static/vendor/franken" in resp.text
+    assert "openBIMAgent" in resp.text
+    assert "three.min.js" in resp.text
 
 
 def test_plugins_inventory_endpoint() -> None:
@@ -212,18 +210,15 @@ def test_invoke_endpoint_passes_confirm_through_policy_gate() -> None:
             "/api/v1/plugins/invoke",
             json={"capability": "rules:gb50289", "payload": {}},
         )
-        assert resp.status_code == 200
-        d = resp.json()
-        assert d["status"] == "error"
-        assert "confirm=True" in d["error"]
-        assert "需人工确认" in d["error"]
+        assert resp.status_code == 503
+        assert resp.json()["code"] == "approval_binding_required"
 
         resp = client.post(
             "/api/v1/plugins/invoke",
             json={"capability": "rules:gb50289", "payload": {}, "confirm": True},
         )
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "success"
+        assert resp.status_code == 503
+        assert resp.json()["code"] == "approval_binding_required"
     finally:
         # 恢复默认治理策略（而非清空——单例默认对真机宿主写入启 prompt）
         from openbimagent.core.plugin import DEFAULT_CAPABILITY_POLICIES
@@ -238,15 +233,22 @@ def test_invoke_endpoint_missing_capability_is_400() -> None:
     assert resp.json()["error"] == "缺少 capability 参数"
 
 
-def test_module_level_demo_app_entry() -> None:
-    """模块级 app 入口：uvicorn openbimagent.server.fastapi_app:app 可直接启动。"""
-    from openbimagent.server.fastapi_app import app
+def test_module_level_demo_app_entry(monkeypatch) -> None:
+    """模块级 app 入口在独立启动环境中初始化，不复用收集阶段绑定的 token。"""
+    import runpy
+    import openbimagent.server.fastapi_app as module
 
-    client = TestClient(app)
-    client.headers["Authorization"] = "Bearer test-wb-token"
-    assert client.get("/healthz").status_code == 200
-    assert client.get("/readyz").json()["status"] == "ready"
-    assert client.get("/api/v1/plugins").json()["plugin_count"] >= 7
+    monkeypatch.setenv("OPENBIMAGENT_WORKBENCH_TOKEN", "test-entry-token")
+    monkeypatch.setenv("OPENBIMAGENT_APP_MODE", "local-production")
+    app = runpy.run_path(module.__file__)["app"]
+    with TestClient(app, headers={"Authorization": "Bearer test-entry-token", "X-Request-ID": "test-entry"}) as client:
+        assert client.get("/healthz").status_code == 200
+        assert client.get("/readyz").json()["status"] == "ready"
+        response = client.get("/api/v1/plugins")
+        assert response.status_code == 200, response.text
+        assert response.json()["plugin_count"] >= 7
+        denied = client.get("/api/v1/plugins", headers={"Authorization": "Bearer wrong-token"})
+        assert denied.status_code == 401
 
 
 # =========================================================================
@@ -285,10 +287,8 @@ def test_export_blender_endpoint_policy_gate(monkeypatch) -> None:
     monkeypatch.setattr(executor, "execute_blender_export", _must_not_run)
     client = _app()
     resp = client.post("/api/v1/demo/export-blender", json={})
-    assert resp.status_code == 200
-    d = resp.json()
-    assert d["status"] == "error"
-    assert "confirm=True" in d["error"] or "人工确认" in d["error"]
+    assert resp.status_code == 503
+    assert resp.json()["code"] == "approval_binding_required"
 
 
 def test_export_blender_endpoint_success(monkeypatch) -> None:
@@ -314,12 +314,9 @@ def test_export_blender_endpoint_success(monkeypatch) -> None:
     monkeypatch.setattr(executor, "execute_blender_export", _fake_execute)
     client = _app()
     resp = client.post("/api/v1/demo/export-blender", json={"confirm": True})
-    assert resp.status_code == 200
-    d = resp.json()
-    assert d["status"] == "success"
-    assert d["receipt"]["status"] == "completed"
-    assert d["receipt"]["objects"] == 22
-    assert calls["ir_type"] == "CompiledUtilityIR"
+    assert resp.status_code == 503
+    assert resp.json()["code"] == "approval_binding_required"
+    assert calls == {}
 
 
 def test_vectorworks_executor_fails_fast_without_env(monkeypatch) -> None:
@@ -348,10 +345,8 @@ def test_export_vectorworks_endpoint_policy_gate(monkeypatch) -> None:
     monkeypatch.setattr(executor, "execute_vectorworks_export", _must_not_run)
     client = _app()
     resp = client.post("/api/v1/demo/export-vectorworks", json={})
-    assert resp.status_code == 200
-    d = resp.json()
-    assert d["status"] == "error"
-    assert "confirm=True" in d["error"] or "人工确认" in d["error"]
+    assert resp.status_code == 503
+    assert resp.json()["code"] == "approval_binding_required"
 
 
 def test_export_vectorworks_endpoint_success(monkeypatch) -> None:
@@ -373,11 +368,8 @@ def test_export_vectorworks_endpoint_success(monkeypatch) -> None:
     monkeypatch.setattr(executor, "execute_vectorworks_export", _fake_execute)
     client = _app()
     resp = client.post("/api/v1/demo/export-vectorworks", json={"confirm": True})
-    assert resp.status_code == 200
-    d = resp.json()
-    assert d["status"] == "success"
-    assert d["receipt"]["status"] == "completed"
-    assert d["receipt"]["applied_operations"] == 7
+    assert resp.status_code == 503
+    assert resp.json()["code"] == "approval_binding_required"
 
 
 def test_rule_tree_endpoint_returns_real_compiled_ruleset() -> None:

@@ -138,7 +138,10 @@ def register_workspace_routes(app: FastAPI) -> None:
         raw_path = str(request.get("path") or "").strip()
         if not raw_path:
             return JSONResponse(status_code=400, content={"status": "error", "error": "缺少文件夹路径 path"})
-        folder = Path(raw_path).expanduser()
+        folder = Path(raw_path).expanduser().resolve()
+        roots = getattr(app.state, "workspace_roots", (_REPO_ROOT,))
+        if not any(folder.is_relative_to(Path(root).resolve()) for root in roots):
+            return JSONResponse(status_code=403, content={"status": "error", "error": "路径不在授权工作区根内"})
         try:
             folder.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
@@ -227,7 +230,11 @@ def register_workspace_routes(app: FastAPI) -> None:
             if arp in ("proceed", "ask"):
                 item["artifact_review_policy"] = arp
         if "folders" in request and isinstance(request["folders"], list):
-            item["folders"] = [str(f).strip() for f in request["folders"] if str(f).strip()]
+            folders = [Path(str(f).strip()).expanduser().resolve() for f in request["folders"] if str(f).strip()]
+            roots = getattr(app.state, "workspace_roots", (_REPO_ROOT,))
+            if any(not any(f.is_relative_to(Path(root).resolve()) for root in roots) for f in folders):
+                return JSONResponse(status_code=403, content={"status": "error", "error": "路径不在授权工作区根内"})
+            item["folders"] = [str(f) for f in folders]
         _save(data)
         return JSONResponse(content={"status": "success", "item": item})
 

@@ -1,12 +1,8 @@
-"""工作台控制面鉴权（审核 🔴 修复）：本地 Bearer token 守卫。
+"""本地工作台 Bearer 认证与 Host/Origin 边界。
 
-威胁模型：本地桌面工作台——防的是局域网/同机其他进程对**变更端点**的任意调用
-（改 LLM 配置、刷后台任务、审批放行、上传写盘、真机导出）。
-设计：
-- token 来源优先级：``OPENBIMAGENT_WORKBENCH_TOKEN`` 环境变量 → ``config/workbench.local.toml``
-  （首次启动自动生成并落盘；``config/*.local.toml`` 已 gitignore，绝不入库）。
-- 守卫范围：``/api/v1/**`` 的**非 GET/HEAD/OPTIONS** 请求；只读端点保持开放（M2 只读网关语义不变）。
-- token 经 ``add_web_ui(token=...)`` 注入所伺服页面（同源使用，不出现在任何 API 响应体中）。
+Token 来源：环境变量 OPENBIMAGENT_WORKBENCH_TOKEN 或 config/workbench.local.toml。
+正式工作台 API 包括敏感读取均需认证；显式 M2 只读装配保留开放读取。
+Token 不注入匿名 HTML；本机操作员自行配置客户端凭据。认证不等于审批或执行隔离。
 """
 
 from __future__ import annotations
@@ -44,21 +40,61 @@ def load_or_create_token() -> str:
     return token
 
 
-def add_auth(app: FastAPI, token: str) -> None:
-    """注册 Bearer token 守卫中间件（仅拦截 /api/v1/** 的变更方法）。"""
+def add_auth(app: FastAPI, token: str, *, protect_reads: bool = True, local_only: bool = True) -> None:
+    """本地单操作员认证。Host/Origin 边界不替代 Bearer 身份验证。"""
+    from ipaddress import ip_address
+    from urllib.parse import urlsplit
+
+    from openbimagent.server.correlation_identity import is_m2_correlation_id
+
+    if not token.strip():
+        raise ValueError("workbench token must not be empty")
+
+    def loopback(host: str | None) -> bool:
+        if host == "localhost":
+            return True
+        try:
+            return ip_address(host or "").is_loopback
+        except ValueError:
+            return False
 
     @app.middleware("http")
-    async def _workbench_auth_guard(request: Request, call_next):  # type: ignore[no-untyped-def]
-        if request.method in ("GET", "HEAD", "OPTIONS"):
-            return await call_next(request)
+    async def _workbench_auth_guard(request: Request, call_next):
+        def reject(status: int, code: str, message: str) -> JSONResponse:
+            return JSONResponse(status_code=status, content={"status": "error", "code": code, "error": message})
+
+        if local_only:
+            # testclient is an in-process ASGI transport, never a TCP peer address.
+            peer = request.client.host if request.client else None
+            in_process = peer == "testclient" and request.url.hostname == "testserver"
+            if not in_process and (not loopback(request.url.hostname) or (peer != "testclient" and not loopback(peer))):
+                return reject(403, "local_only", "仅允许本机访问")
+            origin = request.headers.get("origin")
+            if origin:
+                try:
+                    parsed = urlsplit(origin)
+                    valid = parsed.scheme in ("http", "https") and loopback(parsed.hostname)
+                except ValueError:
+                    valid = False
+                if not valid:
+                    return reject(403, "origin_denied", "Origin 不在本机边界内")
         if not request.url.path.startswith("/api/v1/"):
             return await call_next(request)
-        if request.headers.get("authorization", "") == f"Bearer {token}":
-            return await call_next(request)
-        return JSONResponse(
-            status_code=401,
-            content={
-                "status": "error",
-                "error": "未授权：变更端点需要 Authorization: Bearer <workbench token>（token 见 config/workbench.local.toml 或所伺服页面注入）",
-            },
-        )
+        needs_auth = protect_reads or request.method not in ("GET", "HEAD", "OPTIONS")
+        if needs_auth:
+            values = request.headers.getlist("authorization")
+            if len(values) != 1 or not secrets.compare_digest(values[0].encode(), f"Bearer {token}".encode()):
+                return reject(401, "unauthorized", "需要 Authorization: Bearer <workbench token>")
+            request.state.actor = "human:web-operator"
+        ids = request.headers.getlist("x-request-id")
+        if len(ids) != 1 or not is_m2_correlation_id(ids[0]):
+            if not protect_reads:
+                from openbimagent.server.contracts import M2ApiEnvelope, M2ErrorCode, make_m2_api_error
+                error = make_m2_api_error(code=M2ErrorCode.INVALID_REQUEST,
+                                          message="缺失、重复或非法 X-Request-ID", request_id="invalid-request")
+                envelope = M2ApiEnvelope(request_id="invalid-request", ok=False, error=error)
+                return JSONResponse(status_code=400, content=envelope.model_dump(mode="json"))
+            return reject(400, "invalid_request", "缺失、重复或非法 X-Request-ID")
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = ids[0]
+        return response

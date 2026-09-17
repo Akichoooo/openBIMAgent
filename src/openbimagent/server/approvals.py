@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -196,11 +196,15 @@ def add_approvals(app: FastAPI) -> None:
         return {"status": "success", "items": items, "count": len(items)}
 
     @app.post("/api/v1/approvals/{ticket_id}/decide", summary="审批决策（approved/rejected；写决策回执；expired 票据 410）", tags=["Workbench"])
-    async def decide_approval(ticket_id: str, request: dict[str, Any]) -> JSONResponse:
+    async def decide_approval(ticket_id: str, request: dict[str, Any], http_request: Request) -> JSONResponse:
         decision = str(request.get("decision", "")).strip().lower()
         if decision not in ("approved", "rejected"):
             return JSONResponse(status_code=400, content={"status": "error", "error": "decision 必须是 approved/rejected"})
-        actor = str(request.get("actor", "human:web-operator"))
+        actor = getattr(http_request.state, "actor", None)
+        if not actor:
+            return JSONResponse(status_code=401, content={"status": "error", "error": "认证身份缺失"})
+        if "actor" in request and request["actor"] != actor:
+            return JSONResponse(status_code=403, content={"status": "error", "error": "actor 与认证身份不匹配"})
         with _lock:
             ticket = _pending.get(ticket_id)
             if ticket is None:
@@ -215,7 +219,16 @@ def add_approvals(app: FastAPI) -> None:
                     status_code=410,
                     content={"status": "error", "error": "票据已过期（进程重启后运行线程不可恢复），请拒绝以作废"},
                 )
-        ticket["decision"] = decision
+            if ticket.get("decision") is not None:
+                return JSONResponse(status_code=409, content={"status": "error", "error": "票据已决策"})
+            if time.monotonic() - ticket["_mono"] >= _timeout_s():
+                return JSONResponse(status_code=410, content={"status": "error", "error": "票据已超时"})
+            ticket["decision"] = decision
+            ticket["actor"] = actor
+            instruction = request.get("instruction")
+            if isinstance(instruction, str) and instruction.strip():
+                ticket["instruction"] = instruction.strip()
+            ticket["event"].set()
         from openbimagent.audit import log_audit
         
         log_audit(
@@ -228,9 +241,4 @@ def add_approvals(app: FastAPI) -> None:
             },
             "ok" if decision == "approved" else "rejected",
         )
-        ticket["actor"] = actor
-        instruction = request.get("instruction")
-        if isinstance(instruction, str) and instruction.strip():
-            ticket["instruction"] = instruction.strip()
-        ticket["event"].set()
         return JSONResponse(content={"status": "success", "id": ticket_id, "decision": decision})

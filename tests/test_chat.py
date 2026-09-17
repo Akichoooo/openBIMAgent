@@ -30,7 +30,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("OPENBIMAGENT_USAGE_LOG", str(tmp_path / "usage_log.jsonl"))  # 不污染真实用量流水账
     from openbimagent.server.fastapi_app import build_demo_app
 
-    c = TestClient(build_demo_app())
+    c = TestClient(build_demo_app(), base_url="http://localhost", headers={"X-Request-ID": "test-chat"})
     c.headers["Authorization"] = "Bearer test-wb-token"
     return c
 
@@ -65,7 +65,7 @@ def test_chat_requires_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setenv("OPENBIMAGENT_USAGE_LOG", str(tmp_path / "u.jsonl"))
     from openbimagent.server.fastapi_app import build_demo_app
 
-    c = TestClient(build_demo_app())
+    c = TestClient(build_demo_app(), base_url="http://localhost", headers={"X-Request-ID": "test-chat"})
     resp = c.post("/api/v1/chat", json={"message": "hello"})
     assert resp.status_code == 401
 

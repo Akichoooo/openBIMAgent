@@ -123,6 +123,10 @@ class TestRunEndHook:
     @pytest.fixture(scope="class")
     def client(self, tmp_path_factory: pytest.TempPathFactory) -> TestClient:
         tmp = tmp_path_factory.mktemp("hooks-run")
+        saved_env = {k: os.environ.get(k) for k in (
+            "OPENBIMAGENT_WORKBENCH_TOKEN", "OPENBIMAGENT_SESSIONS_DIR",
+            "OPENBIMAGENT_PENDING_APPROVALS", "OPENBIMAGENT_ARCHIVE_DIR", "OPENBIMAGENT_SKILLS_ROOT",
+        )}
         os.environ["OPENBIMAGENT_WORKBENCH_TOKEN"] = "test-wb-token"
         os.environ["OPENBIMAGENT_SESSIONS_DIR"] = str(tmp / "sessions")
         os.environ["OPENBIMAGENT_PENDING_APPROVALS"] = str(tmp / "pending.json")
@@ -138,10 +142,12 @@ class TestRunEndHook:
                 return super().request(method, url, headers=headers, **kwargs)
 
         yield _RidClient(build_demo_app())
-        os.environ.pop("OPENBIMAGENT_SESSIONS_DIR", None)
-        os.environ.pop("OPENBIMAGENT_PENDING_APPROVALS", None)
-        os.environ.pop("OPENBIMAGENT_ARCHIVE_DIR", None)
-        os.environ.pop("OPENBIMAGENT_SKILLS_ROOT", None)
+        # 恢复 env 快照（含 token）：避免污染 test_m2_fastapi 等依赖真实 token 的测试
+        for key, old in saved_env.items():
+            if old is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old
 
     def test_run_end_fires_after_run(self, client: TestClient) -> None:
         bus = default_hook_bus()

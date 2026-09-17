@@ -16,9 +16,17 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import base64
+import hashlib
+import io
+import json
+import os
+from contextlib import redirect_stdout
+from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -74,11 +82,15 @@ def _make_mock_client(
 
     async def _execute_code(code: str) -> dict[str, Any]:
         snap = snapshots.pop(0) if snapshots else str(snap_dir / "snap_default.blend")
-        Path(snap).write_bytes(b"BLENDER-mock-snapshot")  # 创建真实文件让 record_snapshot 能算 hash
+        Path(snap).write_bytes(b"BLENDER-old-scene")
+        accepted = Path(snap).with_name(Path(snap).stem + "_post_exec.blend")
+        accepted.write_bytes(b"BLENDER-new-scene")
         return {
             "executed": True,
             "result": "ok",
             "snapshot": snap,
+            "accepted_snapshot": str(accepted),
+            "accepted_snapshot_phase": "post_exec",
             "scope_checked": True,
         }
 
@@ -228,7 +240,9 @@ def test_perfect_score_first_iter_converges(tmp_path) -> None:
     assert result.scores == (9.0,)
     # best_snapshot 是首轮快照路径(平台无关:用 as_posix 比较,避免 Windows \ 与 Unix / 分歧)
     assert result.best_snapshot is not None
-    assert result.best_snapshot.as_posix().endswith("snapshots/snap_iter1.blend")
+    assert result.best_snapshot.name == "best_iter001.blend"
+    assert result.best_snapshot.read_bytes() == b"BLENDER-new-scene"
+    assert (tmp_path / "snapshots/snap_iter1.blend").read_bytes() == b"BLENDER-old-scene"
     assert mocks["execute_code"].await_count == 1
     assert mocks["restore_snapshot"].await_count == 0  # 未触发回滚
 
@@ -290,11 +304,13 @@ def test_divergence_fallback_restores_best_snapshot(tmp_path) -> None:
     assert result.best_score == 7.0
     # best_snapshot 是首轮的快照路径(平台无关:as_posix 比较,避免 Windows \ 与 Unix / 分歧)
     assert result.best_snapshot is not None
-    assert result.best_snapshot.as_posix().endswith("snapshots/snap_iter1.blend")
+    assert result.best_snapshot.name == "best_iter001.blend"
+    assert result.best_snapshot.read_bytes() == b"BLENDER-new-scene"
+    assert (tmp_path / "snapshots/snap_iter1.blend").read_bytes() == b"BLENDER-old-scene"
     # 回滚调用:restore_snapshot(snapshot_path=best_snapshot 路径)
     mocks["restore_snapshot"].assert_awaited_once()
     call_kwargs = mocks["restore_snapshot"].call_args.kwargs
-    assert Path(call_kwargs["snapshot_path"]).as_posix().endswith("snapshots/snap_iter1.blend")
+    assert Path(call_kwargs["snapshot_path"]) == result.best_snapshot
 
 
 def test_convergence_delta_when_score_stalls_below_threshold(tmp_path) -> None:
@@ -645,3 +661,138 @@ def test_builder_fn_receives_batch_context(tmp_path) -> None:
     assert ctx["blend_path"].endswith("scene.blend")
     assert ctx["label"] == "hero"
     assert ctx["ir"] == ir
+
+
+@pytest.mark.parametrize("response_kind", ["legacy", "text", "pre_alias", "missing", "wrong_phase"])
+def test_missing_post_exec_evidence_rejected(tmp_path, response_kind):
+    client, mocks = _make_mock_client(tmp_path=tmp_path)
+    pre = tmp_path / "pre.blend"
+    pre.write_bytes(b"old-scene")
+    post = tmp_path / "post.blend"
+    post.write_bytes(b"new-scene")
+    response = {"executed": True, "snapshot": str(pre)}
+    if response_kind == "text":
+        response = {"raw": "executed successfully; snapshot: pre.blend"}
+    elif response_kind != "legacy":
+        response.update(accepted_snapshot=str(post), accepted_snapshot_phase="post_exec")
+        if response_kind == "pre_alias":
+            response["accepted_snapshot"] = str(pre)
+        elif response_kind == "missing":
+            post.unlink()
+        else:
+            response["accepted_snapshot_phase"] = "pre_exec"
+    mocks["execute_code"].side_effect = None
+    mocks["execute_code"].return_value = response
+    with pytest.raises(BlenderClientError, match="post_exec"):
+        asyncio.run(run_render_loop(
+            ["cube"], tmp_path / "scene.blend", min_score=8, max_iters=1,
+            client=client, critic=MockCritic([10]), builder_fn=lambda *_: "pass",
+            work_dir=tmp_path / "work",
+        ))
+    mocks["screenshot_or_render"].assert_not_awaited()
+    assert pre.read_bytes() == b"old-scene"
+
+
+def _snapshot_host(tmp_path):
+    """Execute actual addon methods with fake bpy, without importing/starting Blender."""
+    source = (Path(__file__).resolve().parents[1] / "mcp_servers/blender_mcp/addon.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(source)
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "BlenderMCPServer")
+    methods = [n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name in {
+        "_save_snapshot", "restore_snapshot", "execute_code",
+    }]
+    scene = SimpleNamespace(content=b"old-scene", objects=[])
+    saved = []
+
+    def save(*, filepath, copy):
+        assert copy is True
+        Path(filepath).write_bytes(scene.content)
+        saved.append(Path(filepath))
+        return {"FINISHED"}
+
+    def restore(*, filepath):
+        scene.content = Path(filepath).read_bytes()
+
+    bpy = SimpleNamespace(
+        context=SimpleNamespace(scene=scene),
+        ops=SimpleNamespace(wm=SimpleNamespace(save_as_mainfile=save, open_mainfile=restore)),
+    )
+    ns = dict(bpy=bpy, bmesh=None, mathutils=None, math=None, os=os, datetime=datetime,
+              json=json, hashlib=hashlib, io=io, redirect_stdout=redirect_stdout,
+              validate_code_ast=lambda _: [], log=lambda *_: None)
+    exec(compile(ast.Module(body=methods, type_ignores=[]), "addon_snapshot_contract", "exec"), ns)
+    host_cls = type("SnapshotHost", (), {n.name: ns[n.name] for n in methods})
+    host = host_cls()
+    host.snapshot_dir = str(tmp_path / "host_snapshots")
+    host.snapshots, host.last_snapshot, host.editable_scope = [], None, None
+    return host, scene, saved, bpy
+
+
+def test_addon_post_exec_content_and_pre_exec_default_rollback(tmp_path):
+    host, scene, saved, _ = _snapshot_host(tmp_path)
+    receipt = host.execute_code("bpy.context.scene.content = b'new-scene'")
+    assert receipt["accepted_snapshot_phase"] == "post_exec"
+    assert Path(receipt["snapshot"]).read_bytes() == b"old-scene"
+    assert Path(receipt["accepted_snapshot"]).read_bytes() == b"new-scene"
+    assert len(saved) == 2
+    host.restore_snapshot()
+    assert scene.content == b"old-scene"
+    host.restore_snapshot(snapshot_path=receipt["accepted_snapshot"])
+    assert scene.content == b"new-scene"
+
+
+@pytest.mark.parametrize("failure", ["execution", "scope", "post_save"])
+def test_addon_failed_execution_never_accepts_and_preserves_rollback(tmp_path, failure):
+    host, scene, saved, bpy = _snapshot_host(tmp_path)
+    code = "bpy.context.scene.content = b'partial'"
+    if failure == "execution":
+        code += "\nraise ValueError('failed')"
+    elif failure == "scope":
+        host.editable_scope = {}
+        host._fingerprint_out_of_scope = lambda: {}
+        host._verify_scope = lambda *_: ["outside scope"]
+    else:
+        original = bpy.ops.wm.save_as_mainfile
+
+        def save(**kwargs):
+            if "post_exec" in kwargs["filepath"]:
+                return {"CANCELLED"}
+            return original(**kwargs)
+
+        bpy.ops.wm.save_as_mainfile = save
+    with pytest.raises(Exception):
+        host.execute_code(code)
+    assert scene.content == b"old-scene"
+    assert len(saved) == 1
+    host.restore_snapshot()
+    assert scene.content == b"old-scene"
+
+
+def test_best_survives_real_addon_rotation_and_repeated_work_dir(tmp_path):
+    host, scene, _, _ = _snapshot_host(tmp_path)
+    client, mocks = _make_mock_client(tmp_path=tmp_path)
+    mocks["execute_code"].side_effect = host.execute_code
+    mocks["restore_snapshot"].side_effect = host.restore_snapshot
+    work = tmp_path / "work"
+    result = asyncio.run(run_render_loop(
+        ["cube"], tmp_path / "scene.blend", min_score=10, max_iters=15,
+        client=client, critic=MockCritic([9, 5, 6, 5, 6, 5, 6, 5, 6, 5, 6, 5, 6, 4, 3]),
+        builder_fn=lambda *_: "bpy.context.scene.content = b'first-best'",
+        work_dir=work,
+    ))
+    assert result.terminate_reason == "divergence_fallback"
+    assert len(host.snapshots) == 12
+    assert not list((tmp_path / "host_snapshots").glob("*")) == []
+    assert result.best_snapshot.read_bytes() == b"first-best"
+    assert str(result.best_snapshot) not in host.snapshots
+    assert scene.content == b"first-best"
+    again = asyncio.run(run_render_loop(
+        ["cube"], tmp_path / "scene.blend", min_score=8, max_iters=1,
+        client=client, critic=MockCritic([9]),
+        builder_fn=lambda *_: "bpy.context.scene.content = b'second-run'", work_dir=work,
+    ))
+    assert again.best_snapshot != result.best_snapshot
+    assert result.best_snapshot.read_bytes() == b"first-best"
+    assert again.best_snapshot.read_bytes() == b"second-run"

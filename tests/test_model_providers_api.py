@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
+import uuid
+
+import httpx
 
 from fastapi.testclient import TestClient
 import pytest
@@ -17,8 +21,35 @@ def client(tmp_path: Path, monkeypatch: Any) -> TestClient:
     monkeypatch.setenv("OPENBIMAGENT_LLM_BASELINE", str(baseline_toml))
     monkeypatch.setenv("OPENBIMAGENT_WORKBENCH_TOKEN", "test-token-123")
 
-    app = build_demo_app()
-    return TestClient(app)
+    monkeypatch.setenv("OPENBIMAGENT_PENDING_APPROVALS", str(tmp_path / "pending.json"))
+
+    class _RidClient(TestClient):
+        def build_request(self, method: str, url: str, **kwargs):  # type: ignore[override]
+            request = super().build_request(method, url, **kwargs)
+            request.headers.setdefault("X-Request-ID", f"test-{uuid.uuid4().hex[:16]}")
+            request.headers.setdefault("Authorization", "Bearer test-token-123")
+            return request
+
+    with _RidClient(build_demo_app()) as test_client:
+        yield test_client
+
+
+def test_client_headers_preserve_authentication_and_request_id(client: TestClient) -> None:
+    first = client.get("/api/v1/settings/models")
+    second = client.get("/api/v1/settings/models")
+    assert first.status_code == second.status_code == 200
+    assert first.headers["X-Request-ID"] != second.headers["X-Request-ID"]
+    explicit = client.get("/api/v1/settings/models", headers={"x-request-id": "test-explicit-id"})
+    assert explicit.status_code == 200, explicit.text
+    assert explicit.headers["X-Request-ID"] == "test-explicit-id"
+    denied = client.get("/api/v1/settings/models", headers={"authorization": "Bearer wrong-token"})
+    assert denied.status_code == 401, denied.text
+    assert denied.json()["code"] == "unauthorized"
+    missing_id = client.build_request("GET", "/api/v1/settings/models")
+    del missing_id.headers["X-Request-ID"]
+    invalid = client.send(missing_id)
+    assert invalid.status_code == 400, invalid.text
+    assert invalid.json()["code"] == "invalid_request"
 
 
 def test_models_list_and_crud(client: TestClient) -> None:
@@ -101,12 +132,32 @@ def test_models_list_and_crud(client: TestClient) -> None:
     assert del_p_res.json()["deleted"] == prov_id
 
 
-def test_provider_probe(client: TestClient) -> None:
-    headers = {"Authorization": "Bearer test-token-123"}
-    # Probe custom provider
-    res = client.post("/api/v1/settings/providers/prov_sensenova_jy/probe", json={"model": "glm-5.2"}, headers=headers)
-    assert res.status_code == 200
+@pytest.mark.parametrize("upstream_status", [200, 401])
+def test_provider_probe(client: TestClient, monkeypatch: pytest.MonkeyPatch, upstream_status: int) -> None:
+    # Exercise the real probe handler, but never contact a configured provider.
+    upstream = AsyncMock()
+    upstream.get.return_value = httpx.Response(
+        upstream_status, json={"data": [{"id": "test-model"}, {"name": "other-model"}, {}]}
+    )
+    context = MagicMock()
+    context.__aenter__ = AsyncMock(return_value=upstream)
+    context.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(httpx, "AsyncClient", MagicMock(return_value=context))
+    res = client.post(
+        "/api/v1/settings/providers/prov_sensenova_jy/probe",
+        json={"base_url": "https://provider.invalid/v1/", "api_key": "sk-probe-test"},
+    )
+    assert res.status_code == 200, res.text
     data = res.json()
-    assert "status" in data
-    assert "latency_ms" in data
+    assert data["latency_ms"] >= 0
+    upstream.get.assert_awaited_once_with(
+        "https://provider.invalid/v1/models",
+        headers={"User-Agent": "openBIMAgent/1.0", "Authorization": "Bearer sk-probe-test"},
+    )
+    if upstream_status == 200:
+        assert data["status"] == "success"
+        assert data["models"] == ["test-model", "other-model"]
+    else:
+        assert data["status"] == "error"
+        assert "HTTP 401" in data["error"]
 

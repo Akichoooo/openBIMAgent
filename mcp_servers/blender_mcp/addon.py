@@ -123,7 +123,7 @@ TOOL_MANIFEST = [
     {"name": "camera_path_render", "since": "fork", "desc": "Move a temp camera through waypoints and render each frame."},
     {"name": "set_editable_scope", "since": "fork", "desc": "Whitelist object names / collections that execute_code may touch."},
     {"name": "get_editable_scope", "since": "fork", "desc": "Return the current scope-lock configuration."},
-    {"name": "restore_snapshot", "since": "fork", "desc": "Reload a pre-execution .blend snapshot (default: latest)."},
+    {"name": "restore_snapshot", "since": "fork", "desc": "Reload a .blend snapshot (default: latest pre-exec rollback point)."},
     {"name": "get_telemetry_consent", "since": "fork(a)", "desc": "Always consent=False (telemetry hard-disabled)."},
 ]
 
@@ -592,6 +592,7 @@ class BlenderMCPServer:
                     "banned_names": sorted(BANNED_BUILTIN_NAMES),
                     "dunder_access": "banned",
                     "auto_snapshot_before_exec": True,
+                    "accepted_snapshot_phase": "post_exec",
                     "rollback_on_error_or_scope_violation": True,
                 },
                 "scope_lock": {
@@ -604,7 +605,8 @@ class BlenderMCPServer:
                     "black_threshold_mean_luminance": BLACK_THRESHOLD,
                     "headless_method": "bpy.ops.render.render(write_still=True) fallback",
                 },
-                "snapshots": {"dir": self.snapshot_dir, "keep_last": 12},
+                "snapshots": {"dir": self.snapshot_dir, "keep_last": 12,
+                          "rollback_tag": "pre_exec", "accepted_tag": "post_exec"},
             },
             "telemetry": {"enabled": TELEMETRY_ENABLED, "hard_disabled": True},
             "known_issues": KNOWN_ISSUES,
@@ -856,10 +858,14 @@ class BlenderMCPServer:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         path = os.path.join(self.snapshot_dir, f"snapshot_{ts}_{tag}.blend")
         # copy=True: save a snapshot copy without changing the session's filepath
-        bpy.ops.wm.save_as_mainfile(filepath=path, copy=True)
+        result = bpy.ops.wm.save_as_mainfile(filepath=path, copy=True)
+        if 'FINISHED' not in result or not os.path.isfile(path) or os.path.getsize(path) == 0:
+            raise RuntimeError(f"snapshot save failed: {path}")
         self.snapshots.append(path)
-        self.last_snapshot = path
-        # rotate
+        # Keep default restore pointed at the pre-execution rollback point.
+        if tag != "post_exec":
+            self.last_snapshot = path
+        # rotate (render_loop pins its best copy outside this list)
         while len(self.snapshots) > 12:
             old = self.snapshots.pop(0)
             try:
@@ -878,8 +884,10 @@ class BlenderMCPServer:
             log(f"snapshot event log failed: {e}")
         return path
 
-    def restore_snapshot(self, path=None):
-        target = path or self.last_snapshot
+    def restore_snapshot(self, path=None, snapshot_path=None):
+        if path and snapshot_path and path != snapshot_path:
+            raise ValueError("conflicting snapshot paths")
+        target = path or snapshot_path or self.last_snapshot
         if not target:
             raise ValueError("no snapshot available to restore")
         if not os.path.exists(target):
@@ -1006,7 +1014,13 @@ class BlenderMCPServer:
     # OPENBIMAGENT (c)+(g): sandboxed execute_code
     # ------------------------------------------------------------------
     def execute_code(self, code):
-        """Execute Blender Python code with AST allowlist + auto snapshot + scope lock."""
+        """Execute Blender Python code with AST allowlist + auto snapshot + scope lock.
+
+        Returns ``snapshot`` (pre-exec rollback point) and ``accepted_snapshot``
+        (post-exec copy of the accepted scene, saved only after execution and
+        scope verification both succeed). Old hosts see the extra key and are
+        unaffected; callers MUST NOT treat ``snapshot`` as the scored scene.
+        """
         # 1) AST allowlist (c) -- reject before touching the scene
         violations = validate_code_ast(code)
         if violations:
@@ -1048,9 +1062,18 @@ class BlenderMCPServer:
                 raise Exception(
                     "Scope violation (rolled back to snapshot): " + "; ".join(violations))
 
+        # 5) Only persist the accepted scene after successful execution AND scope
+        # verification. The legacy snapshot field remains the pre-exec rollback.
+        try:
+            accepted_snapshot = self._save_snapshot(tag="post_exec")
+        except Exception:
+            bpy.ops.wm.open_mainfile(filepath=snapshot_path)
+            raise
         captured_output = capture_buffer.getvalue()
         return {"executed": True, "result": captured_output,
                 "snapshot": snapshot_path, "code_hash": code_hash,
+                "accepted_snapshot": accepted_snapshot,
+                "accepted_snapshot_phase": "post_exec",
                 "scope_checked": scope_active}
 
     # ------------------------------------------------------------------

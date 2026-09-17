@@ -296,6 +296,16 @@ def add_runs(app: FastAPI) -> None:
         playbook = _PLAYBOOKS.get(playbook_key, _PLAYBOOKS["municipal_utility"])
         if not playbook.is_file():
             return JSONResponse(status_code=500, content={"status": "error", "error": f"playbook 缺失: {playbook}"})
+        from openbimagent.server.workspaces import current_workspace_id, get_workspace_execution_mode
+
+        ws_id = str(request.get("workspace_id") or request.get("workspace") or "").strip() or None
+        effective_ws = ws_id or current_workspace_id()
+        effective_mode = str(request.get("mode") or "").strip() or get_workspace_execution_mode(effective_ws)
+        if effective_mode != "agent":
+            return JSONResponse(status_code=403, content={
+                "status": "error", "code": "approval_required",
+                "error": "HTTP runs require agent mode with server-side approval gates",
+            })
         with _run_lock:
             idem = str(request.get("idempotency_key") or "").strip()
             if idem:
@@ -349,13 +359,6 @@ def add_runs(app: FastAPI) -> None:
                 "done_at": None,
                 "error": None,
             }
-            from openbimagent.server.workspaces import current_workspace_id, get_workspace_execution_mode
-
-            ws_id = str(request.get("workspace_id") or request.get("workspace") or "").strip() or None
-            effective_ws = ws_id or current_workspace_id()
-            req_mode = str(request.get("mode") or "").strip()
-            effective_mode = req_mode or get_workspace_execution_mode(effective_ws)
-
             thread = threading.Thread(
                 target=_execute_run,
                 args=(brief, playbook, session_id, enriched_context, effective_ws, effective_mode),

@@ -18,8 +18,8 @@
 8. **HTML 验收页**:每批结束调 write_html_report(三视角截图 + rubric 表 + 返工指令 + 留痕)。
 9. **事件落盘**:screenshot/score/patch/snapshot 四类 custom 事件进 SessionStore。
 
-best_snapshot 为 best-so-far .blend 文件路径(fork 快照机制承载,divergence_fallback 时
-restore_snapshot 回滚);阈值在 playbook `acceptance.blender_loop`;超限 ESCALATE 不死循环。
+best_snapshot 为 best-so-far .blend 文件路径(复制到 work_dir/best_snapshots 独立受控保留,
+不受 addon 12 份轮转影响;divergence_fallback 时 restore_snapshot 回滚);阈值在 playbook `acceptance.blender_loop`;超限 ESCALATE 不死循环。
 """
 
 from __future__ import annotations
@@ -28,9 +28,13 @@ from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from shutil import copyfile
+from tempfile import mkdtemp
+from typing import Any, TYPE_CHECKING
 
-from openbimagent.mcp_clients.blender import BlenderMCPClient
+if TYPE_CHECKING:
+    from openbimagent.mcp_clients.blender import BlenderMCPClient
+
 from openbimagent.session.schema import EventType
 from openbimagent.session.store import SessionStore
 from openbimagent.vision.html_report import write_html_report
@@ -60,7 +64,8 @@ builder_fn 拿到 prev_critique.actionable_feedback(可执行返工指令)后产
 
 @dataclass(frozen=True)
 class RenderLoopResult:
-    """Blender 环收敛结果;best_snapshot 为 best-so-far 回退点(ADR-0004,.blend 文件路径)。"""
+    """Blender 环收敛结果;best_snapshot 为 best-so-far 回退点(ADR-0004,.blend 文件路径,
+    已复制到 work_dir/best_snapshots 独立受控保留,不受 addon 12 份轮转影响)。"""
 
     converged: bool
     best_score: float
@@ -77,7 +82,7 @@ async def run_render_loop(
     *,
     min_score: float,
     max_iters: int,
-    client: BlenderMCPClient,
+    client: "BlenderMCPClient",
     critic: Critic,
     builder_fn: BuilderFn,
     work_dir: Path,
@@ -95,9 +100,15 @@ async def run_render_loop(
     流程见模块 docstring(范围锁 → 建模 → 自检 → 验收图 → critic_render 六维 → 返工循环 →
     收敛四选一 + best-so-far → HTML 验收页)。VLMCritic 一律由调用方注入(测试用 MockCritic,
     禁真实 LLM 请求)。session 非空时每轮落 screenshot/score/patch/snapshot 四类 custom 事件。
+    execute_code 返回的 accepted_snapshot 必须是 post_exec 场景(非 pre_exec 回滚点);旧客户端/
+    旧宿主缺少该证据时 fail closed(BlenderClientError),绝不假通过。best-so-far 复制到
+    work_dir/best_snapshots,防 addon 12 份轮转删除被引用的 best 文件。
     cameras 与 turntable_target 二选一:cameras 非空走 batch_render,否则 turntable_target 非空
     走 camera_turntable;两者都空则只用视口截图评分(验收图缺省,不推荐)。
     """
+    # Avoid the existing mcp_clients -> assembly -> vision import cycle.
+    from openbimagent.mcp_clients.blender import BlenderClientError
+
     # resolve() 成绝对路径:addon 收到的 filepath/output_dir 会按 Blender 进程 cwd 解析,
     # 相对路径会被解析到错误驱动器(如 C:\)→ 目录不存在 → 黑图。snapshot 路径由 addon 自拼(绝对)不受影响。
     work_dir = Path(work_dir).resolve()
@@ -119,6 +130,7 @@ async def run_render_loop(
 
     best_score = -1.0
     best_snapshot: Path | None = None
+    accepted_dir: Path | None = None
     prev_score: float | None = None
     consecutive_drops = 0
     scores: list[float] = []
@@ -135,11 +147,29 @@ async def run_render_loop(
         # 2. 建模:builder_fn 产出代码 → execute_code(addon 自动快照 + AST + 范围锁校验)
         code = builder_fn(prev_critique, dict(batch_ctx))
         exec_result = await client.execute_code(code)
-        snapshot_path_str = exec_result.get("snapshot")
-        snapshot_path = Path(snapshot_path_str) if snapshot_path_str else None
+        # Legacy `snapshot` is the pre-exec rollback point, never the scored scene.
+        # Missing evidence (including old stdio text responses) must fail closed.
+        accepted = exec_result.get("accepted_snapshot")
+        if (
+            exec_result.get("executed") is not True
+            or exec_result.get("accepted_snapshot_phase") != "post_exec"
+            or not isinstance(accepted, str)
+            or not accepted
+        ):
+            raise BlenderClientError("execute_code missing post_exec accepted_snapshot evidence")
+        snapshot_path = Path(accepted)
+        rollback = exec_result.get("snapshot")
+        if (
+            not snapshot_path.is_absolute()
+            or snapshot_path.suffix.lower() != ".blend"
+            or not snapshot_path.is_file()
+            or snapshot_path.stat().st_size == 0
+            or (rollback and snapshot_path.resolve() == Path(rollback).resolve())
+        ):
+            raise BlenderClientError("invalid post_exec accepted_snapshot (missing file or pre_exec alias)")
 
-        # 2b. snapshot 事件落盘(fork 快照机制承载;ADR-0004 回滚点)
-        if session is not None and snapshot_path is not None:
+        # 2b. snapshot 事件对应实际评分场景,而不是执行前的回滚点。
+        if session is not None:
             session.record_snapshot(snapshot_path)
 
         # 3. 自检图(视口截图,headless 走 render_fallback)
@@ -206,10 +236,18 @@ async def run_render_loop(
         score = critique.overall_score
         scores.append(score)
 
-        # 6. best-so-far 快照(ADR-0004;fork .blend 文件路径)
-        if score > best_score and snapshot_path is not None:
+        # 6. best-so-far 快照(ADR-0004)。addon 的 12 份轮转会删除旧 accepted_snapshot,
+        # 因此把 best 复制到 work_dir/best_snapshots 下受控保留(best_*;best_snapshot 始终
+        # 指向这份副本,回滚路径不受 addon 轮转影响)。
+        if score > best_score:
+            if accepted_dir is None:
+                accepted_root = work_dir / "best_snapshots"
+                accepted_root.mkdir(parents=True, exist_ok=True)
+                accepted_dir = Path(mkdtemp(prefix="run_", dir=accepted_root))
+            best_copy = accepted_dir / f"best_iter{iteration:03d}.blend"
+            copyfile(snapshot_path, best_copy)
             best_score = score
-            best_snapshot = snapshot_path
+            best_snapshot = best_copy
 
         # 7. 收敛判定(四选一;顺序同 ADR-0004:fallback 先于 delta,防缓慢下降误判)
         if score >= min_score:

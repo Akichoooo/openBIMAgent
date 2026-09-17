@@ -160,6 +160,7 @@ class TestToolsetUnit:
 
 @pytest.fixture(scope="module")
 def client() -> TestClient:
+    saved_token = os.environ.get("OPENBIMAGENT_WORKBENCH_TOKEN")
     os.environ["OPENBIMAGENT_WORKBENCH_TOKEN"] = "test-wb-token"
     from openbimagent.server.fastapi_app import build_demo_app
 
@@ -172,7 +173,11 @@ def client() -> TestClient:
 
     yield _RidClient(build_demo_app())
     reset_toolset()
-    # 注意：不 pop OPENBIMAGENT_WORKBENCH_TOKEN——test_m2_fastapi 在 import 期 setdefault 依赖它存活
+    # 恢复 token env 快照：demo app 已在 build 时捕获 token，后续测试用原值即可
+    if saved_token is None:
+        os.environ.pop("OPENBIMAGENT_WORKBENCH_TOKEN", None)
+    else:
+        os.environ["OPENBIMAGENT_WORKBENCH_TOKEN"] = saved_token
 
 
 class TestToolsetEndpoints:
