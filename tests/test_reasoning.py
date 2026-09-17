@@ -50,9 +50,11 @@ def test_deepseek_thinking_type_plus_effort() -> None:
     }
 
 
-def test_unknown_model_fallback_generic_effort() -> None:
-    assert reasoning_payload("some-unknown-model", "medium") == {"reasoning_effort": "medium"}
-    assert reasoning_payload("some-unknown-model", "off") == {"reasoning_effort": "none"}
+def test_unknown_model_sends_no_reasoning_params() -> None:
+    """未知模型保守兼容:不发任何 reasoning 字段(服务端用自身默认,不冒 4xx 风险)。"""
+    assert reasoning_payload("some-unknown-model", "medium") == {}
+    assert reasoning_payload("some-unknown-model", "off") == {}
+    assert reasoning_payload("some-unknown-model", None) == {}
 
 
 def test_invalid_level_falls_back_to_medium() -> None:

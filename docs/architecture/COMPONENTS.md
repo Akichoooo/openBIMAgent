@@ -86,7 +86,7 @@
 ### 2.7 deliver.ifc_ids(G4 IFC4X3/IDS 交付门禁)
 
 - `build_ifc_ids_package()` 只接受严格 `SemanticSnapshot v1`，使用 IfcOpenShell `0.8.5+` 生成 IFC4X3 原生系统、检查井、端口、管段及系统/端口/连接关系；stable ID 确定性派生 IFC GlobalId，Source IR 身份写入 IfcProject 属性集，对象属性保留 canonical `source_ir_path`。
-- `municipal_utility.ids` 使用 buildingSMART IDS 1.0 的 entity/property/partOf 标准 facet，版本枚举固定为 `IFC4X3_ADD2`。项目固定 v1.0 Final 官方 XSD（仅规范化行尾空白，副本 SHA-256 固定为 `528d0969f0ba16bb211a77c431f450f6b4ca788e0839ed45929b285c81c6aa30`），生成后与每次语义验证前均离线 XSD 校验；摘要漂移、非标准元素、错误 occurrence 位置和非法版本均失败关闭。
+- `municipal_utility.ids` 使用 buildingSMART IDS 1.0 的 entity/property/partOf 标准 facet，版本枚举固定为 `IFC4X3_ADD2`。项目固定 v1.0 Final 官方 XSD（仅规范化行尾空白，副本以 `.gitattributes` 固定 LF 字节，SHA-256 为 `e48683c303203305ac16731df8f9fe883c43a756aeac6cf8e8dcfe06d389a684`），生成后与每次语义验证前均离线 XSD 校验；摘要漂移、非标准元素、错误 occurrence 位置和非法版本均失败关闭。
 - IDS 标准不表达 `IfcRelConnectsPorts.RealizingElement` 端口对，故连接完整性由独立 `IFC-REL-CONNECTS-PORTS` 确定性规则验证，并与 IDS findings 一起进入 `IfcIdsValidationReport v1` 和逐项 `RuleEvidence`，而不是扩展 IDS XML。
 - Report 可投影为 `ifc_ids_compliant` Domain Gate evidence；删除必要属性、破坏实体/PredefinedType、系统归属或连接关系均稳定 FAIL。`commit_ifc_ids_package()` 只在验证 PASS 时将 IFC、IDS、报告和证据提交到统一不可变 Artifact Manifest。
 

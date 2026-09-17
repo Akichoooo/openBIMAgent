@@ -11,7 +11,10 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
+
+import pytest
 
 from openbimagent.core.loop import (
     COMPACT_KEEP_RECENT,
@@ -69,6 +72,7 @@ def _run_compaction_loop(tmp_path: Path, provider: _Provider, *, window: int) ->
         approval_callback=lambda name, args: True,  # 测试环境免人工审批
     )
     loop._context_window = lambda: window  # 测试注入小窗口,免灌 128k 文本
+    loop._execute_tool = lambda tc: {"llm_view": "offline fixture result"}
     return loop
 
 
@@ -83,7 +87,12 @@ def test_compaction_triggers_and_preserves_anchors(tmp_path: Path) -> None:
     # 灌入超预算历史:system+首条 user + 多条大消息
     loop.messages.append({"role": "user", "content": "任务:生成管网"})
     for i in range(20):
-        loop.messages.append({"role": "assistant", "content": _big_text(2)})
+        loop.messages.append({
+            "role": "assistant", "content": _big_text(2),
+            "tool_calls": [{"id": f"c{i}", "type": "function", "function": {
+                "name": "read", "arguments": "{}",
+            }}],
+        })
         loop.messages.append({"role": "tool", "tool_call_id": f"c{i}", "content": _big_text(1)})
     budget = int(4096 * CONTEXT_BUDGET_RATIO)
     assert loop._estimate_tokens() > budget
@@ -131,3 +140,52 @@ def test_no_compaction_when_within_budget(tmp_path: Path) -> None:
     assert provider.clarify_calls == 0
     assert not any("[context-compaction]" in str(m.get("content", "")) for m in loop.messages)
     assert len(loop.messages) >= before  # 零干预,只增不压
+
+
+def test_compaction_preserves_complete_tool_groups(tmp_path: Path) -> None:
+    provider = _Provider([_resp("done")])
+    loop = _run_compaction_loop(tmp_path, provider, window=4096)
+    loop.messages.extend([
+        {"role": "user", "content": "original task"},
+        {"role": "assistant", "content": _big_text(10)},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "a", "type": "function", "function": {"name": "read", "arguments": "{}"}},
+            {"id": "b", "type": "function", "function": {"name": "read", "arguments": "{}"}},
+        ]},
+        {"role": "tool", "tool_call_id": "a", "content": "result a"},
+        {"role": "tool", "tool_call_id": "b", "content": "result b"},
+    ])
+    loop.run("continue")
+    messages = provider.calls[0]["messages"]
+    calls = {call["id"] for message in messages for call in message.get("tool_calls", [])}
+    results = {message["tool_call_id"] for message in messages if message["role"] == "tool"}
+    assert calls == results == {"a", "b"}
+    assert loop._estimate_tokens(messages) <= int(4096 * CONTEXT_BUDGET_RATIO)
+
+
+def test_oversized_task_rejected_before_provider_call(tmp_path: Path) -> None:
+    provider = _Provider([_resp("should not run")])
+    loop = _run_compaction_loop(tmp_path, provider, window=4096)
+    with pytest.raises(ValueError, match="上下文预算不足"):
+        loop.run(_big_text(10))
+    assert provider.calls == []
+    assert provider.clarify_calls == 0
+
+
+def test_cancel_during_summary_prevents_main_call(tmp_path: Path) -> None:
+    cancel = threading.Event()
+    calls = []
+
+    def provider(role, messages, **kwargs):
+        calls.append(role)
+        cancel.set()
+        return {"content": "summary"}
+
+    loop = _run_compaction_loop(tmp_path, provider, window=4096)
+    loop.messages.extend([
+        {"role": "user", "content": "task"},
+        {"role": "assistant", "content": _big_text(10)},
+    ])
+    assert loop.run("continue", cancel_event=cancel) == ""
+    assert calls == ["clarify"]
+    assert not any("[context-compaction]" in message.get("content", "") for message in loop.messages)

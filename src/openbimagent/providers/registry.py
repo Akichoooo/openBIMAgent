@@ -22,26 +22,14 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from openbimagent.providers import dialects
-from openbimagent.providers.dialects import PROVIDER_TYPE_MAP, CircuitBreaker, DialectError, reasoning_payload
+from openbimagent.providers.dialects import reasoning_payload
+from openbimagent.providers.dialects import PROVIDER_TYPE_MAP, CircuitBreaker, DialectError
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "models.toml"
 """仓库内置 models.toml(src/openbimagent/providers/registry.py → 上溯三级为仓库根)。"""
 
 PROFILE_ENV_VAR = "OPENBIMAGENT_PROFILE"
 DEFAULT_PROFILE = "official"
-
-#: per-role 默认思考档位(统一 5 档);质量咽喉(critic/modeler/planner)高档,杂活(clarify/deliver)低档。
-#: 与 models.toml [reasoning_defaults] 镜像;chat(reasoning_level=...) 可显式覆盖。
-_REASONING_DEFAULTS: dict[str, str] = {
-    "critic_render": "high",
-    "critic_scad": "high",
-    "modeler": "high",
-    "planner": "high",
-    "orchestrator": "medium",
-    "researcher": "medium",
-    "clarify": "low",
-    "deliver": "low",
-}
 
 
 class ProviderKeyError(RuntimeError):
@@ -80,6 +68,22 @@ class ResilienceConfig(BaseModel):
     retry: dict[str, Any] = Field(default_factory=lambda: {"max": 3, "backoff": "exponential", "base_ms": 1000})
     timeout_s: int = 120
     circuit_breaker: dict[str, Any] = Field(default_factory=lambda: {"failures": 5, "cooldown_s": 300})
+
+
+_REASONING_DEFAULTS: dict[str, str] = {
+    "orchestrator": "medium",
+    "planner": "high",
+    "modeler": "high",
+    "critic_render": "high",
+    "critic_scad": "high",
+    "clarify": "low",
+    "deliver": "low",
+}
+"""per-role 统一思考档位:质量咽喉(规划/建模/双 critic)高档,高频杂活(clarify/deliver)低档。
+
+仅当调用方未显式传 reasoning 时生效;值须属 dialects.REASONING_LEVELS,经 reasoning_payload
+映射为各家 wire 参数(未知档位由 dialects 回退 medium,不抛错)。
+"""
 
 
 class ModelRegistry(BaseModel):
@@ -169,10 +173,6 @@ class ModelRegistry(BaseModel):
 
     # ---------- 统一调用入口 ----------
 
-    def reasoning_default_for(self, role: str) -> str | None:
-        """per-role 默认思考档位;未声明返回 None(用模型自身默认)。"""
-        return _REASONING_DEFAULTS.get(role)
-
     def chat(
         self,
         role: str,
@@ -180,13 +180,8 @@ class ModelRegistry(BaseModel):
         tools: list[dict[str, Any]] | None = None,
         cancel_event: threading.Event | None = None,
         tool_choice: str | dict[str, Any] | None = None,
-        reasoning_level: str | None = None,
     ) -> dict[str, Any]:
-        """角色 → 模型 → provider 解析后统一调用;沿降级链尝试,跳过熔断冷却中的模型。
-
-        reasoning_level:统一思考档位(off/low/medium/high/max);缺省用 per-role 默认(_REASONING_DEFAULTS)。
-        """
-        level = reasoning_level or self.reasoning_default_for(role)
+        """角色 → 模型 → provider 解析后统一调用;沿降级链尝试,跳过熔断冷却中的模型。"""
         chain = self.fallback_chain(self.model_name_for_role(role))
         errors: list[str] = []
         for model_name in chain:
@@ -199,10 +194,10 @@ class ModelRegistry(BaseModel):
                 result = self._chat_with_retry(
                     model_name,
                     messages,
+                    role=role,
                     tools=tools,
                     tool_choice=tool_choice,
                     cancel_event=cancel_event,
-                    reasoning_level=level,
                 )
             except ProviderKeyError:
                 raise  # 缺 key 是配置错误,不是模型故障:不走降级链,直接报清晰错误
@@ -218,18 +213,23 @@ class ModelRegistry(BaseModel):
         model_name: str,
         messages: list[dict[str, Any]],
         *,
+        role: str,
         tools: list[dict[str, Any]] | None,
         tool_choice: str | dict[str, Any] | None,
         cancel_event: threading.Event | None,
-        reasoning_level: str | None = None,
     ) -> dict[str, Any]:
-        """单模型调用 + 指数退避重试(max 次尝试,base_ms × 2^n);成功/失败都喂熔断器。"""
+        """单模型调用 + 指数退避重试(max 次尝试,base_ms × 2^n);成功/失败都喂熔断器。
+
+        extra_params:role 默认档位经 reasoning_payload 换算的 wire 参数
+        (仅本地兼容映射覆盖的模型会带字段;未知模型 {} 不发任何 reasoning 参数)。
+        """
         model = self.models[model_name]
         provider = self.providers[model.provider]
         dialect = PROVIDER_TYPE_MAP.get(provider.type)
         if dialect is None:
             raise DialectError(f"provider {model.provider!r} 的 type {provider.type!r} 无方言映射")
         api_key = self.api_key_for(model.provider)
+        extra_params = reasoning_payload(model_name, _REASONING_DEFAULTS.get(role))
         attempts = int(self.resilience.retry.get("max", 3))
         base_ms = int(self.resilience.retry.get("base_ms", 1000))
         last_exc: Exception | None = None
@@ -246,7 +246,7 @@ class ModelRegistry(BaseModel):
                     timeout_s=self.resilience.timeout_s,
                     cancel_event=cancel_event,
                     default_headers=provider.default_headers or None,
-                    extra_params=reasoning_payload(model_name, reasoning_level) if reasoning_level else None,
+                    extra_params=extra_params or None,
                 )
             except Exception as exc:
                 last_exc = exc

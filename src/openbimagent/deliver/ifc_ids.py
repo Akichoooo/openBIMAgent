@@ -36,7 +36,8 @@ IFC_IDS_VALIDATION_VERSION = "1.0"
 PSET_NAME = "Pset_OpenBIMAgentMunicipalUtility"
 PROJECT_PSET_NAME = "Pset_OpenBIMAgentDelivery"
 IDS_XSD_PATH = Path(__file__).resolve().parents[3] / "schemas" / "buildingsmart_ids_1_0.xsd"
-IDS_XSD_SHA256 = "528d0969f0ba16bb211a77c431f450f6b4ca788e0839ed45929b285c81c6aa30"
+# The vendored schema is pinned as UTF-8/LF bytes; .gitattributes preserves them on Windows.
+IDS_XSD_SHA256 = "e48683c303203305ac16731df8f9fe883c43a756aeac6cf8e8dcfe06d389a684"
 
 ET.register_namespace("", IDS_NS)
 ET.register_namespace("xsi", XSI_NS)

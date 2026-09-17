@@ -64,6 +64,14 @@ def _remove_property(ifc_path: Path, stable_id: str, property_name: str) -> None
     model.write(str(ifc_path))
 
 
+def test_vendored_ids_schema_uses_pinned_lf_bytes() -> None:
+    schema_bytes = IDS_XSD_PATH.read_bytes()
+    assert b"\n" in schema_bytes
+    assert b"\r" not in schema_bytes
+    assert hashlib.sha256(schema_bytes).hexdigest() == IDS_XSD_SHA256
+    assert hashlib.sha256(schema_bytes.replace(b"\n", b"\r\n")).hexdigest() != IDS_XSD_SHA256
+
+
 def test_baseline_ifc4x3_ids_validation_and_rule_evidence_pass(tmp_path) -> None:
     package = _package(tmp_path)
     model = ifcopenshell.open(str(package.ifc_path))

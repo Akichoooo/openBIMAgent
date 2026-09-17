@@ -4,8 +4,9 @@
 - docs/architecture/COMPONENTS.md §4 providers([resilience]:韧性集中,业务代码不重复造)
 - config/models.toml [providers.*] 的 type 字段
 
-方言:openai-completions / google-genai 已实现;openai-responses / anthropic 保留为扩展点(未实现)。
-重试/熔断集中在 providers 层,业务代码不重复造。
+方言:openai-completions / openai-responses / anthropic / google-genai。
+M0 只实现 openai-compatible(走 openai-completions 方言,GLM/agentrouter 已够联调);
+anthropic / google-genai / openai-responses 留 TODO(M1)。
 """
 
 from __future__ import annotations
@@ -14,23 +15,134 @@ import base64
 import json
 import threading
 import time
+from collections.abc import Iterator
 from enum import StrEnum
-from typing import Any, Iterator
+from typing import Any
 
 import httpx
-import os
-
-def _sanitize_no_proxy() -> None:
-    for k in ("NO_PROXY", "no_proxy"):
-        val = os.environ.get(k)
-        if val:
-            cleaned = ",".join(p.strip() for p in val.split(",") if not p.strip().startswith("::"))
-            os.environ[k] = cleaned
-
-_sanitize_no_proxy()
 
 ABORT_POLL_INTERVAL_S = 0.5
 """cancel_event 轮询间隔(ARCH §6.5:全程可 abort 且返回部分结果)。"""
+
+REASONING_LEVELS: tuple[str, ...] = ("off", "low", "medium", "high", "max")
+"""统一思考档位(chat stream 的 effort 参数);非法值一律回退 medium。"""
+
+_DEFAULT_REASONING_LEVEL = "medium"
+
+
+def _normalize_level(level: str | None) -> str:
+    """非法/缺省档位回退 medium(不抛错:档位只是偏好,不能让请求失败)。"""
+    return level if level in REASONING_LEVELS else _DEFAULT_REASONING_LEVEL
+
+
+# 本地兼容映射不等同于供应商能力认证；部署前需按实际端点确认参数支持。
+_THINKING_TYPE: dict[str, str] = {"off": "disabled", "low": "disabled", "medium": "adaptive", "high": "enabled", "max": "enabled"}
+_QWEN_BUDGET: dict[str, int] = {"low": 4096, "medium": 32768, "high": 262144, "max": 262144}
+_EFFORT: dict[str, str] = {"off": "none", "low": "low", "medium": "medium", "high": "high", "max": "max"}
+def _payload_fn(fn: Any) -> Any:
+    return fn
+
+
+_effort_map = _payload_fn(lambda lv: {"reasoning_effort": _EFFORT[lv]})
+
+
+_MODEL_REASONING_MAP: dict[str, Any] = {
+    "kimi-k3": lambda level: {"reasoning_effort": "max"},
+    "qwen3.8-max": lambda level: {"enable_thinking": False} if level == "off" else {
+        "enable_thinking": True, "thinking_budget": _QWEN_BUDGET[level],
+    },
+    "mimo-v2.5": _payload_fn(lambda lv: {"thinking": {"type": _THINKING_TYPE[lv]}}),
+    "mimo-v2.5-pro": _payload_fn(lambda lv: {"thinking": {"type": _THINKING_TYPE[lv]}}),
+    "deepseek-v4-flash": _payload_fn(
+        lambda lv: {"thinking": {"type": "disabled"}}
+        if lv == "off"
+        else {"thinking": {"type": "enabled"}, "reasoning_effort": _EFFORT[lv]}
+    ),
+    "claude-opus-4-8": _payload_fn(lambda lv: {"output_config": {"effort": _EFFORT[lv]}}),
+    "claude-opus-4-6": _payload_fn(lambda lv: {"output_config": {"effort": _EFFORT[lv]}}),
+    "gemini-3.1-pro": _payload_fn(lambda lv: {"thinking_level": _EFFORT[lv]}),
+    "gemini-3.6-flash": _payload_fn(lambda lv: {"thinking_level": _EFFORT[lv]}),
+    "gpt-5.5": _effort_map,
+    "gpt-5.6-luna": _effort_map,
+    "gpt-5.6-terra": _effort_map,
+    "glm-5.2": _payload_fn(lambda lv: {"reasoning_effort": {"off": "none", "low": "low", "medium": "high", "high": "high", "max": "max"}[lv]}),
+    "glm-5.2-ar": _payload_fn(lambda lv: {"reasoning_effort": {"off": "none", "low": "low", "medium": "high", "high": "high", "max": "max"}[lv]}),
+}
+
+
+def reasoning_payload(model: str, level: str | None) -> dict[str, Any]:
+    """统一思考档位(off/low/medium/high/max)→ 各模型 wire 参数。
+
+    使用本地兼容映射；未知模型不附加 reasoning 字段。非法档位回退 medium。
+    返回值可并入 extra_params；实际端点是否支持这些参数需独立验证。
+    """
+    normalized = _normalize_level(level)
+    mapper = _MODEL_REASONING_MAP.get(model)
+    if mapper is None:
+        return {}
+    return mapper(normalized)
+
+
+def stream_openai_completions(
+    *,
+    model: str,
+    messages: list[dict[str, Any]],
+    base_url: str,
+    api_key: str,
+    timeout_s: int = 120,
+    cancel_event: threading.Event | None = None,
+    extra_params: dict[str, Any] | None = None,
+) -> Iterator[dict[str, Any]]:
+    """openai-compatible 流式生成器:逐 delta 产出事件,server/chat.py 逐帧转发 SSE。
+
+    事件形态(与 chat.py 消费契约一致):
+    - {"type": "delta", "text": ...}      正文分片
+    - {"type": "reasoning", "text": ...}  思维链分片(reasoning_content / reasoning)
+    - {"type": "usage", "usage": {...}}   收尾用量(include_usage)
+    cancel_event 置位即关闭连接、停止产出(部分内容已由调用方消费,不回滚)。
+    extra_params:reasoning_payload 等额外请求体字段,原样并入。
+    """
+    if not base_url:
+        raise DialectError("openai-compatible provider 缺少 base_url")
+    url = f"{base_url.rstrip('/')}/chat/completions"
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "stream": True,
+        "stream_options": {"include_usage": True},
+        **(extra_params or {}),
+    }
+    headers = {"Authorization": f"Bearer {api_key or ''}", "Content-Type": "application/json"}
+    acc: dict[str, Any] = {
+        "content_parts": [],
+        "reasoning_parts": [],
+        "tool_calls": {},
+        "finish_reason": None,
+        "usage": None,
+    }
+    with httpx.Client(timeout=httpx.Timeout(timeout_s)) as client:
+        with client.stream("POST", url, json=payload, headers=headers) as resp:
+            resp.raise_for_status()
+            # WAF 挑战页(200 + text/html)不拦截会被 _consume_sse_line 吞掉成空响应假成功
+            ct = resp.headers.get("content-type", "").lower()
+            if "text/html" in ct:
+                raise WAFChallengeError(
+                    f"响应为 HTML(content-type={ct!r}),疑似 Aliyun WAF 挑战页(速率限流);退避后重试"
+                )
+            for line in resp.iter_lines():
+                if cancel_event is not None and cancel_event.is_set():
+                    return
+                # 只透传正文与 reasoning 增量;usage 收尾一帧;tool_calls 在 chat 端点不在契约内
+                before_content = len(acc["content_parts"])
+                before_reasoning = len(acc["reasoning_parts"])
+                if not _consume_sse_line(line, acc):
+                    break
+                for piece in acc["reasoning_parts"][before_reasoning:]:
+                    yield {"type": "reasoning", "text": piece}
+                for piece in acc["content_parts"][before_content:]:
+                    yield {"type": "delta", "text": piece}
+    if acc["usage"]:
+        yield {"type": "usage", "usage": acc["usage"]}
 
 
 class Dialect(StrEnum):
@@ -84,6 +196,8 @@ def chat(
     返回 OpenAI chat.completion 形态 dict;abort 时正常返回并带 ``aborted=True`` 与部分内容。
     default_headers:provider 级额外请求头(models.toml [providers.*].default_headers),
     与方言注入的 Authorization/Content-Type 合并,后者优先(鉴权不被覆盖)。
+    extra_params:reasoning_payload 等额外请求体字段,openai-completions 方言并入请求体。
+    TODO(M1): anthropic 与 google-genai、openai-responses 方言。
     """
     if dialect is Dialect.OPENAI_COMPLETIONS:
         return _chat_openai_completions(
@@ -110,7 +224,7 @@ def chat(
             cancel_event=cancel_event,
             default_headers=default_headers,
         )
-    raise NotImplementedError(f"{dialect} 方言未实现(保留扩展点)")
+    raise NotImplementedError(f"TODO(M1): {dialect} 方言未实现")
 
 
 def _chat_google_genai(
@@ -393,9 +507,8 @@ def _chat_openai_completions(
         "messages": messages,
         "stream": True,
         "stream_options": {"include_usage": True},
+        **(extra_params or {}),
     }
-    if extra_params:
-        payload.update(extra_params)  # reasoning 统一档位映射后的各家 wire 参数
     if tools:
         payload["tools"] = tools
     if tool_choice is not None:
@@ -419,7 +532,7 @@ def _chat_openai_completions(
 
     def _worker() -> None:
         try:
-            with httpx.Client(timeout=httpx.Timeout(timeout_s), trust_env=False) as client:
+            with httpx.Client(timeout=httpx.Timeout(timeout_s)) as client:
                 holder["client"] = client
                 with client.stream("POST", url, json=payload, headers=headers) as resp:
                     holder["response"] = resp
@@ -497,119 +610,6 @@ def _apply_delta(acc: dict[str, Any], data: dict[str, Any]) -> None:
             acc["finish_reason"] = choice["finish_reason"]
     if data.get("usage"):
         acc["usage"] = data["usage"]
-
-
-# ---------- reasoning 统一抽象:5 档 → 各家 wire 形态 ----------
-REASONING_LEVELS = ("off", "low", "medium", "high", "max")
-"""统一思考档位(用户 UI 只见这 5 档);方言层映射到各家 wire 参数。"""
-
-# per-model reasoning wire 兜底表(models.toml [models.*.reasoning] 可覆盖);实测 2026-09-07。
-_REASONING_WIRE: dict[str, dict[str, Any]] = {
-    "mimo-v2.5": {"wire": "thinking.type", "map": {"off": "disabled", "low": "disabled", "medium": "adaptive", "high": "adaptive", "max": "enabled"}, "can_disable": True},
-    "glm-5.2": {"wire": "effort", "map": {"off": "none", "low": "low", "medium": "high", "high": "high", "max": "max"}, "can_disable": True},
-    "deepseek-v4-flash": {"wire": "thinking.type+effort", "map": {"off": "disabled", "low": "low", "medium": "high", "high": "high", "max": "max"}, "can_disable": True},
-    "deepseek-v4-pro": {"wire": "thinking.type+effort", "map": {"off": "disabled", "low": "high", "medium": "high", "high": "high", "max": "max"}, "can_disable": True},
-    "qwen3.8-max": {"wire": "enable_thinking+budget", "map": {"off": "off", "low": "low", "medium": "medium", "high": "xhigh", "max": "xhigh"}, "can_disable": True},
-    "kimi-k3": {"wire": "effort", "map": {"off": "max", "low": "max", "medium": "max", "high": "max", "max": "max"}, "can_disable": False, "force_think": True},
-    "claude-opus-4-8": {"wire": "output_config.effort", "map": {"off": "low", "low": "low", "medium": "medium", "high": "high", "max": "max"}, "can_disable": False},
-    "gpt-5.6-luna": {"wire": "reasoning_effort", "map": {"off": "none", "low": "low", "medium": "medium", "high": "high", "max": "xhigh"}, "can_disable": True},
-    "gemini-3.1-pro": {"wire": "thinking_level", "map": {"off": "low", "low": "low", "medium": "medium", "high": "high", "max": "high"}, "can_disable": False},
-}
-
-
-def reasoning_payload(model: str, level: str) -> dict[str, Any]:
-    """统一 5 档 → 该模型 wire 参数 dict(并入 chat payload)。
-
-    force_think 模型(如 kimi-k3)的 off/low clamp 到其最低档(不报错);未知模型回退
-    effort 型通用映射。thinking.type 型(MiMo) disabled 可直出治网关 origin 超时。
-    """
-    lvl = level if level in REASONING_LEVELS else "medium"
-    spec = _REASONING_WIRE.get(
-        model,
-        {"wire": "reasoning_effort", "map": {"off": "none", "low": "low", "medium": "medium", "high": "high", "max": "xhigh"}, "can_disable": True},
-    )
-    mapped = spec["map"].get(lvl, "medium")
-    wire = spec["wire"]
-    if wire == "thinking.type":
-        return {"thinking": {"type": mapped}}
-    if wire == "thinking.type+effort":
-        if mapped == "disabled":
-            return {"thinking": {"type": "disabled"}}
-        return {"thinking": {"type": "enabled"}, "reasoning_effort": mapped}
-    if wire == "enable_thinking+budget":
-        if mapped == "off":
-            return {"enable_thinking": False}
-        budget = {"low": 4096, "medium": 16384, "xhigh": 262144}.get(mapped, 16384)
-        return {"enable_thinking": True, "thinking_budget": budget}
-    if wire == "output_config.effort":
-        return {"output_config": {"effort": mapped}}
-    if wire == "thinking_level":
-        return {"thinking_level": mapped}
-    return {"reasoning_effort": mapped}
-
-
-def stream_openai_completions(
-    *,
-    model: str,
-    messages: list[dict[str, Any]],
-    base_url: str | None,
-    api_key: str | None,
-    timeout_s: int = 120,
-    cancel_event: threading.Event | None = None,
-    default_headers: dict[str, str] | None = None,
-    extra_params: dict[str, Any] | None = None,
-) -> Iterator[dict[str, Any]]:
-    """openai-completions 方言的**真流式**消费:边收边 yield,供对话端点逐字下发前端。
-
-    与 `_chat_openai_completions` 同源(同一 URL/payload/WAF 检测/delta 解析),但不再缓冲整段:
-    每解析一行 SSE 就地产出事件 dict——
-    - ``{"type": "reasoning", "text": str}``   思维链分片(reasoning_content / reasoning)
-    - ``{"type": "delta", "text": str}``       正文分片
-    - ``{"type": "usage", "usage": {...}}``    尾包 usage(stream_options.include_usage)
-    流正常结束时自然收尾;上游异常原样抛出(调用方决定重试/报错口径)。
-    cancel_event 置位时立即关闭连接并停止产出(已产出部分即部分结果)。
-    """
-    if not base_url:
-        raise DialectError("openai-compatible provider 缺少 base_url")
-    url = f"{base_url.rstrip('/')}/chat/completions"
-    payload = {"model": model, "messages": messages, "stream": True, "stream_options": {"include_usage": True}}
-    if extra_params:
-        payload.update(extra_params)  # reasoning 统一档位映射后的各家 wire 参数
-    headers = {
-        **(default_headers or {}),
-        "Authorization": f"Bearer {api_key or ''}",
-        "Content-Type": "application/json",
-    }
-    with httpx.Client(timeout=httpx.Timeout(timeout_s), trust_env=False) as client:
-        with client.stream("POST", url, json=payload, headers=headers) as resp:
-            resp.raise_for_status()
-            ct = resp.headers.get("content-type", "").lower()
-            if "text/html" in ct:
-                raise WAFChallengeError(f"响应为 HTML(content-type={ct!r}),疑似 Aliyun WAF 挑战页(速率限流)")
-            for line in resp.iter_lines():
-                if cancel_event is not None and cancel_event.is_set():
-                    return
-                line = line.strip()
-                if not line or not line.startswith("data:"):
-                    continue
-                data_str = line[len("data:"):].strip()
-                if data_str == "[DONE]":
-                    return
-                try:
-                    data = json.loads(data_str)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(data, dict):
-                    continue
-                for choice in data.get("choices") or []:
-                    delta = choice.get("delta") or {}
-                    piece = delta.get("reasoning_content") or delta.get("reasoning")
-                    if piece:
-                        yield {"type": "reasoning", "text": piece}
-                    if delta.get("content"):
-                        yield {"type": "delta", "text": delta["content"]}
-                if data.get("usage"):
-                    yield {"type": "usage", "usage": data["usage"]}
 
 
 def _assemble_completion(acc: dict[str, Any], *, aborted: bool) -> dict[str, Any]:

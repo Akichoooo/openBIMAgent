@@ -46,7 +46,7 @@ class _FakeClient:
     lines: list[str] = []
     response_headers: dict[str, str] = {}
 
-    def __init__(self, timeout: Any = None, **kwargs: Any) -> None:
+    def __init__(self, timeout: Any = None) -> None:
         pass
 
     def __enter__(self) -> "_FakeClient":
@@ -296,3 +296,33 @@ def test_waf_html_response_raises_retryable(monkeypatch: pytest.MonkeyPatch) -> 
     _FakeClient.response_headers = {}  # reset
     # 必须是 TransportError 子类,否则 registry._is_retryable 不判为瞬时故障、不退避重试
     assert issubclass(dialects.WAFChallengeError, httpx.TransportError)
+
+
+def test_stream_openai_completions_events(monkeypatch: pytest.MonkeyPatch) -> None:
+    """stream_openai_completions 契约(delta/reasoning/usage 事件)+ extra_params 并入请求体。"""
+    _FakeClient.lines = [
+        'data: {"choices": [{"delta": {"reasoning_content": "想"}}]}',
+        'data: {"choices": [{"delta": {"content": "答"}}]}',
+        'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}',
+        'data: {"usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4}}',
+        "data: [DONE]",
+    ]
+    _FakeClient.response_headers = {}
+    monkeypatch.setattr(dialects.httpx, "Client", _FakeClient)
+    events = list(
+        dialects.stream_openai_completions(
+            model="glm-5.2",
+            messages=[{"role": "user", "content": "hi"}],
+            base_url="http://127.0.0.1:9",
+            api_key="k",
+            extra_params={"reasoning_effort": "high"},
+        )
+    )
+    assert events == [
+        {"type": "reasoning", "text": "想"},
+        {"type": "delta", "text": "答"},
+        {"type": "usage", "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4}},
+    ]
+    assert _FakeClient.captured["json"]["reasoning_effort"] == "high"
+    assert _FakeClient.captured["json"]["stream_options"] == {"include_usage": True}
+    assert _FakeClient.captured["headers"]["Authorization"] == "Bearer k"

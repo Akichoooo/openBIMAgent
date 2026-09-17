@@ -124,6 +124,72 @@ def test_chat_walks_fallback_chain(monkeypatch) -> None:
     assert calls == ["m1", "m2"]
 
 
+def test_role_reasoning_default_reaches_wire(monkeypatch) -> None:
+    """critic_render 默认 high → 经 reasoning_payload 变成 wire 参数(本地 mock HTTP 全离线)。"""
+    import json as _json
+    import threading as _threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    monkeypatch.setenv("DUMMY_KEY", "dummy")
+    captured = {}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get("content-length", 0))
+            captured["body"] = _json.loads(self.rfile.read(length))
+            self.send_response(200)
+            self.send_header("content-type", "text/event-stream")
+            self.end_headers()
+            chunk = _json.dumps({
+                "id": "1", "object": "chat.completion.chunk",
+                "choices": [{"index": 0, "delta": {"content": "ok"}, "finish_reason": "stop"}],
+            })
+            self.wfile.write(f"data: {chunk}\n\n".encode())
+            self.wfile.write(b"data: [DONE]\n\n")
+
+        def log_message(self, *a):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    _threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        reg = ModelRegistry(
+            providers={"p1": {"type": "openai-compatible", "base_url": f"http://127.0.0.1:{server.server_address[1]}", "api_key_env": "DUMMY_KEY"}},
+            models={"glm-5.2": {"provider": "p1"}},
+            profiles={"official": {"critic_render": "glm-5.2"}},
+            fallbacks={},
+            resilience={"retry": {"max": 1, "base_ms": 1}, "timeout_s": 10, "circuit_breaker": {"failures": 5, "cooldown_s": 300}},
+            active_profile="official",
+        )
+        reg.chat("critic_render", [{"role": "user", "content": "hi"}])
+    finally:
+        server.shutdown()
+    assert captured["body"]["reasoning_effort"] == "high"
+
+
+def test_unknown_model_sends_no_reasoning_params(monkeypatch) -> None:
+    """未知模型:角色默认档位不臆造 wire 参数(请求体不含 reasoning 字段)。"""
+    monkeypatch.setenv("DUMMY_KEY", "dummy")
+    captured: dict = {}
+
+    def fake_chat(dialect, *, model, messages, **kwargs):
+        captured.update(kwargs)
+        return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+
+    monkeypatch.setattr("openbimagent.providers.dialects.chat", fake_chat)
+    reg = ModelRegistry(
+        providers={"p1": {"type": "openai-compatible", "base_url": "http://127.0.0.1:9", "api_key_env": "DUMMY_KEY"}},
+        models={"mystery": {"provider": "p1"}},
+        profiles={"official": {"deliver": "mystery"}},
+        fallbacks={},
+        resilience={"retry": {"max": 1, "base_ms": 1}, "timeout_s": 1, "circuit_breaker": {"failures": 5, "cooldown_s": 300}},
+        active_profile="official",
+    )
+    reg.chat("deliver", [{"role": "user", "content": "hi"}])
+    extra = captured.get("extra_params") or {}
+    assert extra == {}
+
+
 def test_chat_missing_key_raises_key_error(monkeypatch) -> None:
     """整条链第一步就缺 key:报 ProviderKeyError(不是网络错误)。"""
     monkeypatch.delenv("DUMMY_KEY", raising=False)

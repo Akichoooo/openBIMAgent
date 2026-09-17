@@ -144,9 +144,18 @@ def _make_mock_blender_client(tmp_path: Path) -> tuple[Any, dict[str, AsyncMock]
         return {"enabled": enabled, "objects": list(objects or [])}
 
     async def _execute_code(code: str):
-        snap = str(snap_dir / "snap.blend")
-        Path(snap).write_bytes(b"mock")
-        return {"executed": True, "result": "ok", "snapshot": snap, "scope_checked": True}
+        pre = str(snap_dir / "snap_pre.blend")
+        post = str(snap_dir / "snap_post.blend")
+        Path(pre).write_bytes(b"mock-pre")
+        Path(post).write_bytes(b"mock-post")
+        return {
+            "executed": True,
+            "result": "ok",
+            "snapshot": pre,
+            "accepted_snapshot": post,
+            "accepted_snapshot_phase": "post_exec",
+            "scope_checked": True,
+        }
 
     async def _screenshot(*, filepath, max_size=512, format="png"):
         _write_png(Path(filepath))

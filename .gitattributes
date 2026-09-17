@@ -1,0 +1,2 @@
+# Hashed vendor resources must have identical bytes on every checkout.
+/schemas/buildingsmart_ids_1_0.xsd text eol=lf
