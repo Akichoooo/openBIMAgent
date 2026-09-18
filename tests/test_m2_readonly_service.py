@@ -124,8 +124,7 @@ def test_sessions_are_whitelisted_and_unknown_session_is_not_found() -> None:
     assert listed.data["count"] == 1
     session = listed.data["items"][0]
     assert session["session_id"] == "session-parent"
-    # playbook（domain pack id，非敏感）自 2026-09-03 起显式入白名单：侧边栏文件夹分组数据源
-    assert session["playbook"] == "private-playbook"
+    assert "playbook" not in session
     assert "child_of" not in session
     assert service.get_session(request_id="api-2", session_id="missing").error.code is M2ErrorCode.NOT_FOUND
 

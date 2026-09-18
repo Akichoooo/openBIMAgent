@@ -1,2 +1,6 @@
-# Hashed vendor resources must have identical bytes on every checkout.
+# Byte-pinned resources must have identical bytes on every checkout.
+# - schemas: benchmark SHA pins + signed OpenAPI baseline
+# - constraints.yaml: embedded as source_sha256 in the frozen T7 rule bundle
 /schemas/buildingsmart_ids_1_0.xsd text eol=lf
+/schemas/*.json text eol=lf
+/domain_packs/municipal_utility/knowledge/constraints.yaml text eol=lf
