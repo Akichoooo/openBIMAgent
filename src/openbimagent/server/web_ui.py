@@ -1030,7 +1030,8 @@ pre {
 
 <script>
 const API = '';
-const REQ = { headers: { 'X-Request-ID': 'studio-ui-' + Math.random().toString(36).slice(2) } };
+const AUTH = () => ({ 'Authorization': 'Bearer ' + (window.__WB_TOKEN || '') });
+const REQ = { headers: { ...AUTH(), 'X-Request-ID': 'studio-ui-' + Math.random().toString(36).slice(2) } };
 
 async function fetchJSON(url) {
   try {
@@ -1167,7 +1168,7 @@ async function invokeCapability() {
   try {
     const resp = await fetch(API + '/api/v1/plugins/invoke', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Request-ID': 'studio-invoke-' + Math.random().toString(36).slice(2) },
+      headers: { ...AUTH(), 'Content-Type': 'application/json', 'X-Request-ID': 'studio-invoke-' + Math.random().toString(36).slice(2) },
       body: JSON.stringify({ capability: sel.value, payload, confirm: !!(confirmBox && confirmBox.checked) })
     });
     const data = await resp.json();
@@ -1190,7 +1191,7 @@ async function exportHost(endpoint, btnId, label) {
   try {
     const resp = await fetch(API + endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Request-ID': 'studio-export-' + Math.random().toString(36).slice(2) },
+      headers: { ...AUTH(), 'Content-Type': 'application/json', 'X-Request-ID': 'studio-export-' + Math.random().toString(36).slice(2) },
       body: JSON.stringify({ confirm: true })
     });
     const data = await resp.json();

@@ -54,3 +54,5 @@ def test_falls_back_to_embedded_when_dist_absent(monkeypatch, tmp_path) -> None:
     # dist 缺失 → 回退内嵌单文件工作台（非 React SPA，无 #root）
     assert 'id="root"' not in resp.text
     assert len(resp.text) > 1000  # 内嵌 PAGE 是大体量单文件
+    # 内嵌页面自身发起的 API 请求必须携带 Bearer 认证头（否则全量 401，页面不可用）
+    assert "Authorization': 'Bearer ' + (window.__WB_TOKEN || '')" in resp.text

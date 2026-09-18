@@ -200,6 +200,11 @@ DEFAULT_CAPABILITY_POLICIES: tuple[CapabilityPolicyRule, ...] = (
         decision=CapabilityPolicyDecision.PROMPT,
         justification="删除长期记忆条目（跨会话持久化数据减损），需人工确认",
     ),
+    CapabilityPolicyRule(
+        pattern="mcp:*",
+        decision=CapabilityPolicyDecision.PROMPT,
+        justification="外部第三方 MCP server 工具（进程/网络面未知），fail-closed 需人工确认",
+    ),
 )
 
 

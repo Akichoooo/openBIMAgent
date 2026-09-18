@@ -419,3 +419,15 @@ def test_policy_exposed_in_inventory():
             "justification": "学术评测能力单次运行耗时较长，需人工确认",
         }
     ]
+
+
+def test_default_policies_gate_unvetted_write_surfaces():
+    """默认策略表契约：外部 MCP 工具与长期记忆写入/删除必须 prompt 确认（fail-closed）。"""
+    from openbimagent.core.plugin import CapabilityPolicyDecision, DEFAULT_CAPABILITY_POLICIES
+
+    table = {rule.pattern: rule.decision for rule in DEFAULT_CAPABILITY_POLICIES}
+    assert table["mcp:*"] is CapabilityPolicyDecision.PROMPT
+    assert table["memory:record"] is CapabilityPolicyDecision.PROMPT
+    assert table["memory:delete"] is CapabilityPolicyDecision.PROMPT
+    assert table["cad_host:blender.execute"] is CapabilityPolicyDecision.PROMPT
+    assert table["cad_host:vectorworks.execute"] is CapabilityPolicyDecision.PROMPT
