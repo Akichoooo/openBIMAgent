@@ -1118,6 +1118,20 @@ class LocalSubagentRuntime:
             compaction_retain=list(profile.compaction_retain) or None,
         )
         cancel_event = getattr(self._cancel_local, "event", None)
+        # B3 prompt 快照:child 会话首条记录 prompt 血缘(pi 重放式状态的轻量版),
+        # 模型/工具/保留关注点变更可经此追溯任意 attempt 的确切配置。
+        child_session.append_new(
+            EventType.MESSAGE,
+            {
+                "role": "assistant",
+                "content": "[prompt-snapshot]",
+                "prompt_sha256": hashlib.sha256(loop.system_prompt.encode("utf-8")).hexdigest(),
+                "role_name": profile.name,
+                "model": profile.model,
+                "tools": list(tools),
+                "compaction_retain": list(profile.compaction_retain),
+            },
+        )
         summary = loop.run(task, cancel_event=cancel_event)
         return ChildRunOutput(summary=summary, hint=summary[:200])
 

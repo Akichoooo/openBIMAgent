@@ -300,13 +300,20 @@ class SessionStore:
             new_store.append(event)
         return new_store
 
-    def fork(self, from_event_id: str, *, title: str | None = None) -> SessionStore:
+    def fork(self, from_event_id: str, *, title: str | None = None, mode: str = "truncate") -> SessionStore:
         """`/tree` 分支(M1 强化):复制根 → from_event_id 的主干链到新 session,并在 index.json
         标记 forked_from 关系(parent_session_id / parent_event_id),供 pipeline 检测续跑。
 
         与 branch 的差异:fork 写 forked_from 元数据(管道据此触发 Clarify 续跑)、
         不存在时抛 ValueError(branch 抛 KeyError);两者复制主干链的逻辑一致。
+
+        B7 fork 语义(Codex ForkSnapshot):
+        - mode="truncate":在第 n 条事件前截断,复制根→from_event_id 主干(默认,原行为);
+        - mode="interrupted":额外追加一条 [fork-interrupted] 标记事件,表明源分支
+          是"如同此刻被打断"的中途快照(含 aborted 语义,续跑方不得当作完整结论)。
         """
+        if mode not in {"truncate", "interrupted"}:
+            raise ValueError(f"fork mode 须为 truncate|interrupted,实收 {mode!r}")
         events = self.load()
         fork_index = None
         for i, event in enumerate(events):
@@ -323,8 +330,78 @@ class SessionStore:
         )
         for event in events[: fork_index + 1]:
             new_session.append(event)
+        if mode == "interrupted":
+            new_session.append_new(
+                EventType.MESSAGE,
+                {
+                    "role": "assistant",
+                    "content": f"[fork-interrupted] 源分支在 {from_event_id[:8]} 处被打断式分叉;"
+                    "此前的结论不完整,不得当作已验证结果使用。",
+                    "fork_interrupted": True,
+                    "source_event_id": from_event_id,
+                },
+            )
         new_session._mark_fork(self.session_id, from_event_id)
         return new_session
+
+    def rewind(self, event_id: str) -> int:
+        """B9 投影式 rewind:head 指针移到 event_id,不重写文件(append-only 保持)。
+
+        与物理截断的区别:JSONL 字节不变,后续 append 以 event_id 为父自然形成新分支,
+        被"倒带"的旧分支仍可经 /tree 回访(Claude Code /rewind 的树形实现);
+        返回移出当前 head 主干的事件数。
+        """
+        events = self.load()
+        if event_id not in self._by_id:
+            raise KeyError(f"事件 {event_id!r} 不在会话 {self.session_id!r} 中")
+        old_head = self._head
+        if old_head == event_id:
+            return 0
+        chain = self.get_event_chain(old_head)
+        removed = 0
+        for event in reversed(chain):
+            if event.id == event_id:
+                break
+            removed += 1
+        with self._lock:
+            self._head = event_id
+        return removed
+
+    def summarize_no_llm(self) -> dict[str, Any]:
+        """E4 无 LLM 会话摘要(grok):纯结构化元数据投影,零模型调用、零延迟。
+
+        供检索索引/会话列表/审计使用;trivial 会话(<3 条实质用户消息)打标记,
+        调用方可直接跳过。不落盘——状态从 durable log 派生,投影不回写。
+        """
+        events = self.load()
+        payloads = [(e, e.payload.model_dump(mode="json")) for e in events]
+        user_messages = [
+            payload.get("content", "")
+            for e, payload in payloads
+            if e.type is EventType.MESSAGE and payload.get("role") == "user"
+            and not payload.get("steer") and not payload.get("stop_gate")
+        ]
+        tool_counter: dict[str, int] = {}
+        event_counter: dict[str, int] = {}
+        for e, payload in payloads:
+            event_counter[e.type.value] = event_counter.get(e.type.value, 0) + 1
+            if e.type is EventType.TOOL_CALL and payload.get("phase") == "call":
+                tool = str(payload.get("toolName", ""))
+                tool_counter[tool] = tool_counter.get(tool, 0) + 1
+        timestamps = [e.timestamp for e in events]
+        return {
+            "session_id": self.session_id,
+            "title": self._title,
+            "playbook": self._playbook,
+            "trivial": len(user_messages) < 3,
+            "event_counts": event_counter,
+            "tool_usage": dict(sorted(tool_counter.items(), key=lambda kv: -kv[1])[:10]),
+            "user_message_count": len(user_messages),
+            "first_user_excerpt": (user_messages[0][:120] if user_messages else ""),
+            "last_user_excerpt": (user_messages[-1][:120] if user_messages else ""),
+            "started_at": (timestamps[0].isoformat() if timestamps else None),
+            "last_active_at": (timestamps[-1].isoformat() if timestamps else None),
+        }
 
     def find_event(self, event_id: str) -> SessionEvent | None:
         """根据 event_id 查找事件;不存在返回 None(/tree 选择回退点用)。"""
