@@ -60,8 +60,19 @@ def is_trusted(directory: Path | str) -> bool:
 
 
 def require_trust(directory: Path | str, *, reason: str = "") -> bool:
-    """项目本地目录是否通过信任门:非项目本地 → True(不约束);项目本地 → 须已信任。"""
+    """项目本地目录是否通过信任门。
+
+    规则:
+    - 非项目本地目录 → True(不约束,如用户 ~/.openbimagent 下或纯数据目录);
+    - 目录位于本产品仓库根内 → True(随产品分发的受版本控制的插件是本产品代码的一部分,
+      信任门针对的是外部/第三方项目目录里运行期出现的配置);
+    - 其余项目本地目录 → 须已显式信任。
+    """
     if not is_project_local(directory):
+        return True
+    resolved = Path(directory).resolve()
+    repo = _REPO_ROOT.resolve()
+    if resolved == repo or str(resolved).startswith(str(repo) + os.sep):
         return True
     return is_trusted(directory)
 
