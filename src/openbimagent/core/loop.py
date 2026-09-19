@@ -73,6 +73,28 @@ WORKSPACE_INSTRUCTIONS_FILENAME = "WORKSPACE.md"
 _PROJECT_ROOT_MARKERS = (".git", "pyproject.toml")
 MAX_WORKSPACE_INSTRUCTIONS_CHARS = 6_000
 
+_PROTECTED_WRITE_SEGMENTS = frozenset({"agents", "schemas", "config", ".openbimagent"})
+"""F3 自保护:禁止 agent 改写自身治理配置(角色 ceiling/门禁 schema/模型与信任配置)。"""
+
+_PROTECTED_WRITE_FILES = frozenset({"pyproject.toml", ".gitattributes", ".gitignore", "uv.lock"})
+
+
+def _is_self_protection_violation(path: Path, workdir: Path) -> bool:
+    """路径是否落入编排治理配置区(相对 workdir 的 agents/schemas/config/等)。
+
+    工作目录外的写不归本守卫管(由 external_directory 权限规则与审批门处理)。
+    """
+    try:
+        rel = Path(path).resolve().relative_to(Path(workdir).resolve())
+    except ValueError:
+        return False
+    parts = rel.parts
+    if parts and parts[0] in _PROTECTED_WRITE_SEGMENTS:
+        return True
+    if parts and parts[-1] in _PROTECTED_WRITE_FILES:
+        return True
+    return False
+
 TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read": {
         "type": "function",
@@ -749,6 +771,12 @@ class AgentLoop:
 
     def _tool_write(self, args: dict[str, Any]) -> dict[str, Any]:
         path = self._resolve(args["path"])
+        if _is_self_protection_violation(path, self.workdir):
+            return _tool_result(
+                "denied",
+                f"自保护:禁止改写编排治理配置 {path}(F3,防 agent 改自身能力 ceiling/门禁)。",
+                {"self_protection": True, "path": str(path)},
+            )
         path.parent.mkdir(parents=True, exist_ok=True)
         content = args["content"]
         path.write_text(content, encoding="utf-8")
@@ -757,6 +785,12 @@ class AgentLoop:
 
     def _tool_edit(self, args: dict[str, Any]) -> dict[str, Any]:
         path = self._resolve(args["path"])
+        if _is_self_protection_violation(path, self.workdir):
+            return _tool_result(
+                "denied",
+                f"自保护:禁止改写编排治理配置 {path}(F3,防 agent 改自身能力 ceiling/门禁)。",
+                {"self_protection": True, "path": str(path)},
+            )
         text = path.read_text(encoding="utf-8", errors="replace")
         count = text.count(args["old"])
         if count == 0:

@@ -21,6 +21,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from typing import Any
 
 from openbimagent.session.schema import EventType, uuid7
 from openbimagent.session.store import SessionStore
@@ -195,6 +196,24 @@ def truncate_hint(hint: str, max_chars: int = MAX_HINT_CHARS) -> str:
         warnings.warn(f"子代理 hint 超长({len(hint)} 字),已截断至 {max_chars} 字", stacklevel=2)
         return hint[:max_chars]
     return hint
+
+
+def complexity_metrics(result: PlanRunResult) -> dict[str, Any]:
+    """H3 操作复杂度指标(论文 06):轨迹长度/重试次数,从 PlanRunResult 派生。
+
+    学术界普遍缺这两个维度(论文 06 综述:大多数工作只测单一性能);把重试次数、
+    FIX 历史长度、ESCALATE 批次等"操作成本"显式化,供 benchmark 报告与小论文实验。
+    """
+    outcomes = result.outcomes
+    return {
+        "batches": len(outcomes),
+        "total_attempts": sum(o.attempts for o in outcomes),
+        "total_fix_steps": sum(len(o.history) for o in outcomes),
+        "max_attempts_single_batch": max((o.attempts for o in outcomes), default=0),
+        "escalated_batches": list(result.escalated),
+        "ok": result.ok,
+        "doom_loop": result.error == "doom_loop",
+    }
 
 
 # ---------- M0 顺序执行驱动 / M1 并发调度 ----------
@@ -440,6 +459,7 @@ __all__ = [
     "SubagentResult",
     "Verdict",
     "check_doom_loop",
+    "complexity_metrics",
     "extract_score",
     "judge",
     "run_plan",

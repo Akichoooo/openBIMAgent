@@ -50,3 +50,5 @@ rubric_scores 必须恰好六键全出,分数 0-10;禁止缺维或多维。
 {"reasoning": "<CoT 全文,先于打分>", "rubric_scores": {"geometry": 0-10, "style": 0-10, "material": 0-10, "wear": 0-10, "lighting": 0-10, "composition": 0-10}, "anchor_ref": "<锚点引用,非空>", "actionable_feedback": "<FIX 指令,非空;任一维 <8 分强制量化>"}
 
 若收到校验错误回复,按错误说明修正后重新输出完整 JSON。
+
+评分流程(H2 规则回溯,论文 07):先逐条标记【候选问题】(几何/构图/规则疑点),再按 Domain Gate 与几何规则回溯确认;单一证据路径不构成 PASS,需几何检查与规则核验交叉印证后才放行。禁止跳过回溯直接给高分。
