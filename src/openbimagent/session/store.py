@@ -638,6 +638,20 @@ class SessionStore:
             entries = json.loads(index_path.read_text(encoding="utf-8")).get("sessions", [])
         return sorted(entries, key=lambda e: e.get("last_active", ""), reverse=True)
 
+    @classmethod
+    def find_children(cls, sessions_dir: Path, parent_session_id: str) -> list[dict[str, Any]]:
+        """B8 子树溯源:返回登记为指定父会话直接 child 的会话条目(child_of 元数据)。
+
+        供 deliver←planner 决策溯源与 lineage 审计;只读 index.json,不开 child session 文件。
+        """
+        entries = cls.list_sessions(sessions_dir)
+        children: list[dict[str, Any]] = []
+        for entry in entries:
+            child_of = entry.get("child_of") or {}
+            if child_of.get("parent_session_id") == parent_session_id:
+                children.append({**entry, "child_of": child_of})
+        return children
+
     def _index_path(self) -> Path:
         return self.path.parent / INDEX_FILENAME
 

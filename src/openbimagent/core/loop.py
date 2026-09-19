@@ -692,6 +692,15 @@ class AgentLoop:
             return doom
         perm_key = _permission_key(name, args)
         perm = check_permission(perm_key, self.permission_rules)
+        # F8 组织级 requirements 锁定:被锁的键无论如何都 DENY,覆盖角色配置
+        from openbimagent.core.requirements import is_org_denied
+
+        if is_org_denied(perm_key):
+            return _tool_result(
+                "denied",
+                f"工具 {perm_key} 被组织 requirements 锁定 DENY(F8,覆盖角色配置)。",
+                {"org_locked": True, "permission": "deny"},
+            )
         # lookup_api 是只读离线索引查询(vs_index),与 read 工具同级,不走 ASK 审批。
         if name == "mcp_call" and args.get("tool") == "lookup_api" and perm is Permission.ASK:
             perm = Permission.ALLOW
@@ -773,6 +782,12 @@ class AgentLoop:
         self._files_read.add(str(path))
         truncated = len(text) > MAX_READ_CHARS
         llm_view = text[:MAX_READ_CHARS] + ("\n...[截断] 原文件未变,可分段读取。" if truncated else "")
+        # C7 path-scoped 规则:触及已知扩展名时注入对应格式约束(非常驻 system prompt)
+        from openbimagent.core.path_scoped_rules import rule_for
+
+        scoped = rule_for(str(path))
+        if scoped:
+            llm_view += f"\n\n[path-scoped 规则] {scoped}"
         return _tool_result("ok", llm_view, {"path": str(path), "chars": len(text), "truncated": truncated})
 
     def _tool_write(self, args: dict[str, Any]) -> dict[str, Any]:

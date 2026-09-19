@@ -159,6 +159,27 @@ def build_m2_readonly_app(
             "tools": list(TOOL_NAMES),
         }
 
+    @app.get("/api/v1/context", tags=["Workbench"])
+    async def context_breakdown() -> dict:
+        """C8:上下文构成可视化(claude /context),只读 app 报告可注入项的存量与预算。"""
+        from openbimagent.core.loop import MAX_SYSTEM_PROMPT_TOKENS, TOOL_NAMES
+
+        return {
+            "status": "success",
+            "system_prompt_token_budget": MAX_SYSTEM_PROMPT_TOKENS,
+            "tools_catalog": list(TOOL_NAMES),
+            "workspace_instructions_source": "WORKSPACE.md (root -> workdir, codex AGENTS.md style)",
+            "compaction": {
+                "keep_recent_groups": 8,
+                "keep_recent_tokens": 20000,
+                "context_budget_ratio": 0.8,
+                "split_turn_elision": True,
+            },
+            "memory": "core/memory.py MEMORY.md + USER.md (approval-gated writes)",
+            "skills": "progressive disclosure (catalog_fragment, body on invoke)",
+            "note": "活会话的实际上下文构成需 runtime-serve;本端点只报可注入项的契约",
+        }
+
     @app.get("/api/v1/runtime", tags=["Workbench"])
     async def runtime_mode() -> dict:
         return {"status": "success", "mode": settings.mode if settings else "readonly",
