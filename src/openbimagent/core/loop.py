@@ -378,6 +378,12 @@ class AgentLoop:
         base_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
         instructions = _load_workspace_instructions(self.workdir)
         self.system_prompt = f"{base_prompt}\n\n[项目约定]\n{instructions}" if instructions else base_prompt
+        # D2 sibling roster:挂载 subagent 工具时把可派发角色清单注入 system prompt,
+        # 让模型知道能派谁(描述路由);只读列出角色名,不泄露各角色 prompt 正文。
+        if "subagent" in self.tools:
+            roles = _available_agent_roles()
+            if roles:
+                self.system_prompt += "\n\n[可派发子代理角色] " + "、".join(roles)
         est_tokens = (len(self.system_prompt) + len(json.dumps(self._tool_schemas(), ensure_ascii=False))) // 4
         if est_tokens > MAX_SYSTEM_PROMPT_TOKENS and instructions:
             budget_chars = MAX_SYSTEM_PROMPT_TOKENS * 4 - len(base_prompt) - len(
@@ -1120,6 +1126,18 @@ def _elide_message(message: dict[str, Any], *, keep_chars: int = ELIDE_KEEP_CHAR
     new_message = dict(message)
     new_message["content"] = content[:keep_chars] + f"\n…[elided sha256={digest} 完整内容见会话记录]"
     return new_message
+
+
+def _available_agent_roles() -> list[str]:
+    """D2:列出 agents/ 下可派发的角色名(供 sibling roster 注入 orchestrator 上下文)。"""
+    try:
+        from openbimagent.orchestrator.runtime import AGENTS_DIR
+
+        if not AGENTS_DIR.is_dir():
+            return []
+        return sorted(path.stem for path in AGENTS_DIR.glob("*.md") if path.is_file())
+    except Exception:
+        return []
 
 
 def _load_workspace_instructions(workdir: Path) -> str:

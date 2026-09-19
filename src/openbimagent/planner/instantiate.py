@@ -445,17 +445,31 @@ def _safe_content(result: dict[str, Any]) -> str:
 
 
 def _extract_json(text: str) -> dict[str, Any]:
-    """模型输出 → JSON object:直解 → markdown fence 容错 → 首尾花括号切片;失败抛 ValueError。"""
+    """模型输出 → JSON object:直解 → markdown fence 容错 → 首尾花括号切片;失败抛 ValueError。
+
+    D13:每条路径都先直解、失败再走 _repair_json(尾逗号/智能引号/单行注释)修复重试,
+    把"非 JSON"变成"可修复 JSON"再判定,减少不必要的 PlanInvalidError 重试往返。
+    """
     candidate = text.strip()
     fence = _JSON_FENCE.search(candidate)
     if fence:
         candidate = fence.group(1).strip()
-    parsed = _try_loads(candidate)
+    parsed = _try_loads(candidate) or _try_loads(_repair_json(candidate))
     if parsed is None and "{" in candidate:
-        parsed = _try_loads(candidate[candidate.find("{") : candidate.rfind("}") + 1])
+        brace = candidate[candidate.find("{") : candidate.rfind("}") + 1]
+        parsed = _try_loads(brace) or _try_loads(_repair_json(brace))
     if not isinstance(parsed, dict):
         raise ValueError("planner 输出无法解析为 JSON object")
     return parsed
+
+
+def _repair_json(text: str) -> str:
+    """D13 常见 JSON 病灶修复:智能引号→直引号、尾逗号去除、单行注释去除。"""
+    repaired = text.replace("\u201c", '"').replace("\u201d", '"')
+    repaired = repaired.replace("\u2018", "'").replace("\u2019", "'")
+    repaired = re.sub(r",\s*([}\]])", r"\1", repaired)  # 尾逗号
+    repaired = re.sub(r"^\s*//[^\n]*$", "", repaired, flags=re.MULTILINE)  # 单行注释
+    return repaired
 
 
 def _try_loads(text: str) -> Any:

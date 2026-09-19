@@ -401,3 +401,34 @@ def test_lookup_api_rejects_unknown_server(tmp_path: Path) -> None:
     loop = _make_loop(tmp_path, provider, tools=("mcp_call",))
     result = loop._dispatch("mcp_call", {"server": "blender", "tool": "lookup_api", "arguments": {"query": "x"}})
     assert result["status"] == "error"
+
+
+# ---------- D13: planner JSON 修复 + D2: sibling roster ----------
+
+def test_extract_json_repairs_trailing_commas_and_smart_quotes() -> None:
+    from openbimagent.planner.instantiate import _extract_json
+
+    repaired = _extract_json('{"a": 1, "b": "x",}')
+    assert repaired == {"a": 1, "b": "x"}
+    smart = _extract_json('{\u201ca\u201d: \u201cvalue\u201d,}')  # 智能引号 + 尾逗号
+    assert smart.get("a") == "value"
+    fenced = _extract_json('```json\n{"k": [1,2,3,]}\n```')
+    assert fenced == {"k": [1, 2, 3]}
+
+
+def test_sibling_roster_injected_when_subagent_mounted(tmp_path: Path) -> None:
+    session = SessionStore(tmp_path / "s.jsonl", title="t")
+    loop = AgentLoop(
+        ["subagent", "read"],
+        session,
+        chat_fn=lambda *a, **k: {"content": "x"},
+        workdir=tmp_path,
+    )
+    assert "[可派发子代理角色]" in loop.system_prompt
+    assert "planner" in loop.system_prompt and "modeler" in loop.system_prompt
+
+
+def test_sibling_roster_absent_without_subagent_tool(tmp_path: Path) -> None:
+    session = SessionStore(tmp_path / "s.jsonl", title="t")
+    loop = AgentLoop(["read"], session, chat_fn=lambda *a, **k: {"content": "x"}, workdir=tmp_path)
+    assert "[可派发子代理角色]" not in loop.system_prompt
