@@ -579,3 +579,86 @@ def test_slash_tree_fork_unknown_event_prints_error(tmp_path, capsys) -> None:
     store = SessionStore.create(sessions_dir, title="repl-fork-err", playbook=str(SINGLE))
     assert _handle_slash("/tree", "bogus-event-id", _ctx(result=_Result(store), sessions_dir=sessions_dir)) is True
     assert "不存在" in capsys.readouterr().out
+
+
+# ---------- agent 子命令(G1 headless) ----------
+
+
+class _FakeHeadlessRegistry:
+    """agent 子命令的假 registry:单轮返回固定文本(经 loop._default_chat_fn)。"""
+
+    def chat(self, role, messages, tools=None, cancel_event=None, **kw):
+        return {"content": "headless-done", "model_resolved": "fake-headless"}
+
+    def model_for_role(self, role):
+        raise KeyError(role)  # loop 回退 DEFAULT_CONTEXT_WINDOW
+
+
+def test_agent_subcommand_json_envelope(tmp_path, capsys, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "openbimagent.providers.registry.get_default_registry",
+        lambda *a, **kw: _FakeHeadlessRegistry(),
+    )
+    sessions = tmp_path / "sessions"
+    code = main([
+        "agent", "检查一下目录",
+        "--sessions-dir", str(sessions),
+        "--workdir", str(tmp_path),
+        "--yes", "--json",
+    ])
+    assert code == 0
+    import json as _json
+    payload = _json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert payload["status"] == "ok"
+    assert payload["content"] == "headless-done"
+    assert payload["session_id"]
+    # 会话落 JSONL 树,可复盘
+    assert (sessions / f"{payload['session_id']}.jsonl").is_file()
+
+
+def test_agent_subcommand_resume_session(tmp_path, capsys, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "openbimagent.providers.registry.get_default_registry",
+        lambda *a, **kw: _FakeHeadlessRegistry(),
+    )
+    sessions = tmp_path / "sessions"
+    code = main([
+        "agent", "第一段任务",
+        "--sessions-dir", str(sessions),
+        "--workdir", str(tmp_path),
+        "--yes", "--json",
+    ])
+    assert code == 0
+    import json as _json
+    first = _json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    code = main([
+        "agent", "继续任务",
+        "--session", first["session_id"],
+        "--sessions-dir", str(sessions),
+        "--workdir", str(tmp_path),
+        "--yes", "--json",
+    ])
+    assert code == 0
+    second = _json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert second["session_id"] == first["session_id"]
+    # 同一会话续跑:事件累积
+    lines = [ln for ln in (sessions / f"{first['session_id']}.jsonl").read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert len(lines) >= 4
+
+
+def test_agent_subcommand_error_envelope(tmp_path, capsys, monkeypatch) -> None:
+    def boom(*a, **kw):
+        raise RuntimeError("no model configured")
+
+    monkeypatch.setattr("openbimagent.providers.registry.get_default_registry", boom)
+    code = main([
+        "agent", "任务",
+        "--sessions-dir", str(tmp_path / "sessions"),
+        "--workdir", str(tmp_path),
+        "--yes", "--json",
+    ])
+    assert code == 1
+    import json as _json
+    payload = _json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert payload["status"] == "error"
+    assert "no model configured" in payload["error"]

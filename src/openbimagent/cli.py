@@ -65,6 +65,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.cmd == "run":
         return _cmd_run(args)
+    if args.cmd == "agent":
+        return _cmd_agent(args)
     if args.cmd == "sessions":
         return _cmd_sessions(args)
     if args.cmd == "tree":
@@ -113,6 +115,28 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="市政 Solver v0 输入 JSON；Playbook 声明 Solver 时必须显式提供，不会从自然语言猜测",
     )
+    run_p.add_argument(
+        "--brief",
+        default=None,
+        help="用户需求 brief:先做规则+小模型兜底槽位预填,命中的槽位不再追问",
+    )
+
+    agent_p = sub.add_parser(
+        "agent",
+        help="一行式 headless 代理(G1):跑一次 AgentLoop 输出结果,供 CI/DCC 脚本调用",
+    )
+    agent_p.add_argument("task", help="任务文本")
+    agent_p.add_argument("--session", default=None, help="续跑会话 id(缺省新建)")
+    agent_p.add_argument("--sessions-dir", default=DEFAULT_SESSIONS_DIR, type=Path)
+    agent_p.add_argument("--workdir", default=Path.cwd(), type=Path)
+    agent_p.add_argument("--tools", nargs="*", default=["read", "write", "edit", "bash"],
+                         help="挂载工具(默认文件四件套;≤8)")
+    agent_p.add_argument("--system-prompt", default=None, help="覆盖 system prompt")
+    agent_p.add_argument("--max-steps", type=int, default=10)
+    agent_p.add_argument("--profile", default=None, help="providers profile")
+    agent_p.add_argument("--yes", action="store_true", help="审批门全部放行(自动化)")
+    agent_p.add_argument("--json", action="store_true", dest="as_json",
+                         help="输出 JSON 信封 {status, content, session_id}(脚本消费)")
 
     sess_p = sub.add_parser("sessions", help="列出多会话(/sessions 斜杠命令的 CLI 形态)")
     sess_p.add_argument("--sessions-dir", default=DEFAULT_SESSIONS_DIR, type=Path)
@@ -250,6 +274,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
             image_size=args.image_size,
             session_id=args.session,
             utility_solver_input=args.utility_solver_input,
+            brief=args.brief,
         )
     except KeyboardInterrupt:
         # pipeline 内部已落 checkpoint;兜底
@@ -378,6 +403,61 @@ _SLASH_HELP = """\
   /exit | /quit          退出 HITL REPL
 [M1 桩(暂未实现)]
   /undo /redo /retry /compact /model /fork /diff"""
+
+
+# ---------- agent 子命令(G1 headless) ----------
+
+
+def _cmd_agent(args: argparse.Namespace) -> int:
+    """一行式 headless 代理:跑一次 AgentLoop,输出最终内容或 JSON 信封。
+
+    对标 opencode `opencode run -p` / grok `grok -p` / pi `--mode json`:
+    CI、DCC 脚本与渲染农场用 `--json` 消费结构化结果;会话仍落 JSONL 树,
+    可用 /tree、fork、export 复盘。模型经默认 registry(缺 --yes 时审批门走 stdin)。
+    """
+    from openbimagent.core.loop import AgentLoop
+
+    sessions_dir = Path(args.sessions_dir)
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    if args.session:
+        store = _open_session(sessions_dir, args.session)
+        if store is None:
+            return 1
+    else:
+        store = SessionStore.create(sessions_dir, title=args.task[:60] or "headless-agent")
+    if args.profile:
+        os.environ.setdefault("OPENBIMAGENT_PROFILE", args.profile)
+    approval_callback = (lambda name, a: True) if args.yes else None
+    try:
+        loop = AgentLoop(
+            list(args.tools),
+            store,
+            approval_callback=approval_callback,
+            max_steps=args.max_steps,
+            workdir=args.workdir,
+            system_prompt=args.system_prompt,
+            role="orchestrator",
+        )
+        content = loop.run(args.task)
+    except Exception as exc:
+        if args.as_json:
+            print(json.dumps({"status": "error", "error": str(exc), "session_id": store.session_id}, ensure_ascii=False))
+        else:
+            print(f"[agent error] {exc}")
+        return 1
+    if args.as_json:
+        print(json.dumps(
+            {
+                "status": "ok",
+                "content": content,
+                "session_id": store.session_id,
+                "head": store.head,
+            },
+            ensure_ascii=False,
+        ))
+    else:
+        print(content)
+    return 0
 
 
 # ---------- sessions / tree / export 子命令 ----------
