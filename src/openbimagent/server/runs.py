@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -69,13 +70,56 @@ def _bigrams(text: str) -> set[str]:
     return tokens
 
 
+_DOMAIN_KEYWORDS: dict[str, str] = {
+    "污水": "domain:sewage",
+    "雨水": "domain:storm",
+    "给水": "domain:water_supply",
+    "再生水": "domain:reclaimed",
+    "电力": "domain:power",
+    "通信": "domain:telecom",
+    "燃气": "domain:gas",
+}
+"""brief 与归档 IR 共用的领域关键词特征表(结构化对齐,E5)。"""
+
+_DN_PATTERN = re.compile(r"dn\s*(\d{3,4})")
+
+
+def _text_features(text: str) -> set[str]:
+    """从文本提取结构化特征:领域标签 + DN 管径值(确定性,无向量)。"""
+    low = text.lower()
+    features = {tag for keyword, tag in _DOMAIN_KEYWORDS.items() if keyword in low}
+    features.update(f"dn:{m.group(1)}" for m in _DN_PATTERN.finditer(low))
+    return features
+
+
+def _ir_features(ir_path: Path) -> set[str]:
+    """从归档 compiled_utility_ir.json 提取特征:领域/DN(全文扫描,形状无关)+ rule_id。
+
+    IR 归档体量小(数 KB),全量确定性扫描即可;读取失败返回空集(检索降级为纯词法)。
+    """
+    try:
+        data = json.loads(ir_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return set()
+    features = _text_features(json.dumps(data, ensure_ascii=False))
+    for evidence in data.get("evidence") or []:
+        rule_id = evidence.get("rule_id")
+        if rule_id:
+            features.add(f"rule:{rule_id}")
+    return features
+
+
 def _retrieve_exemplars(brief: str, pack: Path, *, top_k: int = 3) -> list[dict[str, Any]]:
     """缺陷一修复（归档反哺）：从本包素材归档检索 Top-K 相似交付作为 in-context 范例。
 
-    评分 = brief token 重合度（Jaccard）+ 时效衰减；无任何向量库/权重更新——
-    机制边界=In-Context Retrieval（论文严禁表述为自进化/RL）。
+    E5 结构化对齐升级(论文 01 方法论:需求条目-构件对齐检索):
+    评分 = 0.6×brief 词法重合(bigram Jaccard) + 0.4×结构化特征重合(领域标签/DN 管径/
+    rule_id,从归档 IR 提取) + 时效小幅加权;词法零重合仍不入选(防"无相似也硬凑");
+    无任何向量库/权重更新——机制边界=In-Context Retrieval(论文严禁表述为自进化/RL)。
+    命中条目附 match 元数据(lexical/structured/matched features)供上下文注入展示。
     """
-    index_path = _archive_root(pack) / "index.json"
+    archive_root = _archive_root(pack)
+    index_path = archive_root / "index.json"
     if not index_path.is_file():
         return []
     try:
@@ -85,14 +129,27 @@ def _retrieve_exemplars(brief: str, pack: Path, *, top_k: int = 3) -> list[dict[
     query = _bigrams(brief)
     if not query:
         return []
+    query_features = _text_features(brief)
     scored: list[tuple[float, dict[str, Any]]] = []
     for i, entry in enumerate(entries):
         cand = _bigrams(str(entry.get("brief", "")))
         if not cand or not (query & cand):
             continue  # 零重合不入选（防"无相似也硬凑"）
-        jaccard = len(query & cand) / len(query | cand)
+        lexical = len(query & cand) / len(query | cand)
+        ir_features = _ir_features(archive_root / str(entry.get("session_id", "")) / "compiled_utility_ir.json")
+        if query_features and ir_features:
+            structured = len(query_features & ir_features) / len(query_features | ir_features)
+        else:
+            structured = 0.0
         recency = (i + 1) / len(entries) * 0.1  # 近者小幅加权
-        scored.append((jaccard + recency, entry))
+        score = 0.6 * lexical + 0.4 * structured + recency
+        enriched = dict(entry)
+        enriched["match"] = {
+            "lexical": round(lexical, 3),
+            "structured": round(structured, 3),
+            "features": sorted(query_features & ir_features)[:8],
+        }
+        scored.append((score, enriched))
     scored.sort(key=lambda item: item[0], reverse=True)
     return [entry for _, entry in scored[:top_k]]
 
