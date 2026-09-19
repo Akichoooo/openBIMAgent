@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -30,6 +31,62 @@ _FLOW_QMARK_SCALAR = re.compile(r"(\b\w+\s*:\s*)([^\"'\n{}\[\],]*?\?+)(\s*[,}\]]
 
 PASS_THRESHOLD = 85
 """completion_score 放行阈值(COMPONENTS §2.2)。"""
+
+EXPRESSION_FEATURE_RULES: tuple[dict[str, str], ...] = (
+    {
+        "id": "EF1",
+        "feature": "指称混用",
+        "rule": "同一实体用不同名字(“这个管”/“刚才那根”/“旁边那个井”)时,必须根据上下文统一到唯一实体名,禁止当成多个实体。",
+    },
+    {
+        "id": "EF2",
+        "feature": "过程压缩",
+        "rule": "“把水从 A 排到 B”这类压缩表达隐含了路径、坡度、中途井等中间过程;抽取时要拆开,不得把隐含步骤当作已明确。",
+    },
+    {
+        "id": "EF3",
+        "feature": "前提与动作混淆",
+        "rule": "“如果有现状管线就避让”里的避让是约束/前提,不是新任务;前提条件归入约束,不得提取为独立动作。",
+    },
+    {
+        "id": "EF4",
+        "feature": "分支遗漏",
+        "rule": "用户只描述了常见分支时,要显式确认其他分支(如雨天/检修/事故工况),不得默认只剩一条路径。",
+    },
+    {
+        "id": "EF5",
+        "feature": "一对多合并",
+        "rule": "“做三个井”这类合并表达里每个对象的参数可能不同;要拆成独立对象逐一确认,不得共用同一组参数。",
+    },
+    {
+        "id": "EF6",
+        "feature": "口语量词与单位",
+        "rule": "“三百的管”要确认是 DN300 还是 300mm 壁厚;口语量词(几个、那一带)必须追问到精确值与单位。",
+    },
+    {
+        "id": "EF7",
+        "feature": "背景说明夹杂",
+        "rule": "项目背景、历史沿革等解释性文字不是需求;不得从中提取槽位值,但可作约束上下文保留。",
+    },
+    {
+        "id": "EF8",
+        "feature": "无对象要求",
+        "rule": "“现场要平整”这类没有明确对象的要求,归入场地/环境前提确认,不得当成建模任务直接执行。",
+    },
+)
+"""BIM 需求口语化表达特征规则库(论文 07 方法论:真实语料失败模式 → 显式应对规则)。
+
+提炼自真实工程需求表达的高频失败模式;clarify 抽取与追问 prompt 注入本表,
+小模型兜底抽取的指令同样携带(见 extract_slots_with_fallback)。
+"""
+
+
+def expression_rules_fragment() -> str:
+    """把表达特征规则渲染为 prompt 片段(供 clarify 角色与兜底抽取共用,单一事实源)。"""
+    lines = ["处理用户需求时必须遵守以下表达特征规则:"]
+    for rule in EXPRESSION_FEATURE_RULES:
+        lines.append(f"- {rule['id']} {rule['feature']}:{rule['rule']}")
+    return "\n".join(lines)
 
 
 @dataclass
@@ -133,10 +190,7 @@ def _extract_value(user_input: str, key: str) -> str | None:
 
 
 def extract_slots(user_input: str, slots: list[Slot]) -> list[Slot]:
-    """规则抽取(正则/别名表,zh/en),回填已命中槽位;默认值关键词出现也视为命中。
-
-    TODO(M1): 规则未命中的槽位走小模型兜底抽取(COMPONENTS §1:规则 + 小模型)。
-    """
+    """规则抽取(正则/别名表,zh/en),回填已命中槽位;默认值关键词出现也视为命中。"""
     for slot in slots:
         if slot.value is not None:
             continue
@@ -149,6 +203,74 @@ def extract_slots(user_input: str, slots: list[Slot]) -> list[Slot]:
             if slot.default and slot.default in user_input:
                 slot.value = slot.default
     return slots
+
+
+def _strip_json_fences(text: str) -> str:
+    """剥掉 ```json 围栏与前后杂讯,取第一个 JSON 对象文本。"""
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = re.sub(r"^```[a-zA-Z]*\s*", "", stripped)
+        stripped = re.sub(r"\s*```$", "", stripped)
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start != -1 and end > start:
+        return stripped[start : end + 1]
+    return stripped
+
+
+def extract_slots_with_fallback(
+    user_input: str,
+    slots: list[Slot],
+    *,
+    chat_fn: Callable[..., dict[str, Any]] | None = None,
+) -> tuple[list[Slot], list[str]]:
+    """规则抽取 + 小模型兜底(M1 TODO 落地;COMPONENTS §1 "规则 + 小模型")。
+
+    先跑确定性规则抽取;仍有未填槽位时,用 clarify 角色携带表达特征规则做一次
+    JSON 兜底抽取(论文 07:规则回溯优于泛化提示)。chat_fn 缺省时尝试默认
+    registry;模型不可用/输出非法 → 静默回退到纯规则结果(离线确定性优先,
+    追问流程绝不因兜底失败而阻塞)。只回填已知 slot id 的非空字符串值,
+    模型编造的槽位 id 一律忽略。返回 (slots, 兜底填充的槽位 id 列表)。
+    """
+    extract_slots(user_input, slots)
+    missing = [s for s in slots if s.value is None]
+    if not missing:
+        return slots, []
+    fn = chat_fn
+    if fn is None:
+        try:
+            from openbimagent.providers.registry import get_default_registry
+
+            fn = get_default_registry().chat
+        except Exception:
+            return slots, []
+    slot_spec = [{"id": s.id, "question": s.question, "default": s.default} for s in missing]
+    prompt = (
+        "你是工程需求槽位抽取器。\n"
+        + expression_rules_fragment()
+        + "\n\n从用户需求中为下列槽位抽取值;抽取不到就填 null,禁止编造:\n"
+        + json.dumps(slot_spec, ensure_ascii=False)
+        + "\n\n用户需求:\n"
+        + user_input
+        + '\n\n只输出 JSON 对象,形如 {"<slot_id>": "<值或null>"},不要输出其他文字。'
+    )
+    try:
+        resp = fn(role="clarify", messages=[{"role": "user", "content": prompt}])
+        content = resp.get("content") or ""
+        if not content and resp.get("choices"):
+            content = (resp["choices"][0].get("message") or {}).get("content") or ""
+        data = json.loads(_strip_json_fences(str(content)))
+    except Exception:
+        return slots, []
+    if not isinstance(data, dict):
+        return slots, []
+    filled: list[str] = []
+    for slot in missing:
+        value = data.get(slot.id)
+        if isinstance(value, str) and value.strip():
+            slot.value = value.strip()
+            filled.append(slot.id)
+    return slots, filled
 
 
 def next_question(state: SlotState) -> Slot | None:

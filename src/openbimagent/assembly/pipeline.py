@@ -99,6 +99,7 @@ def run_pipeline(
     scad_critic: Any = None,
     render_critic: Any = None,
     input_func: Callable[[str], str] = input,
+    brief: str | None = None,
     approval_fn: ApprovalFn | None = None,
     on_html_report: OnHtmlReport | None = None,
     on_phase: OnPhase | None = None,
@@ -170,6 +171,15 @@ def run_pipeline(
             )
         else:
             slot_state = clarify.SlotState(slots=clarify.load_playbook_slots(Path(playbook_path)))
+            # H1:用户 brief 先做规则 + 小模型兜底预填(表达特征规则见 clarify/slots.py),
+            # 命中的槽位不再重复追问;兜底失败静默回退纯问答,不阻塞。
+            if brief:
+                chat_fn = registry.chat if registry is not None else None
+                _, prefill_ids = clarify.extract_slots_with_fallback(
+                    brief, slot_state.slots, chat_fn=chat_fn
+                )
+                if prefill_ids:
+                    _phase("clarify", f"brief 预填槽位: {prefill_ids}")
         try:
             clarify.run_clarify(slot_state, input_func=_clarify_input, resume=is_resume)
         finally:
