@@ -711,11 +711,19 @@ class AgentLoop:
         if perm is Permission.DENY:
             return _tool_result("denied", f"工具 {perm_key} 被权限规则拒绝(deny)。", {"permission": "deny"})
         if perm is Permission.ASK:
-            approved = (
-                self.approval_request_callback(name, perm_key, args, self._cancel_event)
-                if self.approval_request_callback is not None
-                else self.approval_callback(name, args)
-            )
+            try:
+                approved = (
+                    self.approval_request_callback(name, perm_key, args, self._cancel_event)
+                    if self.approval_request_callback is not None
+                    else self.approval_callback(name, args)
+                )
+            except Exception as exc:
+                # F4 fail-closed:审批通道不可用(无 stdin/超时/崩溃)一律拒绝,绝不静默放行。
+                return _tool_result(
+                    "rejected",
+                    f"工具 {perm_key} 审批不可用,已按 fail-closed 拒绝: {exc}",
+                    {"permission": "approval_unavailable", "error": str(exc)},
+                )
             if not approved:
                 return _tool_result("rejected", f"工具 {perm_key} 被用户拒绝。", {"permission": "rejected"})
             approval_granted = True

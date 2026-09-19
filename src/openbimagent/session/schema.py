@@ -67,6 +67,7 @@ class CustomType(StrEnum):
     RESUME_RECEIPT = "resume_receipt"
     STEER_REQUESTED = "steer_requested"
     STEER_RECEIPT = "steer_receipt"
+    HOST_EVENT = "host_event"
 
 
 class MessagePayload(BaseModel):

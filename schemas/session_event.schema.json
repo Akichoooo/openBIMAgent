@@ -79,7 +79,8 @@
             "resume_requested",
             "resume_receipt",
             "steer_requested",
-            "steer_receipt"
+            "steer_receipt",
+            "host_event"
           ]
         }
       },

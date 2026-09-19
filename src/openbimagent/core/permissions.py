@@ -40,8 +40,15 @@ def check_permission(tool_name: str, rules: Mapping[str, Permission] | None = No
 
     tool_name 可带参数摘要(如 ``bash:rm -rf /``),此时同时试全名与基名(``:`` 前段),
     规则如 ``bash:rm *`` 可精确拦截危险命令。合并顺序:DEFAULT_RULES ← 角色 frontmatter 覆盖。
+
+    规则值一律归一化为 Permission 枚举(字符串 "ask" 也强制成 Permission.ASK):
+    否则调用方传入字符串规则时 ``perm is Permission.ASK`` 判空会**静默跳过审批门**
+    (fail-open 漏洞);非法值在归一化时直接抛错(fail-loud)。
     """
-    merged: dict[str, Permission] = {**DEFAULT_RULES, **(rules or {})}
+    merged: dict[str, Permission] = {
+        key: (value if isinstance(value, Permission) else Permission(value))
+        for key, value in {**DEFAULT_RULES, **(rules or {})}.items()
+    }
     base = tool_name.split(":", 1)[0]
     # 优先级:精确全名 > glob 全名(最长 pattern)> 精确基名 > glob 基名(最长 pattern)> 默认 ask
     if tool_name in merged and not _is_glob(tool_name):
