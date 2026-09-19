@@ -63,6 +63,10 @@ class SubagentRequest(BaseModel):
     attempt_number: int = Field(default=1, ge=1)
     resumed_from_request_id: str | None = None
     resume_id: str | None = None
+    output_schema: dict[str, Any] | None = Field(
+        default=None,
+        description="可选:子代理最终输出的 JSON Schema;角色须在 frontmatter 声明该能力,终态输出违反即 FAILED(fail-loud)。",
+    )
 
     @model_validator(mode="after")
     def _attempt_lineage_is_consistent(self) -> "SubagentRequest":
@@ -85,6 +89,7 @@ class SubagentRequest(BaseModel):
         context_mode: ContextMode | str = ContextMode.ISOLATED,
         execution_mode: ExecutionMode | str = ExecutionMode.FOREGROUND,
         artifact_contract: str = "summary-v1",
+        output_schema: dict[str, Any] | None = None,
     ) -> "SubagentRequest":
         return cls(
             request_id=str(uuid7()),
@@ -94,6 +99,7 @@ class SubagentRequest(BaseModel):
             context_mode=context_mode,
             execution_mode=execution_mode,
             artifact_contract=artifact_contract,
+            output_schema=output_schema,
         )
 
 

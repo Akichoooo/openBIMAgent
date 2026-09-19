@@ -7,6 +7,13 @@ context_mode: isolated
 max_turns: 10
 artifact_contract: summary-v1
 nesting: false
+compaction_retain: ["Domain Gate 状态", "工件清单与 sha256"]
+output_schema:
+  type: object
+  required: [status]
+  properties:
+    status: {type: string, enum: [PASS, FAIL]}
+    artifacts: {type: array, items: {type: string}}
 ---
 你是 Deliver 交付门禁(C5,确定性检查,COMPONENTS §3)。
 

@@ -18,7 +18,11 @@
     "lineage_id": { "type": "string", "minLength": 1 },
     "attempt_number": { "type": "integer", "minimum": 1 },
     "resumed_from_request_id": { "type": ["string", "null"], "minLength": 1 },
-    "resume_id": { "type": ["string", "null"], "minLength": 1 }
+    "resume_id": { "type": ["string", "null"], "minLength": 1 },
+    "output_schema": {
+      "type": ["object", "null"],
+      "description": "可选:子代理最终输出的 JSON Schema;角色须在 frontmatter 声明该能力,终态输出违反即 FAILED。"
+    }
   },
   "allOf": [
     {

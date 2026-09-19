@@ -209,8 +209,9 @@ def run_plan(
     depth: int = 0,
     session: SessionStore | None = None,
     concurrent: bool = False,
+    max_concurrency: int = MAX_CONCURRENCY,
 ) -> PlanRunResult:
-    """按 plan 批次驱动 agent_fn;concurrent=False 顺序执行(M0 默认),True 并发 ≤4(M1)。
+    """按 plan 批次驱动 agent_fn;concurrent=False 顺序执行(M0 默认),True 并发(M1)。
 
     每批:agent_fn(batch, rework) → BatchReport;PASS 进下一批;FIX 带返工指令
     重试同批(最多 max_retries 次,指令缺省回退 hint,两者皆空判 no_rework_instruction
@@ -219,14 +220,19 @@ def run_plan(
     depth > 0 直接拒绝(禁嵌套,ARCH §6);session 非空时每次调用落
     tool_call 事件对(phase=call/result,同一 toolCallId)。
 
+    D5 治理参数:max_concurrency 为并发信号量上限(1..8,默认 MAX_CONCURRENCY=4,
+    Codex AgentsToml max_concurrent_threads_per_session 语义)。
+
     M1 增强:
-    - concurrent=True:用 asyncio.gather + Semaphore(MAX_CONCURRENCY) 并发调度所有批次,
+    - concurrent=True:用 asyncio.gather + Semaphore(max_concurrency) 并发调度所有批次,
       同步 agent_fn 用 asyncio.to_thread 包装;结果顺序与输入一致(gather 语义)。
     - doom_loop 检测结合 hint 提取的评分(overall=/score=)做无进展判定。
     - 每次 agent_fn 调用包装为 SubagentResult 累积到 PlanRunResult.subagent_results。
     """
     if depth > 0:
         raise NestedDispatchError(f"子代理禁嵌套(ARCH §6):depth={depth} 的派发被拒绝")
+    if not 1 <= max_concurrency <= 8:
+        raise ValueError(f"max_concurrency 必须在 1..8,实收 {max_concurrency}")
     batch_list = [str(b) for b in batches]
     if not batch_list:
         raise ValueError("批次序列不能为空(plan 至少一个渲染检查单位)")
@@ -234,7 +240,9 @@ def run_plan(
         raise ValueError(f"max_retries 须 ≥ 0,实收 {max_retries}")
 
     if concurrent:
-        return asyncio.run(_run_plan_concurrent(batch_list, agent_fn, max_retries, doom_max_fix, session))
+        return asyncio.run(
+            _run_plan_concurrent(batch_list, agent_fn, max_retries, doom_max_fix, session, max_concurrency=max_concurrency)
+        )
 
     outcomes: list[BatchOutcome] = []
     subagent_results: list[SubagentResult] = []
@@ -258,13 +266,15 @@ async def _run_plan_concurrent(
     max_retries: int,
     doom_max_fix: int,
     session: SessionStore | None,
+    *,
+    max_concurrency: int = MAX_CONCURRENCY,
 ) -> PlanRunResult:
-    """并发调度所有批次(M1):asyncio.gather + Semaphore(MAX_CONCURRENCY)。
+    """并发调度所有批次(M1):asyncio.gather + Semaphore(max_concurrency)。
 
     每批用 asyncio.to_thread 包装同步 _run_batch;结果顺序与输入一致(gather 语义)。
     每批独立 subagent_results 列表(线程隔离),最后按批次顺序合并。
     """
-    sem = asyncio.Semaphore(MAX_CONCURRENCY)
+    sem = asyncio.Semaphore(max_concurrency)
 
     async def run_one(batch: str) -> tuple[BatchOutcome, list[SubagentResult]]:
         batch_results: list[SubagentResult] = []

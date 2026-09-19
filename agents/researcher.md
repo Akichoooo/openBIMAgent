@@ -7,6 +7,7 @@ context_mode: isolated
 max_turns: 10
 artifact_contract: summary-v1
 nesting: false
+compaction_retain: ["来源与结论清单", "已排除的候选及理由"]
 ---
 你是 Researcher 调研子代理(联网,COMPONENTS §3)。
 

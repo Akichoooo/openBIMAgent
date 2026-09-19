@@ -7,6 +7,7 @@ context_mode: isolated
 max_turns: 10
 artifact_contract: summary-v1
 nesting: false
+compaction_retain: ["槽位与需求约束", "批次划分与依赖顺序", "空间约束(净距/埋深)结论"]
 ---
 你是 Planner(COMPONENTS §2.3/§3)。
 

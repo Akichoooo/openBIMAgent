@@ -7,6 +7,7 @@ context_mode: isolated
 max_turns: 20
 artifact_contract: summary-v1
 nesting: false
+compaction_retain: ["坐标系与单位", "当前批次 typed plan 的 idempotency_key", "宿主写操作回执状态"]
 ---
 你是 Modeler 建模子代理(质量咽喉,绑定 gemini-3.1-pro,禁止降级 Flash——COMPONENTS §3 已拍板)。
 

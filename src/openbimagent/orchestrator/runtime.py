@@ -8,6 +8,7 @@ child runner、提交不可变工件、记录生命周期与投递回执。后�
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import threading
 from collections.abc import Callable
@@ -81,6 +82,8 @@ class AgentProfile:
     max_turns: int = 10
     artifact_contract: str = "summary-v1"
     nesting: bool = False
+    output_schema: dict[str, Any] | None = None
+    compaction_retain: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -91,6 +94,27 @@ class ChildRunOutput:
     hint: str = ""
     artifact_paths: tuple[Path, ...] = ()
     usage: dict[str, int | float] = field(default_factory=dict)
+
+
+class OutputSchemaViolation(ValueError):
+    """子代理最终输出违反请求携带的 output_schema(fail-loud,不静默放行)。"""
+
+
+def _validate_output_schema(schema: dict[str, Any], summary: str) -> None:
+    """校验 child 最终输出:必须是合法 JSON 且满足 JSON Schema(D4,Codex final_output_json_schema)。"""
+    from jsonschema import Draft202012Validator
+
+    try:
+        payload = json.loads(summary)
+    except json.JSONDecodeError as exc:
+        raise OutputSchemaViolation(f"最终输出不是合法 JSON: {exc}") from exc
+    errors = sorted(
+        Draft202012Validator(schema).iter_errors(payload),
+        key=lambda e: (str(e.absolute_path), e.message),
+    )
+    if errors:
+        detail = "; ".join(f"{list(e.absolute_path)}: {e.message}" for e in errors[:5])
+        raise OutputSchemaViolation(f"最终输出不满足 output_schema: {detail}")
 
 
 ChildRunner = Callable[[SubagentRequest, AgentProfile, SessionStore], ChildRunOutput]
@@ -616,6 +640,9 @@ class LocalSubagentRuntime:
                     status = SubagentStatus.CANCELLED
                     error = SubagentError(code="Cancelled", message="子代理执行被取消", retryable=False)
                     output = None
+                elif request.output_schema is not None and status is SubagentStatus.COMPLETED:
+                    # D4 fail-loud:终态输出违反 output_schema → FAILED(结构化错误),不静默放行
+                    _validate_output_schema(request.output_schema, output.summary)
             except Exception as exc:
                 status = SubagentStatus.FAILED
                 error = SubagentError(code=type(exc).__name__, message=str(exc) or repr(exc), retryable=False)
@@ -1021,6 +1048,11 @@ class LocalSubagentRuntime:
         if request.context_mode is ContextMode.FORK:
             parent = SessionStore(self.sessions_dir / f"{request.parent_session_id}.jsonl")
             task = f"父会话上下文（只读）：\n{_parent_context(parent)}\n\n当前任务：\n{request.task}"
+        if request.output_schema is not None:
+            task += (
+                "\n\n最终回复必须是满足以下 JSON Schema 的合法 JSON(只输出 JSON,不输出其他文字):\n"
+                + json.dumps(request.output_schema, ensure_ascii=False)
+            )
         handle = self._current_run_handle(request.request_id)
 
         def consume_steer() -> tuple[str, ...]:
@@ -1083,6 +1115,7 @@ class LocalSubagentRuntime:
             role=profile.name,
             subagent_runtime=None,
             depth=1,
+            compaction_retain=list(profile.compaction_retain) or None,
         )
         cancel_event = getattr(self._cancel_local, "event", None)
         summary = loop.run(task, cancel_event=cancel_event)
@@ -1119,6 +1152,12 @@ def load_agent_profile(role: str, agents_dir: Path = AGENTS_DIR) -> AgentProfile
     max_turns = int(data.get("max_turns", 10))
     if max_turns < 1 or max_turns > 100:
         raise SubagentRuntimeError(f"角色 max_turns 必须在 1..100: {path}")
+    output_schema_raw = data.get("output_schema")
+    if output_schema_raw is not None and not isinstance(output_schema_raw, dict):
+        raise SubagentRuntimeError(f"角色 output_schema 必须是 mapping(JSON Schema): {path}")
+    retain_raw = data.get("compaction_retain") or []
+    if not isinstance(retain_raw, list) or not all(isinstance(item, str) for item in retain_raw):
+        raise SubagentRuntimeError(f"角色 compaction_retain 必须是字符串列表: {path}")
     return AgentProfile(
         name=name,
         model=str(data["model"]) if data.get("model") else None,
@@ -1128,6 +1167,8 @@ def load_agent_profile(role: str, agents_dir: Path = AGENTS_DIR) -> AgentProfile
         max_turns=max_turns,
         artifact_contract=str(data.get("artifact_contract") or "summary-v1"),
         nesting=bool(data.get("nesting", False)),
+        output_schema=output_schema_raw,
+        compaction_retain=tuple(retain_raw),
         system_prompt=body.strip(),
     )
 
@@ -1143,6 +1184,12 @@ def _enforce_profile_ceiling(request: SubagentRequest, profile: AgentProfile) ->
         raise SubagentRuntimeError(f"角色 {profile.name} 不允许 fork 父上下文")
     if profile.nesting:
         raise SubagentRuntimeError("P0 不支持 nesting=true，所有 child 均无 subagent 能力")
+    # D4 capability fail-loud(dsh UNSUPPORTED_CAPABILITY 语义):
+    # 请求携带 output_schema 但角色未声明该能力 → 拒绝,绝不 accepted-then-ignored。
+    if request.output_schema is not None and profile.output_schema is None:
+        raise SubagentRuntimeError(
+            f"角色 {profile.name} 未在 frontmatter 声明 output_schema 能力,请求携带的输出契约被拒绝"
+        )
 
 
 def _parent_context(parent: SessionStore) -> str:

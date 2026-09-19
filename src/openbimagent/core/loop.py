@@ -185,6 +185,10 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "context_mode": {"type": "string", "enum": ["isolated", "fork"], "default": "isolated"},
                     "execution_mode": {"type": "string", "enum": ["foreground", "background"], "default": "foreground"},
                     "artifact_contract": {"type": "string", "default": "summary-v1"},
+                    "output_schema": {
+                        "type": "object",
+                        "description": "dispatch 时可选:子代理最终输出的 JSON Schema;角色须声明该能力,违反即 FAILED。",
+                    },
                 },
                 "additionalProperties": False,
                 "oneOf": [
@@ -959,6 +963,7 @@ class AgentLoop:
             context_mode=args.get("context_mode", "isolated"),
             execution_mode=args.get("execution_mode", "foreground"),
             artifact_contract=args.get("artifact_contract", "summary-v1"),
+            output_schema=args.get("output_schema"),
         )
         if request.execution_mode is ExecutionMode.BACKGROUND:
             handle = self.subagent_runtime.submit(request, parent_session=self.session)

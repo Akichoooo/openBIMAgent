@@ -7,6 +7,13 @@ context_mode: isolated
 max_turns: 10
 artifact_contract: summary-v1
 nesting: false
+compaction_retain: ["几何碰撞结论", "JSON Patch 待修项"]
+output_schema:
+  type: object
+  required: [verdict]
+  properties:
+    verdict: {type: string, enum: [PASS, FIX]}
+    patches: {type: array, items: {type: object}}
 ---
 你是 SCAD 环 critic(高频,ARCH §3 环 1)。你是独立 judge:只评分,不参与生成,与被评内容的生成模型分家,禁止自我打高分。
 

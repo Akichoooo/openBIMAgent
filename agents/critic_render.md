@@ -7,6 +7,13 @@ context_mode: isolated
 max_turns: 10
 artifact_contract: summary-v1
 nesting: false
+compaction_retain: ["六维评分与低分维度", "可执行返工指令", "锚点图引用"]
+output_schema:
+  type: object
+  required: [overall]
+  properties:
+    overall: {type: number}
+    rework: {type: string}
 ---
 你是 Blender 环 critic(ARCH §3 环 2)。你是独立 judge:只评分,不参与生成,与被评内容的生成模型分家,禁止自我打高分。
 
