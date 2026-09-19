@@ -23,8 +23,37 @@ from openbimagent.assembly.vectorworks_plan import (
 COMMAND_TIMEOUT = 60.0
 SERVER_PATH = Path(__file__).resolve().parents[3] / "mcp_servers" / "vectorworks_mcp" / "server" / "server.py"
 TOOLSETS_PATH = Path(__file__).resolve().parents[3] / "mcp_servers" / "vectorworks_mcp" / "toolsets.json"
+VS_INDEX_PATH = Path(__file__).resolve().parents[3] / "mcp_servers" / "vectorworks_mcp" / "vs_index.json"
 VALID_TOOLSETS = frozenset({"full", "modeling", "minimal"})
 MCP_TOOLS = frozenset({"ping", "describe_capabilities", "execute_plan", "execute_vs_code"})
+
+_VS_INDEX_CACHE: list[dict[str, Any]] | None = None
+
+
+def lookup_vs_signatures(query: str, *, limit: int = 5) -> list[dict[str, Any]]:
+    """按函数名子串查询 vs_index 签名(懒发现;签名不常驻上下文,按需检索)。
+
+    供 AgentLoop 的 mcp_call lookup_api 治理入口使用:模型写 VectorScript/bpy
+    自由代码前可先查真实签名,减少幻觉 API;doc 截 200 字符防爆上下文。
+    """
+    global _VS_INDEX_CACHE
+    if _VS_INDEX_CACHE is None:
+        data = json.loads(VS_INDEX_PATH.read_text(encoding="utf-8"))
+        _VS_INDEX_CACHE = list(data.get("functions", []))
+    normalized = query.strip().lower().removeprefix("vs.").removesuffix("()")
+    if not normalized:
+        return []
+    matches = [entry for entry in _VS_INDEX_CACHE if normalized in str(entry.get("name", "")).lower()]
+    return [
+        {
+            "name": entry.get("name"),
+            "args": entry.get("args"),
+            "arity": entry.get("arity"),
+            "return_type": entry.get("return_type"),
+            "doc": str(entry.get("doc", ""))[:200],
+        }
+        for entry in matches[:limit]
+    ]
 
 
 class VectorworksClientError(RuntimeError):

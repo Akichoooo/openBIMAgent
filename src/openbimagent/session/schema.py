@@ -17,11 +17,30 @@ import secrets
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+SESSION_SCHEMA_VERSION = 2
+"""当前事件 schema 版本。
+
+版本史:
+- v1 = 2026-09 之前的遗留行(无 schema_version 字段);
+- v2 = 每条事件落 schema_version 戳(2026-09-19)。
+
+加载 v1 行时按迁移链投影到当前版本(dsh 邻接迁移纪律:每个迁移步只负责一步 vN→vN+1);
+遇到高于当前版本的行 fail-loud 抛 SessionSchemaError,绝不静默降级。
+"""
+
+EventDict = dict[str, Any]
+EventMigration = Callable[[EventDict], EventDict]
+
+
+class SessionSchemaError(ValueError):
+    """session 事件 schema 版本无法处理(未来版本或缺迁移步;fail-loud)。"""
 
 
 class EventType(StrEnum):
@@ -121,12 +140,16 @@ class SnapshotPayload(CustomPayload):
 
 
 class SessionEvent(BaseModel):
-    """Session JSONL 树的一条记录;parentId 指父节点,构成单文件原地分支树。"""
+    """Session JSONL 树的一条记录;parentId 指父节点,构成单文件原地分支树。
+
+    schema_version=None 表示遗留 v1 行(迁移链会在加载时投影到当前版本)。
+    """
 
     id: str
     parentId: str | None
     timestamp: datetime
     type: EventType
+    schema_version: int | None = None
     payload: (
         MessagePayload
         | ToolCallPayload
@@ -136,6 +159,32 @@ class SessionEvent(BaseModel):
         | SnapshotPayload
         | CustomPayload
     ) = Field(discriminator=None)
+
+
+def _migrate_v1_to_v2(data: EventDict) -> EventDict:
+    """v1→v2:仅为遗留行补 schema_version 戳;无其他语义变更。"""
+    return {**data, "schema_version": 2}
+
+
+_EVENT_MIGRATIONS: dict[int, EventMigration] = {1: _migrate_v1_to_v2}
+"""迁移步注册表:key 为起始版本 vN,值为 vN→vN+1 的单步迁移函数。"""
+
+
+def migrate_event_dict(data: EventDict) -> EventDict:
+    """把一条事件 dict 沿迁移链推进到当前版本;未来版本 fail-loud。"""
+    version = int(data.get("schema_version") or 1)
+    if version > SESSION_SCHEMA_VERSION:
+        raise SessionSchemaError(
+            f"事件 schema 版本 {version} 高于本进程支持的 {SESSION_SCHEMA_VERSION}(fail-loud,拒绝静默降级)"
+        )
+    while version < SESSION_SCHEMA_VERSION:
+        step = _EVENT_MIGRATIONS.get(version)
+        if step is None:
+            raise SessionSchemaError(f"缺少 v{version}→v{version + 1} 迁移步")
+        data = step(dict(data))
+        version += 1
+        data["schema_version"] = version
+    return data
 
 
 def uuid7() -> uuid.UUID:
@@ -206,5 +255,6 @@ def new_event(
         parentId=parent_id,
         timestamp=ts,
         type=type,
+        schema_version=SESSION_SCHEMA_VERSION,
         payload=_coerce_payload(type, payload),
     )

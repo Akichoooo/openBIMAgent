@@ -24,13 +24,16 @@ from typing import Any, BinaryIO, Iterator
 
 from openbimagent.schema_gate.gate import gate_or_fix
 from openbimagent.session.schema import (
+    SESSION_SCHEMA_VERSION,
     CustomPayload,
     CustomType,
     EventType,
     MessagePayload,
     SessionEvent,
+    SessionSchemaError,
     SnapshotPayload,
     ToolCallPayload,
+    migrate_event_dict,
     new_event,
     uuid7,
 )
@@ -185,7 +188,11 @@ class SessionStore:
         return event
 
     def load(self) -> list[SessionEvent]:
-        """全量读取(文件顺序),并重建 id → event 与 parentId → children 索引。"""
+        """全量读取(文件顺序),并重建 id → event 与 parentId → children 索引。
+
+        逐行经 migrate_event_dict 投影到当前 schema 版本;未来版本 fail-loud 抛
+        SessionSchemaError(不同于损坏行:版本不兼容是明确信号,不是可跳过的噪音)。
+        """
         events: list[SessionEvent] = []
         with self._lock:
             text = self.path.read_text(encoding="utf-8")
@@ -193,7 +200,10 @@ class SessionStore:
             if not line.strip():
                 continue
             try:
-                events.append(SessionEvent.model_validate(json.loads(line)))
+                events.append(SessionEvent.model_validate(migrate_event_dict(json.loads(line))))
+            except SessionSchemaError:
+                # 未来版本 fail-loud:版本不兼容是明确信号,不是可跳过的损坏行噪音。
+                raise
             except Exception as exc:  # 损坏行容错:跳过并告警
                 warnings.warn(f"{self.path}:{lineno} 损坏行已跳过: {exc}", stacklevel=2)
         self._by_id = {e.id: e for e in events}
@@ -201,6 +211,66 @@ class SessionStore:
         for e in events:
             self._children.setdefault(e.parentId, []).append(e.id)
         return events
+
+    def schema_versions(self) -> dict[str, int]:
+        """返回本文件事件 schema 版本分布(磁盘原始行统计,不做迁移投影)。"""
+        with self._lock:
+            text = self.path.read_text(encoding="utf-8")
+        counts: dict[int, int] = {}
+        for line in text.splitlines():
+            if not line.strip():
+                continue
+            try:
+                version = int(json.loads(line).get("schema_version") or 1)
+            except Exception:
+                version = 1
+            counts[version] = counts.get(version, 0) + 1
+        return {
+            "min_version": min(counts) if counts else 0,
+            "max_version": max(counts) if counts else 0,
+            "current_version": SESSION_SCHEMA_VERSION,
+            "legacy_lines": counts.get(1, 0),
+            "total_lines": sum(counts.values()),
+        }
+
+    def upgrade_file(self, *, backup: bool = True) -> int:
+        """把文件逐行落 schema_version 戳升级到当前版本(原地原子替换)。
+
+        backup=True 时先留 `<stem>.pre-v<min>.bak.jsonl` 副本(dsh 纪律:升级前
+        保留可回滚的上一代字节);返回被升级(戳版本号变化)的行数。
+        """
+        with self._lock:
+            text = self.path.read_text(encoding="utf-8")
+        lines = [line for line in text.splitlines() if line.strip()]
+        upgraded = 0
+        min_version = SESSION_SCHEMA_VERSION
+        out_lines: list[str] = []
+        for line in lines:
+            data = json.loads(line)
+            min_version = min(min_version, int(data.get("schema_version") or 1))
+            migrated = migrate_event_dict(data)
+            if migrated.get("schema_version") != data.get("schema_version"):
+                upgraded += 1
+            out_lines.append(json.dumps(migrated, ensure_ascii=False))
+        if upgraded == 0:
+            return 0
+        if backup:
+            backup_path = self.path.with_name(f"{self.path.stem}.pre-v{min_version}.bak.jsonl")
+            if not backup_path.exists():
+                backup_path.write_text(text, encoding="utf-8")
+        temp = self.path.with_name(f".{self.path.name}.{uuid7()}.tmp")
+        try:
+            with temp.open("x", encoding="utf-8") as handle:
+                handle.write("".join(line + "\n" for line in out_lines))
+                handle.flush()
+                os.fsync(handle.fileno())
+            with self._lock:
+                _replace_with_retry(temp, self.path)
+        finally:
+            if temp.exists():
+                temp.unlink()
+        self.load()
+        return upgraded
 
     def children(self, event_id: str) -> list[SessionEvent]:
         """某事件的直接子事件(/tree 分支浏览用)。"""

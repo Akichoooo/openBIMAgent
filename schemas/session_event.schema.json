@@ -11,6 +11,11 @@
     "parentId": { "type": ["string", "null"], "description": "父事件 id;根事件为 null。/tree 分支即改挂 parentId。" },
     "timestamp": { "type": "string", "format": "date-time" },
     "type": { "enum": ["message", "tool_call", "custom"] },
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "事件 schema 版本(v1=2026-09 前遗留行无此字段;v2=起逐事件落戳)。加载时按迁移链投影到当前版本,未来版本 fail-loud。"
+    },
     "payload": { "type": "object" }
   },
   "allOf": [

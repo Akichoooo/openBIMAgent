@@ -44,9 +44,9 @@ def test_append_and_load_roundtrip(store) -> None:
     # JSONL 只追加:文件行数 = 事件数
     lines = [ln for ln in store.path.read_text(encoding="utf-8").splitlines() if ln.strip()]
     assert len(lines) == 2
-    for line in lines:  # 每行都是合法 JSON 且含五元组
+    for line in lines:  # 每行都是合法 JSON 且含六元组(v2 起含 schema_version)
         rec = json.loads(line)
-        assert set(rec) == {"id", "parentId", "timestamp", "type", "payload"}
+        assert set(rec) == {"id", "parentId", "timestamp", "type", "schema_version", "payload"}
 
 
 def test_children(store) -> None:
