@@ -103,15 +103,20 @@ def test_sse_with_real_session(tmp_path: Path) -> None:
     )
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/event-stream")
-    # Should contain at least one SSE event
-    assert "event:" in resp.text
+    # G2:首帧 server.connected(opencode 语义),其后才是会话投影事件
+    assert "event: server.connected" in resp.text
     assert "id:" in resp.text
-    # Verify the event data is valid JSON
+    current_event = ""
+    session_payloads = 0
     for line in resp.text.split("\n"):
-        if line.startswith("data: "):
+        if line.startswith("event: "):
+            current_event = line[len("event: "):].strip()
+        elif line.startswith("data: ") and current_event != "server.connected":
             payload = json.loads(line[6:])
             assert "event_type" in payload
             assert "session_id" in payload
+            session_payloads += 1
+    assert session_payloads >= 1
 
 
 def test_sse_replay_with_last_event_id(tmp_path: Path) -> None:

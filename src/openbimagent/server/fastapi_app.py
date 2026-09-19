@@ -141,6 +141,24 @@ def build_m2_readonly_app(
     invoke_guard = InvokeConcurrencyGuard(invoke_max_concurrency)
     export_guard = InvokeConcurrencyGuard(1)  # 真机导出串行：Blender/VW 共用，防并发多宿主写盘
 
+    @app.get("/api/v1/mcp/health", tags=["Workbench"])
+    async def mcp_health() -> dict:
+        """A9:MCP 健康面板。
+
+        只读 app 不持有活 MCP client;此处返回工程声明的宿主清单与连接提示。
+        活体探针(ping 三态:connected/needs-auth/failed)由 runtime-serve /
+        operator-console 进程提供;AgentLoop 侧的 mcp_call ping 是真实探针入口。
+        """
+        from openbimagent.core.loop import TOOL_NAMES
+
+        return {
+            "status": "success",
+            "declared_hosts": ["blender", "vectorworks"],
+            "live_probe_endpoint": "runtime-serve (mcp_call ping)",
+            "loop_mcp_governance": "execute_plan / ping / describe_capabilities / lookup_api",
+            "tools": list(TOOL_NAMES),
+        }
+
     @app.get("/api/v1/runtime", tags=["Workbench"])
     async def runtime_mode() -> dict:
         return {"status": "success", "mode": settings.mode if settings else "readonly",

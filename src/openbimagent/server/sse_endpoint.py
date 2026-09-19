@@ -106,6 +106,17 @@ def add_sse_endpoint(app: FastAPI, *, sessions_dir: Path, budget: M2SseStreamBud
                 events = events[-limit:]
 
             def _stream() -> Any:
+                # G2:首事件 server.connected(opencode 语义),让客户端确认连上并拿到会话元数据。
+                connected = json.dumps(
+                    {
+                        "server": "openbimagent-m2",
+                        "session_id": session_id,
+                        "replay_events": len(events),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                yield f"event: server.connected\ndata: {connected}\n\n"
                 for event in events:
                     data = event.model_dump(mode="json")
                     yield f"id: {event.event_id}\n"
