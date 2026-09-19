@@ -26,7 +26,8 @@ class SSEEventType(StrEnum):
 class DataPart(TypedDict):
     """AI SDK v6 `data-*` part 统一信封;各事件的 data 字段草案以 08 报告为准。
 
-    已对接 server SSE 流(server/contracts.py 消费 SSEEventType)。"""
+    TODO(M2): 与 server SSE 流对接,并与 session 事件互相导出。
+    """
 
     type: SSEEventType
     data: dict[str, Any]

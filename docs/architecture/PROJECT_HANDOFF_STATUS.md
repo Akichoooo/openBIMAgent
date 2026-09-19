@@ -1,7 +1,7 @@
 # openBIMAgent 阶段交接状态
 
-版本：v3.5
-更新时间：2026-09-02（Asia/Shanghai）
+版本：v3.4
+更新时间：2026-08-22（Asia/Shanghai）
 维护状态：**ACTIVE**
 工作区：`D:\devloop\workSpace\app_codex\GenerativeBIM\openBIMAgent`
 远程仓库：`https://github.com/Akichoooo/openBIMAgent.git`
@@ -34,8 +34,8 @@ M3 VW 通路 = PASS（真机验收 2026-08-23:1 passed in 8.22s;m3_registry_e2e.
 
 ```text
 分支：main
-HEAD：以 `git rev-parse HEAD` 实测为准
-全仓测试：1088 passed, 6 skipped, 2 warnings（2026-09-03 实测；6 skipped 为 opt-in 真机/真 LLM 测试，由 OPENBIMAGENT_RUN_REAL_* 环境变量门控，默认不跑）
+HEAD：以 `git rev-parse HEAD` 实测为准（本会话改动未提交，见 §6）
+全仓测试：1055 passed, 4 skipped, 2 warnings（2026-08-22 实测）
 代码规范：Ruff check 100% checks passed
 手动测试：参考根目录下 MANUAL_TESTING_GUIDE.md
 ```
@@ -54,7 +54,7 @@ HEAD：以 `git rev-parse HEAD` 实测为准
 
 ### M2：产品化服务与 Web 控制台
 
-- **FastAPI / SSE 服务**：只读路由 `/api/v1/sessions|attempts|approvals|lineages|artifacts` + SSE 事件流 + 写控制 `/api/v1/control`（`tree`/`export` 为 CLI 子命令，无对应 HTTP 端点）。
+- **FastAPI / SSE 服务**：`/api/v1/sessions`、`/api/v1/tree`、`/api/v1/export` 等只读与控制端点。
 - **现代化 3 栏数字化工作台 (`web_ui.py`)**：左栏领域包与会话树；中栏执行流卡片与 HITL 审批；右栏 WebGL 3D 视口 + 六标签工作台（标签栏由插件 `declared_slots` 动态组装）。
 
 ### 微内核与 DSH 对标机制（2026-08 本会话）
@@ -79,7 +79,7 @@ HEAD：以 `git rev-parse HEAD` 实测为准
 ## 4. 最新有效质量证据
 
 ```text
-全仓 pytest：1066 passed, 6 skipped, 2 warnings（2026-09-02 实测；skipped = opt-in 真机/真 LLM 测试）
+全仓 pytest：1065 passed, 6 skipped, 2 warnings（含双宿主真机 4 测）
 规则自检：真实知识源 33/33 样例重放通过（test_rule_self_tests）
 Ruff 静态检查：All checks passed!
 消融电池确定性：test_self_healing_ablation 跨运行逐字节一致
@@ -94,18 +94,8 @@ Ruff 静态检查：All checks passed!
 
 ## 6. 未完成债务与唯一下一动作
 
-- **2026-09-02 UI 集成收官（方案 J · 功能打通）**：`web_ui.py` 已由"Codex × 3D"终版替换（Franken shadcn zinc 皮肤 + Motion 动效；1540 行旧三栏巨石下线）。库文件 vendor 到 `src/openbimagent/server/static/vendor/`（franken+motion，MIT），`/static` 挂载，**完全离线**。功能全部打通非演示：设置页真实读写 `config/llm_baseline.local.toml` + provider keys 入环境/`.env`（`GET/PUT /api/v1/settings/llm`，key 只写不回显）；附件真实落盘 `out/uploads/`（`POST/GET /api/v1/uploads`，sha256 manifest）；composer 文本真实调度自愈求解器追加回合；HITL 批准 → 真实 POST export-blender 回填回执；3D 视口由真实 IR 驱动动态取景。**Agent 主链路打通**：新建任务 → `POST /api/v1/runs` 后台真跑 pipeline（单并发锁、离线模板安全、yes 自动放行）→ 会话落 out/sessions/index.json（demo app 已改为真实索引）→ `GET sessions/{id}/events` 线程渲染真实事件（clarify 问答/plan/子代理），页面轮询 runs/active 实时追加；脚本化首回合与自动播放已剔除。新增 `server/workbench_io.py` + `server/runs.py` + `tests/test_workbench_io.py`（5 测）+ `tests/test_runs.py`（4 测，真跑一次 pipeline）。
-- **审批中心已打通（P0 完成，撤掉 yes=True）**：`server/approvals.py` 阻塞式 Web 审批门——pipeline 触门（execute_code/deliver 前）挂起运行线程，`GET /api/v1/approvals` 轮询票据，前端 HITL 卡人工批准/拒绝 → `POST …/decide` 放行；approval_requested/decided 事件落 Session JSONL（对齐 decision_receipt）；30min 超时失败关闭。`tests/test_approvals.py`（3 测 E2E：真跑 single_asset_hero → deliver 门挂起 → 批准 → 放行 → 事件落盘）。municipal_utility Web 运行已补 `solver_input.default.json`（pack 内默认入参，含完整碰撞上下文），现可越过 domain_gate 抵达 deliver 审批门。
-- **P1–P4 全部完成**：P1 SSE 实时跟随 `GET sessions/{id}/events/stream`（回放+持续推送+运行结束自动关闭，前端 EventSource，断开回退轮询）；P2 素材归档（交付工件只增不改写 `domain_packs/*/assets/auto_archive/<session>/` + sha256 index，gitignore，`GET /api/v1/archive`）；P3 用量面板（`GET /api/v1/usage` 读 usage_summary.json，检查器「用量」页）；P4 会话分支（`POST sessions/{id}/fork` → SessionStore branch/fork，会话项 ⑂ 按钮）+ 审批附带指令（decide 携带 instruction 写入决策回执，steer 语义在审批门生效；运行时中途 steer 属 Subagent Runtime 路径，assembly 顺序流不接）。`tests/test_workbench_p124.py`（5 测）。旧原型 A–H 已清理，ui/ 保留方案 I/J/K/L 与装配脚本 `scratch/build_web_ui.py`。
-- **2026-09-02 审查修复（已提交）**：pyproject 补 `lxml>=4.9`；清理过期 TODO/docstring；VLM 评分区加 DEMO 水印。
-- **仓库卫生（已完成）**：`docs/学术材料/`、`开题报告.*`、`architecture.*`、`outputs/` 经 filter-repo 从全部历史清除并强推；本地文件保留且被 gitignore；权威备份 `scratch/git-backup/pre-rewrite-20260902.bundle`。
-- **已知风险（未修）**：`fastapi_app.py` 演示 app 的 `/api/v1/plugins/invoke` 与 export 端点无鉴权（confirm 仅为 body 布尔值）；绑 127.0.0.1 使用风险可控，**勿绑 0.0.0.0 暴露**。生产鉴权待 M2 后续落地（`authentication.py` 目前仅契约类）。
-- **运维备注**：VW runner 侧"未响应"为脚本线程被轮询循环占用的预期形态，实测待命 5.5h 零错误；runner 已具备固定 IPC 根 + 心跳 + 文件日志。
-- **前端状态**：新工作台全部区块接真实数据（VLM 评分演示值已剔除出交付叙述）；Three.js 依赖随旧 UI 移除，3D 视口为自绘 canvas 渲染器。
+- **待提交**：累积 20+ 文件改动（补丁层/自愈核验/benchmark 真实化/外部加载器/LLM 基线/3D 视口/Codex 吸收及全部测试）尚未 commit，建议按机制拆 2–3 个提交。
+- **中栏执行流卡与规则树数值**：仍为静态演示数据（M3 范围；3D 视口与自愈时间线已接真实数据）。
 - **论文侧**：B10 LLM 超时 ×3 与 LLM 行多次运行方差待写入 limitations；execpolicy 吸收可作 rule-driven 可验证性论据。
-- **2026-09-03 独立审核四项修复（已验证）**：🔴 控制面鉴权——`server/auth.py` Bearer token 守卫（/api/v1/** 变更方法 401，GET 开放；token 自动生成 `config/workbench.local.toml`（gitignored）或 `OPENBIMAGENT_WORKBENCH_TOKEN` 覆盖；页面注入 `window.__WB_TOKEN`，前端全请求携带）；🟡 前端清污——删除原型假函数 runTurn/replayAll/假 sendMsg/假 doExport 与 mock SESS/PLUGINS/RULES/IR_JSON，irPre/插件面板/面包屑/宿主芯片全部接真实端点（宿主=Blender TCP 实探，VW 未探测如实灰显），/solve 斜杠命令改真实调度；🟡 归档沙箱——`OPENBIMAGENT_ARCHIVE_DIR` 覆盖，test_workbench_p124 改 tmp 不再污染仓库；🔵 网关兜底——只读 GET 缺 X-Request-ID 自动补全（test_health 断言同步更新）。全量 1084 passed。
-- **2026-09-03 架构评审六缺陷处置（全部落地）**：① Trace"自进化"正名+闭环——术语修正为"不可变事件溯源与设计资产增量沉淀"（docs/architecture/LIMITATIONS.md），归档反哺实装：新任务检索 Top-3 相似交付注入会话首条用户消息（runs.py `_retrieve_exemplars`，机制=In-Context Retrieval，非权重更新）；② SCAD 语义断层/③ 宿主强耦合/⑤ 规则泛化天花板 → 三项结构性边界写入 LIMITATIONS.md（L1/L2/L3，论文 Limitation 表述建议）；④ 并发死局破解——有界多并发（`OPENBIMAGENT_MAX_CONCURRENT_RUNS` 默认 2，超额 409；每运行独占 `out/runs/<sid>/`）+ 审批票据落盘 `out/pending_approvals.json`（重启后列为 expired，批准 410、拒绝作废，`OPENBIMAGENT_PENDING_APPROVALS` 可覆盖）；⑥ 视口流式生长——`GET /api/v1/runs/artifact`（白名单+sha256+mtime），前端运行中轮询 sha，变化即重渲染 CompiledUtilityIR。新增 `tests/test_runs_p456.py`（4 测）。全量 1088 passed。
-- **2026-09-03 终审通过（独立多轮复验）**：两轮处置（24bb77e 鉴权与前端去伪 / 538aa24 六缺陷）经独立审核全量复验确认真实通过，无新增缺陷项。成熟度矩阵更新：Agent Core 95% / 市政专项 95% / SCAD 环 85% / 多 MCP 85% / Trace 资产沉淀 85% / Web 控制台 88%。测试基线：**1088 passed, 6 skipped**。系统已达论文写作与答辩演示状态。
-- **2026-09-03 上下文预算与压缩落地（COMPONENTS §5 最后一块 TODO 清零）**：`core/loop.py` 新增 `_maybe_compact`——估算 token 超 context_window×0.6 即压缩（保留 system+任务锚点+最近 12 条，中段经 clarify 角色凝练摘要，离线失败回退确定性骨架），硬上限 0.92 保底；压缩标记 + digest_sha256 写 session 树可审计；context_window 取自 models.toml ModelConfig（兜底 131072）。机制对齐 Codex auto-compaction / pi 滑窗。既有纪律本就在线：system prompt 2000 token 挂载检查、工具结果 llm/ui 双视图、read/bash 输出截断、子代理 isolated context + 工件介质交接、截图降采样。`tests/test_context_compaction.py`（3 测：触发/锚点保留/预算内调用/离线骨架回退/预算内零干预）。
-- **2026-09-03 Agent Core 六项增强全部落地（方案 docs/architecture/AGENT_CORE_ENHANCEMENT.md §5 台账）**：P0-2 会话 FTS5 全文检索（`session/search.py`，CJK bigram 展开，水位线增量，`GET /sessions/search`，前端 `/recall`）；P0-1 Skill 系统（`skills/registry.py`，SKILL.md frontmatter 失败关闭校验，渐进披露目录注入上下文，运行成功自动蒸馏候选入 `skills/_candidates/` 且**永不自动生效**须人工批准转正，`GET/POST /api/v1/skills*`，前端 `/skills`；内置 municipal-gravity-brief / ir-inspection 两真实技能）；P0-3 宿主 Supervisor（`mcp_clients/supervisor.py` 状态机+有界退避重启，VW 恒 external 诚实标记，`POST /hosts/{id}/restart`）+ 工具集预设（`core/toolset.py` minimal/modeling/full，`/api/v1/plugins` 清单过滤 + invoke 403 门双层生效，设置弹层可切换）；P0-4 记忆层（`core/memory.py` MEMORY.md/USER.md 追加式，`memory:record` 走 prompt 策略门 409 need_confirm，记忆片段注入新任务上下文，设置弹层查看+确认写入）；P1-1 通用 MCP client（`mcp_clients/external.py`，`OPENBIMAGENT_MCP_SERVERS` env JSON 挂载第三方 server，工具映射 `mcp:<server>:<tool>` 默认 prompt 策略，失败 server fail-closed 跳过）；P1-2 Hooks 总线（`core/hooks.py` pre_tool 可否决 fail-closed + post_tool/turn_end/run_end 观测，registry.invoke 与 runs finally 接线，ring buffer 200）。横切修复：`_REPO_ROOT` 定位 bug ×2（skills/memory 曾误写 src/）已修并加回归测试；4 个 pipeline 测试补 SKILLS_ROOT 沙箱；构建脚本迁 `tools/build_web_ui.py`（相对路径，产物字节级一致）首入版本控制。新增 5 测试文件 56 测。全量 **1148 passed, 6 skipped**。
-- **唯一下一动作**：论文正文写作（素材已备齐：docs/学术材料/实验数据与limitations草稿_2026-08-23.md，LLM 行已升级为 n=3 均值±标准差 60.0±0.0 / 7105±330ms / 10447±294 tok）。
+- **M3 双宿主真机闭环已收官**（Blender 3 测 + VW 1 测全绿；runner 已具备固定 IPC 根 + 心跳 + 文件日志，VW 侧"未响应"为脚本线程被轮询循环占用的预期形态，实测待命 5.5h 零错误）。
+- **唯一下一动作**：① 全部改动推送远程（本地领先远程 16+ 提交）；② 论文正文写作（素材已备齐：docs/学术材料/实验数据与limitations草稿_2026-08-23.md，LLM 行已升级为 n=3 均值±标准差 60.0±0.0 / 7105±330ms / 10447±294 tok）。

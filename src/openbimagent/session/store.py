@@ -129,7 +129,7 @@ def _utc_now_iso() -> str:
 class SessionStore:
     """单个 session JSONL 文件的读写与树操作(append-only,分支落新文件)。
 
-    线程安全靠进程内锁;跨进程文件锁为待办。损坏行容错:跳过并告警。
+    线程安全靠进程内锁;跨进程文件锁 TODO(M1)。损坏行容错:跳过并告警。
     """
 
     def __init__(self, path: Path, *, title: str | None = None, playbook: str | None = None) -> None:
@@ -229,30 +229,6 @@ class SessionStore:
         for event in chain:
             new_store.append(event)
         return new_store
-
-    def truncate_after(self, event_id: str) -> int:
-        """Rewind:截断 event_id 之后的事件(保留根→event_id 主干),返回移除条数。
-
-        模仿 Claude Code /rewind「倒带对话」:重写 JSONL 只保留主干链,重建 head 指针与索引。
-        """
-        events = self.load()
-        if event_id not in self._by_id:
-            raise KeyError(f"事件 {event_id!r} 不在会话 {self.session_id!r} 中")
-        keep_ids: set[str] = set()
-        cursor: str | None = event_id
-        while cursor is not None:
-            keep_ids.add(cursor)
-            cursor = self._by_id[cursor].parentId
-        kept = [e for e in events if e.id in keep_ids]
-        removed = len(events) - len(kept)
-        lines = [json.dumps(e.model_dump(mode="json"), ensure_ascii=False) for e in kept]
-        with self._lock:
-            tmp = self.path.with_suffix(".jsonl.tmp")
-            tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
-            _replace_with_retry(tmp, self.path)
-            self._head = event_id
-            self._sync_index()
-        return removed
 
     def fork(self, from_event_id: str, *, title: str | None = None) -> SessionStore:
         """`/tree` 分支(M1 强化):复制根 → from_event_id 的主干链到新 session,并在 index.json
@@ -512,7 +488,7 @@ class SessionStore:
         with _locked_index(index_path):
             if not index_path.is_file():
                 return []
-            entries = json.loads(index_path.read_text(encoding="utf-8-sig")).get("sessions", [])
+            entries = json.loads(index_path.read_text(encoding="utf-8")).get("sessions", [])
         return sorted(entries, key=lambda e: e.get("last_active", ""), reverse=True)
 
     def _index_path(self) -> Path:
@@ -523,7 +499,7 @@ class SessionStore:
         with _locked_index(index_path):
             if not index_path.is_file():
                 return None
-            for entry in json.loads(index_path.read_text(encoding="utf-8-sig")).get("sessions", []):
+            for entry in json.loads(index_path.read_text(encoding="utf-8")).get("sessions", []):
                 if entry.get("id") == self.session_id:
                     return entry
         return None
@@ -537,7 +513,7 @@ class SessionStore:
         with _locked_index(index_path):
             index: dict[str, Any] = {"sessions": []}
             if index_path.is_file():
-                index = json.loads(index_path.read_text(encoding="utf-8-sig"))
+                index = json.loads(index_path.read_text(encoding="utf-8"))
             entry = next(
                 (item for item in index.get("sessions", []) if item.get("id") == self.session_id),
                 {"id": self.session_id, "created_at": self._created_at},
