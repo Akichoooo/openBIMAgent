@@ -47,3 +47,7 @@ scratch/
 papers/
 # Local LLM-Direct baseline config (contains API key, never commit)
 config/*.local.toml
+
+# Pytest run logs
+.pytest-*.log
+

@@ -1,6 +1,31 @@
+# Normalize all text files to LF in-repo; checkout honors core.autocrlf.
+# This kills phantom CRLF-only modifications on Windows checkouts.
+* text=auto
+
 # Byte-pinned resources must have identical bytes on every checkout.
 # - schemas: benchmark SHA pins + signed OpenAPI baseline
 # - constraints.yaml: embedded as source_sha256 in the frozen T7 rule bundle
 /schemas/buildingsmart_ids_1_0.xsd text eol=lf
 /schemas/*.json text eol=lf
 /domain_packs/municipal_utility/knowledge/constraints.yaml text eol=lf
+
+# Windows scripts keep CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binaries (explicit, do not rely on auto-detection)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.blend binary
+*.db binary
+*.sqlite binary
+*.zip binary
+*.gz binary
+*.whl binary
+*.exe binary
+*.dll binary
