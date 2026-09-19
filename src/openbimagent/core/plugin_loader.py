@@ -143,6 +143,18 @@ def load_external_plugins(
     if not directory.is_dir():
         return []
 
+    # F5 Project Trust:项目本地插件目录未信任前一律跳过(fail-closed,防仓库内恶意配置)
+    from openbimagent.core.project_trust import require_trust
+
+    if not require_trust(directory, reason="external plugins"):
+        import warnings
+
+        warnings.warn(
+            f"外部插件目录 {directory} 未通过 Project Trust 信任门,已跳过加载(用 oba trust approve 登记)",
+            stacklevel=2,
+        )
+        return []
+
     candidates = discover_plugin_dirs(directory)
     resolved = [_resolve_plugin(module_dir) for module_dir in candidates]
 

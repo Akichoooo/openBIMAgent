@@ -83,6 +83,10 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_operator_console(args)
     if args.cmd == "server":
         return _cmd_server(args)
+    if args.cmd == "mcp-serve":
+        return _cmd_mcp_serve(args)
+    if args.cmd == "trust":
+        return _cmd_trust(args)
     parser.print_help()
     return 2
 
@@ -216,6 +220,13 @@ def _build_parser() -> argparse.ArgumentParser:
     server_p.add_argument("--host", default="127.0.0.1", help="监听地址(默认 127.0.0.1)")
     server_p.add_argument("--port", type=int, default=8765, help="监听端口(默认 8765)")
     server_p.add_argument("--sessions-dir", default=DEFAULT_SESSIONS_DIR, type=Path, help="sessions 目录")
+
+    mcp_p = sub.add_parser("mcp-serve", help="A5:把只读能力面暴露为 MCP server(stdio,供 IDE/编码 agent 直连)")
+
+    trust_p = sub.add_parser("trust", help="F5:项目本地插件/技能目录的信任管理(Project Trust)")
+    trust_p.add_argument("action", choices=["approve", "revoke", "list", "check"], help="信任操作")
+    trust_p.add_argument("path", nargs="?", default=None, help="目标目录(approve/revoke/check 必填)")
+    trust_p.add_argument("--trust-file", default=None, help="覆盖 trust.json 路径(测试/多环境)")
 
     return parser
 
@@ -794,6 +805,50 @@ def _cmd_server(args: argparse.Namespace) -> int:
         f"sessions={sessions_dir.resolve()}"
     )
     uvicorn.run(app, host=args.host, port=args.port)
+
+
+def _cmd_mcp_serve(args: argparse.Namespace) -> int:
+    """A5:以 stdio 启动只读 MCP server(list_sessions/session_summary/lookup_vs_api/mcp_health)。"""
+    from openbimagent.server.mcp_serve import main as serve_main
+
+    serve_main()
+    return 0
+
+
+def _cmd_trust(args: argparse.Namespace) -> int:
+    """F5:项目本地插件/技能目录的信任管理。"""
+    import os
+
+    from openbimagent.core.project_trust import approve, is_project_local, is_trusted, revoke
+
+    if args.trust_file:
+        os.environ["OPENBIMAGENT_TRUST_FILE"] = args.trust_file
+    if args.action == "list":
+        from openbimagent.core.project_trust import _read_roots
+
+        roots = sorted(_read_roots())
+        if not roots:
+            print("(无已信任目录)")
+        for root in roots:
+            print(f"  {root}")
+        return 0
+    if not args.path:
+        print(f"trust {args.action} 需要 path 参数")
+        return 2
+    target = Path(args.path)
+    if args.action == "approve":
+        recorded = approve(target)
+        print(f"已信任: {recorded}")
+        return 0
+    if args.action == "revoke":
+        revoke(target)
+        print(f"已撤销信任: {target}")
+        return 0
+    # check
+    project_local = is_project_local(target)
+    trusted = is_trusted(target)
+    print(f"project_local={project_local} trusted={trusted} allowed={trusted or not project_local}")
+    return 0 if (trusted or not project_local) else 1
 
 
 def _open_session(sessions_dir: Path, session_id: str) -> SessionStore | None:
