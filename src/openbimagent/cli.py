@@ -221,7 +221,7 @@ def _build_parser() -> argparse.ArgumentParser:
     server_p.add_argument("--port", type=int, default=8765, help="监听端口(默认 8765)")
     server_p.add_argument("--sessions-dir", default=DEFAULT_SESSIONS_DIR, type=Path, help="sessions 目录")
 
-    mcp_p = sub.add_parser("mcp-serve", help="A5:把只读能力面暴露为 MCP server(stdio,供 IDE/编码 agent 直连)")
+    sub.add_parser("mcp-serve", help="A5:把只读能力面暴露为 MCP server(stdio,供 IDE/编码 agent 直连)")
 
     trust_p = sub.add_parser("trust", help="F5:项目本地插件/技能目录的信任管理(Project Trust)")
     trust_p.add_argument("action", choices=["approve", "revoke", "list", "check"], help="信任操作")

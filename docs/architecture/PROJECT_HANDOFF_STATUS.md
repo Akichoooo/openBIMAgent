@@ -1,9 +1,9 @@
 # openBIMAgent 阶段交接状态
 
-版本：v3.4
-更新时间：2026-08-22（Asia/Shanghai）
+版本：v3.5
+更新时间：2026-09-21（Asia/Shanghai）
 维护状态：**ACTIVE**
-工作区：`D:\devloop\workSpace\app_codex\GenerativeBIM\openBIMAgent`
+工作区：`D:\devloop\workSpace\app_ZCode\openBIMAgent`
 远程仓库：`https://github.com/Akichoooo/openBIMAgent.git`
 
 > 本文档是跨会话恢复的唯一实时入口。只保留当前可复核事实、未完成债务、受保护内容和唯一下一动作。历史过程详见 Git 提交、专项验收报告与 `.workbuddy/memory/`，不要把历史测试数字当作本轮新证据。
@@ -28,15 +28,18 @@ M3 Blender 通路 = PASS（cad_host:blender.execute 正式能力 + 默认 prompt
 M3 VW 通路 = PASS（真机验收 2026-08-23:1 passed in 8.22s;m3_registry_e2e.vwx 44.6KB + completed 回执落盘;runner 日志 consumed_total=4 全链路证据）
 前端全真实化 = PASS（中栏执行流/规则树/3D 视口/自愈时间线全部接真实数据;HITL 卡驱动真实策略门导出;唯 VLM 六维评分区仍为演示数值）
 当前状态     = 全栈工程落地 + 双真机基线复绿，D:/G6_Test/m3_invoke_e2e.blend 为微内核全链路产物
+Agent 工程吸收 = PASS（2026-09-19 批次，分支 feat/agent-engineering-absorption：schema 版本化/压缩 v2/OBSK/doom-loop/stop-gate、subagent output_schema 契约、投影 rewind/fork、SQLite 幂等、headless CLI、MCP serve、项目信任、组织 requirements 锁定、审批 fail-closed 加固；计划书 docs/research/2026-09-17_agent_engineering_implementation_plan.md，遗留登记 DEFERRED_ITEMS.md）
+流式实时化   = PASS（2026-09-21：SSE 生产通路打通——EventSource ?token= 认证豁免 X-Request-ID、规范跟随端点 offset 增量读 + Last-Event-ID 恢复 + 流预算、前端活动状态行/Trace/3D 视口运行期联动刷新、/compact 假命令诚实化）
+Provider 方言 = PASS（2026-09-21：anthropic Messages 与 openai-responses 方言落地，四方言齐备；models.toml 增直连 provider 示例）
 ```
 
 ## 2. 恢复坐标
 
 ```text
-分支：main
-HEAD：以 `git rev-parse HEAD` 实测为准（本会话改动未提交，见 §6）
-全仓测试：1055 passed, 4 skipped, 2 warnings（2026-08-22 实测）
-代码规范：Ruff check 100% checks passed
+分支：feat/agent-engineering-absorption
+HEAD：以 `git rev-parse HEAD` 实测为准
+全仓测试：见 §4（随每次实测更新）
+代码规范：Ruff check src/ 100% checks passed
 手动测试：参考根目录下 MANUAL_TESTING_GUIDE.md
 ```
 
@@ -79,9 +82,10 @@ HEAD：以 `git rev-parse HEAD` 实测为准（本会话改动未提交，见 §
 ## 4. 最新有效质量证据
 
 ```text
-全仓 pytest：1065 passed, 6 skipped, 2 warnings（含双宿主真机 4 测）
+全仓 pytest：1357 passed, 9 skipped, 2 warnings（2026-09-21 实测，5m48s；含双宿主真机 4 测）
+前端 vitest：14 passed；pnpm build 通过；oxlint 0 errors
 规则自检：真实知识源 33/33 样例重放通过（test_rule_self_tests）
-Ruff 静态检查：All checks passed!
+Ruff 静态检查（src/）：All checks passed!（2026-09-21 清零，含 4 处存量违规修复）
 消融电池确定性：test_self_healing_ablation 跨运行逐字节一致
 ```
 
@@ -94,8 +98,9 @@ Ruff 静态检查：All checks passed!
 
 ## 6. 未完成债务与唯一下一动作
 
-- **待提交**：累积 20+ 文件改动（补丁层/自愈核验/benchmark 真实化/外部加载器/LLM 基线/3D 视口/Codex 吸收及全部测试）尚未 commit，建议按机制拆 2–3 个提交。
-- **中栏执行流卡与规则树数值**：仍为静态演示数据（M3 范围；3D 视口与自愈时间线已接真实数据）。
+- **待提交**：2026-09-21 本轮改动（SSE 生产通路、provider 双方言、会话存储并发竞争修复、前端实时化、ruff 清零及全部测试）尚未 commit，建议按机制拆 3–4 个提交（server-sse / providers / frontend / fix+docs）。
 - **论文侧**：B10 LLM 超时 ×3 与 LLM 行多次运行方差待写入 limitations；execpolicy 吸收可作 rule-driven 可验证性论据。
-- **M3 双宿主真机闭环已收官**（Blender 3 测 + VW 1 测全绿；runner 已具备固定 IPC 根 + 心跳 + 文件日志，VW 侧"未响应"为脚本线程被轮询循环占用的预期形态，实测待命 5.5h 零错误）。
-- **唯一下一动作**：① 全部改动推送远程（本地领先远程 16+ 提交）；② 论文正文写作（素材已备齐：docs/学术材料/实验数据与limitations草稿_2026-08-23.md，LLM 行已升级为 n=3 均值±标准差 60.0±0.0 / 7105±330ms / 10447±294 tok）。
+- **VLM 六维评分区**仍为演示数值（前端其余区域已全真实化）。
+- **双轨编排**：模板流水线轨不经过 `core/loop.py` 治理面，属事实缺口非完成态；收敛路径与触发条件已登记 `DEFERRED_ITEMS.md` §4.1。
+- **Provider 方言**：anthropic / openai-responses 已落地但仅 mock 单测覆盖，未对真实端点冒烟；直连 profile 的 reasoning effort 映射待细化。
+- **唯一下一动作**：① 本轮改动推送远程；② 论文正文写作（素材已备齐：docs/学术材料/实验数据与limitations草稿_2026-08-23.md，LLM 行已升级为 n=3 均值±标准差 60.0±0.0 / 7105±330ms / 10447±294 tok）。

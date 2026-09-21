@@ -11,7 +11,7 @@
   - M2 P0–P5：FastAPI 只读/写控制服务、SSE 事实流、现代三栏 WebGL 3D 数字化工程工作台。
   - 进阶突破：规则自愈式求解器 (`SelfHealingSolver`)、三维空间拓扑图谱引擎 (`SpatialBIMGraph`)、BIMBench 消融实验套件。
   - 微内核 (2026-08)：`registry.invoke` 承重调度、UI-Slots 动态标签、Profile 补丁层（消融实验 = 补丁声明）、Benchmark 数据诚信契约 (measured/provenance)、外部插件 manifest 发现加载。
-- 质量基线：**1017 passed, 4 skipped, 2 warnings**，Ruff 静态检查 100% 通过。
+- 质量基线：**1357 passed, 9 skipped, 2 warnings**（2026-09-21 实测），Ruff 静态检查（src/）100% 通过。
 - 最新进度与详细交接：[持续交接与进度状态](architecture/PROJECT_HANDOFF_STATUS.md)。
 - 手动测试与快速上手：[手动测试指南](../MANUAL_TESTING_GUIDE.md)。
 
@@ -58,6 +58,7 @@
 | [10_grok_community_intel.md](research/10_grok_community_intel.md) | 社区情报:blender-mcp 五坑/vs 幻觉/VLM-judge/从业者/设计院 | Grok 007 ✅ 优秀 |
 | [11_kimi_intake.md](research/11_kimi_intake.md) | 早期 Kimi/K3 主架构师评审：质量门、假设验证、Domain Pack 断层和选型建议 | 历史评审 2026-07-21 |
 | [12_glm_constraints_verify.md](research/12_glm_constraints_verify.md) | 市政 `constraints.yaml` 规范二轮核实与扩充依据 | GLM Relay 008，REFERENCE |
+| [2026-09-17_agent_engineering_implementation_plan.md](research/2026-09-17_agent_engineering_implementation_plan.md) | Agent 工程吸收实施计划（对标 Claude Code/Codex/opencode/DSH，F/G/A/D 批次总纲） | 主会话 2026-09 |
 
 ## 审计
 
@@ -117,3 +118,4 @@ K3/Kimi 是早期主架构师和 Relay 编排会话身份，**不是项目里程
 - 2026-08-02:新增 `M1_MASTER_PROMPT.md` 总控长任务提示词，可在新会话中自动审计 Git、项目记录和门禁证据，从首个未完成阶段恢复并连续执行；网络/上下文中断后复用同一提示词，禁止重做已通过阶段，G6 真机审批仍不可绕过。
 - 2026-08-02~03:完成 M1 G1–G5 与双宿主 typed adapter：Vectorworks typed plan、不可变 Manifest、双宿主语义协议、IFC4X3/IDS、失败恢复、Blender/Vectorworks 真实宿主 adapter 均形成边界提交；Blender 5.2.0 LTS 真实 G6 通过，Vectorworks 2024 GUI approved job 待执行。最新证据统一转由 `PROJECT_HANDOFF_STATUS.md` 维护。
 - 2026-08-03:Wiki 收口为四层文档模型；新增 `PROJECT_HANDOFF_STATUS.md`、`PROJECT_MASTER_WORKFLOW.md` 和 `DOCUMENTATION_GOVERNANCE.md`，明确 K3/Kimi 是早期架构/接力身份而非里程碑，Relay 历史留在 Git；ARCHITECTURE/COMPONENTS 同步标记 v0.9，README 与架构图改用当前 typed IR、双宿主和 G6 状态。
+- 2026-09-21:Agent 工程吸收批次收口回填——交接状态升 v3.5（分支/路径/测试基线 1357 实测）；research 索引收录 2026-09-17 吸收计划书；本轮新增 SSE 生产通路（EventSource ?token= 认证 + offset 增量跟随端点）、anthropic/openai-responses provider 方言、前端运行期实时联动（活动状态行/Trace/3D 视口）与 `DEFERRED_ITEMS.md` §4.1 双轨编排登记。
