@@ -6,11 +6,20 @@ IPC token、不构造 Runtime。支持 Last-Event-ID 与 cursor 回放窗口。
 
 连接预算:同一时刻最多 M2_SSE_MAX_ACTIVE_STREAMS 个活跃流;超出失败关闭。
 慢消费者:单次写入超时即断开,防止背压累计。
+
+本模块同时承载规范会话 SSE 跟随实现（``follow_session_jsonl``）：正式工作台
+GET /api/v1/sessions/{session_id}/events/stream 经 ``read_jsonl_increment``
+按字节 offset 增量读 Session JSONL（避免每轮全量重读的 O(n²) IO），帧格式
+``id: <行末 offset>`` + ``data: <原始 JSONL 行>``，空闲发 keepalive 注释，
+运行结束或超过连接寿命上限时最终 drain 后干净关闭。
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +34,63 @@ from openbimagent.session.store import SessionStore
 M2_SSE_MAX_ACTIVE_STREAMS = 64
 M2_SSE_REPLAY_LIMIT = 100
 M2_SSE_WRITE_TIMEOUT_S = 15.0
+
+SESSION_SSE_POLL_INTERVAL_S = 0.6
+SESSION_SSE_MAX_LIFETIME_S = 600.0  # 10 分钟上限，防悬挂连接泄漏
+
+
+def read_jsonl_increment(path: Path, offset: int) -> tuple[list[str], int]:
+    """从字节 offset 起增量读取 JSONL 新增完整行；无换行结尾的半行留待下轮重读。
+
+    会话 rewind 截断文件（size < offset）时回退 offset=0 全量重放；读取失败容错为空。
+    返回 ``(帧列表, 新 offset)``；帧的 ``id`` 是该行行末 offset，可直接作为
+    Last-Event-ID / cursor 恢复点（seek 即续读，O(1) 回放）。
+    """
+    frames: list[str] = []
+    try:
+        if path.stat().st_size < offset:
+            offset = 0
+        with path.open("rb") as handle:
+            handle.seek(offset)
+            data = handle.read()
+    except OSError:
+        return frames, offset
+    lines = data.split(b"\n")
+    lines.pop()  # 末尾半行不消费；下轮从 offset 重读
+    for raw in lines:
+        offset += len(raw) + 1
+        text = raw.decode("utf-8", errors="replace").strip()
+        if text:
+            frames.append(f"id: {offset}\ndata: {text}\n\n")
+    return frames, offset
+
+
+async def follow_session_jsonl(
+    path: Path,
+    *,
+    start_offset: int = 0,
+    is_active: Callable[[], bool],
+    poll_interval_s: float = SESSION_SSE_POLL_INTERVAL_S,
+    max_lifetime_s: float = SESSION_SSE_MAX_LIFETIME_S,
+) -> AsyncIterator[str]:
+    """规范会话 SSE 跟随：offset 增量读 + keepalive + 结束/超时 drain 后干净关闭。
+
+    不产生 ``event:`` 行——EventSource ``onmessage`` 只消费默认事件类型；
+    ``id:`` 行由 EventSource 原生处理（重连自动回传 Last-Event-ID）。
+    """
+    offset = max(0, start_offset)
+    deadline = time.monotonic() + max_lifetime_s
+    while True:
+        frames, offset = read_jsonl_increment(path, offset)
+        for frame in frames:
+            yield frame
+        if not is_active() or time.monotonic() > deadline:
+            frames, _ = read_jsonl_increment(path, offset)  # 活动结束：最后 drain 一次再关闭
+            for frame in frames:
+                yield frame
+            return
+        yield ": keepalive\n\n"
+        await asyncio.sleep(poll_interval_s)
 
 
 class M2SseStreamBudget:

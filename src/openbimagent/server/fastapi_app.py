@@ -84,7 +84,12 @@ def build_m2_readonly_app(
 ) -> FastAPI:
     """构建只读 FastAPI 应用；adapter 由调用方注入（持有注入的 service）。
 
-    ``sessions_dir`` 是可选的 SSE 端点目录；未提供时跳过 SSE 端点注册。
+    ``sessions_dir`` 是可选的 SSE 投影端点目录；未提供时跳过 SSE 端点注册。
+    SSE 注册按装配互斥：``settings`` 注入的正式工作台经 ``add_runs`` 注册规范会话
+    SSE 跟随端点 ``GET /api/v1/sessions/{session_id}/events/stream``（原始 JSONL 帧、
+    offset 增量读、Last-Event-ID 恢复）；``settings is None`` 的显式只读装配注册
+    本模块 M2 投影端点 ``GET /api/v1/sessions/{session_id}/events``（语义投影帧）。
+    两条路径不同，互不覆盖；轮询端点 ``/events?tail=N`` 只在正式工作台存在。
     ``invoke_max_concurrency`` 是 /api/v1/plugins/invoke 的有界并发上限，
     满载返回 503 + error code -32001（对标 Codex app-server 背压语义）。
     """
@@ -112,6 +117,8 @@ def build_m2_readonly_app(
         register_workspace_routes(app)
         add_workbench_io(app)
     elif sessions_dir is not None:
+        # 显式 M2 只读装配（无 settings）：注册语义投影 SSE；正式工作台的规范
+        # 跟随端点 /events/stream 已由 add_runs 在上方注册，此处不重复、不覆盖。
         add_sse_endpoint(app, sessions_dir=sessions_dir, budget=sse_budget)
     workbench_token = (settings.token if settings else None) or load_or_create_token()
     add_web_ui(app, token=workbench_token)

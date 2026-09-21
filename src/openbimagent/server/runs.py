@@ -21,8 +21,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+
+from openbimagent.server.sse_endpoint import M2_SSE_MAX_ACTIVE_STREAMS, M2SseStreamBudget, follow_session_jsonl
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_SESSIONS_DIR = _REPO_ROOT / "out" / "sessions"
@@ -33,6 +35,7 @@ _PLAYBOOKS = {
 
 _run_lock = threading.Lock()
 _runs: dict[str, dict[str, Any]] = {}
+_session_sse_budget = M2SseStreamBudget()
 
 
 def _max_concurrent() -> int:
@@ -572,44 +575,39 @@ def add_runs(app: FastAPI) -> None:
         summary="会话事件 SSE 实时跟随（P1：回放后持续推送新增，运行结束自动关闭）",
         tags=["Workbench"],
     )
-    async def session_events_stream(session_id: str):
-        import asyncio
-        import time
-
+    async def session_events_stream(session_id: str, request: Request):
         safe = "".join(c for c in session_id if c.isalnum() or c in "-_")
         path = _sessions_dir() / f"{safe}.jsonl"
         if not path.is_file():
             return JSONResponse(status_code=404, content={"status": "error", "error": f"会话不存在: {safe}"})
+        if not _session_sse_budget.try_acquire():
+            return JSONResponse(status_code=429, content={
+                "status": "error", "code": "rate_limited",
+                "error": f"SSE 并发流超出预算（{M2_SSE_MAX_ACTIVE_STREAMS}）",
+            })
+        # EventSource 重连自动携带 Last-Event-ID；初始手动回放用 ?cursor=。
+        # 游标 = 已消费字节 offset；非法值回退 0 全量重放（rewind 截断由 follow 内部自愈）。
+        start_offset = 0
+        cursor = request.headers.get("last-event-id") or request.query_params.get("cursor")
+        if cursor:
+            try:
+                start_offset = max(0, int(cursor))
+            except ValueError:
+                start_offset = 0
 
-        async def _follow() -> Any:
-            sent = 0
-            deadline = time.monotonic() + 600  # 10 分钟上限，防悬挂连接泄漏
-            while True:
-                try:
-                    lines = path.read_text(encoding="utf-8").splitlines()
-                except OSError:
-                    lines = []
-                for line in lines[sent:]:
-                    if line.strip():
-                        yield f"data: {line}\n\n"
-                sent = len(lines)
-                run = _runs.get(safe)
-                is_active = bool(run and run["active"])
-                if not is_active or time.monotonic() > deadline:
-                    # 活动结束：最后 drain 一次再关闭
-                    try:
-                        lines = path.read_text(encoding="utf-8").splitlines()
-                    except OSError:
-                        lines = []
-                    for line in lines[sent:]:
-                        if line.strip():
-                            yield f"data: {line}\n\n"
-                    return
-                yield ": keepalive\n\n"
-                await asyncio.sleep(0.6)
+        def _is_active() -> bool:
+            run = _runs.get(safe)
+            return bool(run and run["active"])
+
+        async def _guarded_follow() -> Any:
+            try:
+                async for frame in follow_session_jsonl(path, start_offset=start_offset, is_active=_is_active):
+                    yield frame
+            finally:
+                _session_sse_budget.release()
 
         return StreamingResponse(
-            _follow(),
+            _guarded_follow(),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
         )

@@ -3,6 +3,8 @@
 Token 来源：环境变量 OPENBIMAGENT_WORKBENCH_TOKEN 或 config/workbench.local.toml。
 正式工作台 API 包括敏感读取均需认证；显式 M2 只读装配保留开放读取。
 Token 不注入匿名 HTML；本机操作员自行配置客户端凭据。认证不等于审批或执行隔离。
+唯一例外：浏览器 EventSource 无法设置自定义头，GET /api/v1/sessions/{id}/events/stream
+允许 ?token=<workbench token> 替代 Authorization 并豁免 X-Request-ID；token 不落入日志。
 """
 
 from __future__ import annotations
@@ -80,14 +82,25 @@ def add_auth(app: FastAPI, token: str, *, protect_reads: bool = True, local_only
                     return reject(403, "origin_denied", "Origin 不在本机边界内")
         if not request.url.path.startswith("/api/v1/"):
             return await call_next(request)
+        # EventSource 无法设置自定义头：仅 SSE 跟随端点允许 ?token= 替代 Bearer 并豁免
+        # X-Request-ID；其余读取与全部写路由维持原有严格语义。
+        sse_stream = (
+            request.method == "GET"
+            and request.url.path.startswith("/api/v1/sessions/")
+            and request.url.path.endswith("/events/stream")
+        )
         needs_auth = protect_reads or request.method not in ("GET", "HEAD", "OPTIONS")
         if needs_auth:
             values = request.headers.getlist("authorization")
-            if len(values) != 1 or not secrets.compare_digest(values[0].encode(), f"Bearer {token}".encode()):
+            authorized = len(values) == 1 and secrets.compare_digest(values[0].encode(), f"Bearer {token}".encode())
+            if not authorized and sse_stream:
+                tokens = request.query_params.getlist("token")
+                authorized = len(tokens) == 1 and secrets.compare_digest(tokens[0].encode(), token.encode())
+            if not authorized:
                 return reject(401, "unauthorized", "需要 Authorization: Bearer <workbench token>")
             request.state.actor = "human:web-operator"
         ids = request.headers.getlist("x-request-id")
-        if len(ids) != 1 or not is_m2_correlation_id(ids[0]):
+        if not sse_stream and (len(ids) != 1 or not is_m2_correlation_id(ids[0])):
             if not protect_reads:
                 from openbimagent.server.contracts import M2ApiEnvelope, M2ErrorCode, make_m2_api_error
                 error = make_m2_api_error(code=M2ErrorCode.INVALID_REQUEST,
@@ -96,5 +109,6 @@ def add_auth(app: FastAPI, token: str, *, protect_reads: bool = True, local_only
                 return JSONResponse(status_code=400, content=envelope.model_dump(mode="json"))
             return reject(400, "invalid_request", "缺失、重复或非法 X-Request-ID")
         response = await call_next(request)
-        response.headers["X-Request-ID"] = ids[0]
+        if len(ids) == 1:
+            response.headers["X-Request-ID"] = ids[0]
         return response
