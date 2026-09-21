@@ -447,6 +447,10 @@ def run_pipeline(
     else:
         agent_fn = combine_target_executors(executors)
         _phase("target_dispatch", f"targets={targets} available={list(executors)}")
+    # run_plan 保持默认顺序执行(concurrent=False):批次执行器共享宿主场景状态
+    # (同一 blender/vectorworks client、共享 .blend 输出与 out/batches 工作目录),
+    # 并行批次会并发写同一场景与产物路径;dispatch 的并发路径仅供批次真正独立的
+    # 调用方显式启用(见 orchestrator/dispatch.py run_plan docstring)。
     plan_run: PlanRunResult | None = None
     try:
         plan_run = run_plan(

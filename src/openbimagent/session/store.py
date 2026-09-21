@@ -182,9 +182,15 @@ class SessionStore:
         payload: MessagePayload | ToolCallPayload | CustomPayload | dict[str, Any],
         parent_id: str | None = None,
     ) -> SessionEvent:
-        """构造(自动 uuid + 单调 timestamp)并追加;parent_id 缺省挂当前头指针。"""
-        event = new_event(type, payload, parent_id=parent_id if parent_id is not None else self._head)
-        self.append(event)
+        """构造(自动 uuid + 单调 timestamp)并追加;parent_id 缺省挂当前头指针。
+
+        头指针读取与 append 在同一把 RLock 内完成:并发写者(run_plan 并发批次、
+        后台子代理回写父会话)不会同时读到同一旧 head 而产生兄弟分叉,
+        事件链在多写者下仍保持单链(RLock 可重入,append 内部再次取锁安全)。
+        """
+        with self._lock:
+            event = new_event(type, payload, parent_id=parent_id if parent_id is not None else self._head)
+            self.append(event)
         return event
 
     def load(self) -> list[SessionEvent]:
@@ -351,7 +357,7 @@ class SessionStore:
         被"倒带"的旧分支仍可经 /tree 回访(Claude Code /rewind 的树形实现);
         返回移出当前 head 主干的事件数。
         """
-        events = self.load()
+        self.load()
         if event_id not in self._by_id:
             raise KeyError(f"事件 {event_id!r} 不在会话 {self.session_id!r} 中")
         old_head = self._head

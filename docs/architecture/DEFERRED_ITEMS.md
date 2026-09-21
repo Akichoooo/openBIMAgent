@@ -51,6 +51,22 @@
 | D14 | 开放文本自一致性聚合（多采样投票） | 多裁判 critic 已有 A/B swap 防偏置 | 采样成本 ×N，且当前任务多为确定性门禁可判 | 出现"门禁全过但结论仍错"的主观判断类任务时 |
 | D15 | D-Bot 交叉审查（专家互评直到无新意见） | doom-loop + critic 返工环已控制收敛 | 同上（成本），且当前单 critic 角色已分家（生成/评判物理隔离） | 多领域联合评审场景（结构+机电+市政）出现时 |
 
+### 4.1 双轨编排现状与收敛路径（2026-09-21 补记）
+
+代码库目前存在**两条编排轨**，均有真实调用方，属有意分层而非重复建设：
+
+| 轨 | 入口 | 驱动方式 | 治理面 |
+|---|---|---|---|
+| 模板流水线轨（M0/M1） | `assembly/pipeline.py run_pipeline` | playbook → clarify → planner.instantiate → schema_gate → `orchestrator/dispatch.py run_plan`（批次 PASS/FIX/ESCALATE + doom_loop，可选 concurrent=True 并发 ≤4）→ domain_gate → deliver 门禁 | **不经过** `core/loop.py` 的 8 工具治理面：权限三态、审批 fail-closed、stop-gate、压缩预算均不生效；批次执行器直连宿主 client 与审批回调 |
+| 通用 AgentLoop 轨 | `core/loop.py AgentLoop` + `orchestrator/runtime.py LocalSubagentRuntime` | 8 工具循环；子代理经 SubagentRequest/ResultEnvelope 契约、独立 child session、工件清单、后台线程池（并发 ≤4） | 完整：权限门、审批 fail-closed、stop-gate、doom-loop、output_schema 终态校验 |
+
+两轨并存的原因：模板轨服务"确定 playbook → 可复放交付"的研究管线，步骤与产物清单固定，绕开通用工具循环可减少方差、保证 benchmark 可复现；AgentLoop 轨面向开放式任务，必须挂全治理面。**治理缺口集中在模板轨**：builder/critic 双环直接持有宿主写能力，绕过 `loop.py` 权限门——目前靠 typed plan 白名单、F3 写自保护、F8 组织锁兜底，风险可控但属事实缺口，不是设计完成态。
+
+收敛路径建议（暂不实施，触发条件：模板轨需要接入审批/权限语义或对外开放调用时）：
+1. 把模板轨批次执行器改造为经 `LocalSubagentRuntime` 派发的 child（复用 child session、工件清单、审批 broker），`run_plan` 退化为纯裁决环；
+2. 宿主写统一走 typed plan 单写路径，使权限门对两条轨同一生效；
+3. 收敛前模板轨保持 `run_plan` 顺序执行——批次执行器共享宿主场景、`.blend` 输出与 `out/batches` 工作目录，并行不安全；dispatch 的 `concurrent=True` 仅供批次真正独立的调用方显式启用。
+
 ## 5. 记忆
 
 | 编号 | 事项 | 现状基础 | 未实施原因 | 触发条件 |

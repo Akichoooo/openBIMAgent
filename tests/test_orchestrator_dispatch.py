@@ -6,6 +6,9 @@ FIX 无返工指令拒空泛重试、agent 自报 ESCALATE、session 事件链(t
 全程无网络:agent_fn 均为本地注入桩。
 """
 
+import threading
+import time
+
 import pytest
 
 from openbimagent.orchestrator.dispatch import (
@@ -225,3 +228,130 @@ def test_session_event_chain_call_result_pairs(tmp_path) -> None:
     assert events[1].payload.result_llm_view.startswith("FIX")
     assert events[3].payload.result_llm_view.startswith("PASS")
     assert all(e.payload.status == "ok" for e in events if e.payload.phase == "result")
+
+
+# ---------- 并发调度(concurrent=True) ----------
+
+
+def test_concurrent_outcomes_follow_input_order() -> None:
+    """并发完成顺序乱序时,outcomes 与 subagent_results 仍按输入批次顺序(gather 语义)。"""
+
+    def fn(batch: str, rework: str | None) -> BatchReport:
+        if batch != "快":
+            time.sleep(0.05)  # 慢批次后完成,验证结果不按完成顺序排
+        return BatchReport(Verdict.PASS, hint=f"{batch} ok")
+
+    result = run_plan(["慢1", "快", "慢2"], fn, concurrent=True)
+    assert result.ok is True
+    assert [o.batch for o in result.outcomes] == ["慢1", "快", "慢2"]
+    assert [r.hint for r in result.subagent_results] == ["慢1 ok", "快 ok", "慢2 ok"]
+
+
+def test_concurrent_mixed_verdicts_and_escalated() -> None:
+    """并发下 PASS/FIX→PASS/ESCALATE 混合:逐批裁决互不影响,escalated 与顺序语义不变。"""
+    lock = threading.Lock()
+    reports = {
+        "a": [
+            BatchReport(Verdict.FIX, hint="漂浮", rework_instruction="降 0.2"),
+            BatchReport(Verdict.PASS, hint="ok"),
+        ],
+        "b": [BatchReport(Verdict.PASS, hint="ok")],
+        "c": [BatchReport(Verdict.ESCALATE, hint="需人审")],
+    }
+
+    def fn(batch: str, rework: str | None) -> BatchReport:
+        with lock:
+            return reports[batch].pop(0)
+
+    result = run_plan(["a", "b", "c"], fn, concurrent=True)
+    assert result.ok is False
+    assert [o.verdict for o in result.outcomes] == [Verdict.PASS, Verdict.PASS, Verdict.ESCALATE]
+    assert result.escalated == ("c",)
+    outcome_a = result.outcomes[0]
+    assert outcome_a.attempts == 2
+    assert outcome_a.history == (Verdict.FIX, Verdict.PASS)
+    assert result.outcomes[2].reason == "agent_escalate"
+
+
+def test_concurrent_fix_rework_stays_per_batch_sequential() -> None:
+    """并发下批内 FIX 重试环仍严格顺序:每批第二次调用收到自己的返工指令,不串批。"""
+    lock = threading.Lock()
+    seen: dict[str, list[str | None]] = {"x": [], "y": []}
+
+    def fn(batch: str, rework: str | None) -> BatchReport:
+        with lock:
+            seen[batch].append(rework)
+            attempt = len(seen[batch])
+        time.sleep(0.02)  # 制造批次间交错窗口
+        if attempt == 1:
+            return BatchReport(Verdict.FIX, hint=f"{batch} 漂浮", rework_instruction=f"降 {batch}")
+        return BatchReport(Verdict.PASS, hint=f"{batch} ok")
+
+    result = run_plan(["x", "y"], fn, concurrent=True)
+    assert result.ok is True
+    assert seen["x"] == [None, "降 x"]
+    assert seen["y"] == [None, "降 y"]
+    assert all(o.attempts == 2 for o in result.outcomes)
+
+
+def test_concurrent_doom_loop_still_trips() -> None:
+    """并发下 doom_loop 判定不变:连续 doom_max_fix 次 FIX 无进展 → ESCALATE,error=doom_loop。"""
+    fn = _fn_always(BatchReport(Verdict.FIX, hint="无进展", rework_instruction="再试一次"))
+    result = run_plan(["a", "b"], fn, concurrent=True, max_retries=10)
+    assert all(o.verdict is Verdict.ESCALATE for o in result.outcomes)
+    assert all(o.reason == "doom_loop" for o in result.outcomes)
+    assert all(o.attempts == 3 for o in result.outcomes)
+    assert result.error == "doom_loop"
+    assert result.ok is False
+
+
+def test_concurrent_respects_max_concurrency() -> None:
+    """并发上限:峰值并行度 ≤ max_concurrency,且确实发生了并行(峰值 == 上限)。"""
+    lock = threading.Lock()
+    active = 0
+    peak = 0
+
+    def fn(batch: str, rework: str | None) -> BatchReport:
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.02)
+        with lock:
+            active -= 1
+        return BatchReport(Verdict.PASS, hint=f"{batch} ok")
+
+    result = run_plan([f"b{i}" for i in range(8)], fn, concurrent=True, max_concurrency=2)
+    assert result.ok is True
+    assert peak <= 2
+    assert peak == 2  # 8 批 × 20ms 在 2 槽位下必然重叠,证明并行真实发生
+
+
+def test_concurrent_nested_dispatch_forbidden() -> None:
+    """concurrent=True 不改变禁嵌套语义:depth>0 仍直接拒绝。"""
+    with pytest.raises(NestedDispatchError, match="禁嵌套"):
+        run_plan(["a"], _fn_always(BatchReport(Verdict.PASS)), concurrent=True, depth=1)
+
+
+def test_concurrent_session_event_chain_single_line(tmp_path) -> None:
+    """并发下 session 事件:call/result 事件对共享 toolCallId 且一一配对;
+    parentId 链保持单链不分叉(SessionStore 锁保证,多批次交错落盘但不断链)。"""
+    store = SessionStore.create(tmp_path / "sessions", title="dispatch-concurrent")
+
+    def fn(batch: str, rework: str | None) -> BatchReport:
+        time.sleep(0.01)  # 制造写交错窗口
+        return BatchReport(Verdict.PASS, hint=f"{batch} ok")
+
+    result = run_plan(["a", "b", "c", "d"], fn, session=store, concurrent=True)
+    assert result.ok is True
+
+    events = store.load()
+    assert len(events) == 8  # 4 批 × call/result
+    calls = {e.payload.toolCallId for e in events if e.payload.phase == "call"}
+    results = {e.payload.toolCallId for e in events if e.payload.phase == "result"}
+    assert calls == results
+    assert len(calls) == 4
+    # 单链:除头事件外,每事件 parentId 恰为前一事件 id(并发写不产生兄弟分叉)
+    assert events[0].parentId is None
+    for prev, cur in zip(events, events[1:]):
+        assert cur.parentId == prev.id

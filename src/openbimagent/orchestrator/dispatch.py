@@ -8,8 +8,10 @@
 子代理返回 = 结构化摘要 + 工件路径 + <200 字核心提示/警告;
 原始过程留 child session,父代理按需深翻(artifact-mediated,不直接传上下文)。
 
-M0 为顺序执行版(run_plan):按 plan 批次顺序逐批驱动,agent_fn 可注入;
-并发(≤4 信号量)、角色 Markdown 加载、child session 挂载留 M1(见 dispatch/judge 的 TODO)。
+run_plan 默认顺序执行(逐批驱动,agent_fn 可注入);concurrent=True 时以
+asyncio.gather + Semaphore(≤4) 并发调度相互独立的批次——每批内部 FIX 重试环仍严格
+顺序(返工指令依赖上轮结果,不可并行),仅批次间并行;结果顺序与输入一致(gather 语义)。
+角色 Markdown 加载与 child session 挂载由 orchestrator/runtime.py 承担。
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ from openbimagent.session.schema import EventType, uuid7
 from openbimagent.session.store import SessionStore
 
 MAX_CONCURRENCY = 4
-"""子代理并发上限(COMPONENTS §2.4)。M1 实现;M0 run_plan 为顺序执行。"""
+"""子代理并发上限(COMPONENTS §2.4);与 runtime.py MAX_BACKGROUND_SUBAGENTS 一致。"""
 
 MAX_HINT_CHARS = 200
 """子代理返回的核心提示/警告字数上限(COMPONENTS §2.4/§6),超长截断并告警。"""
@@ -216,7 +218,7 @@ def complexity_metrics(result: PlanRunResult) -> dict[str, Any]:
     }
 
 
-# ---------- M0 顺序执行驱动 / M1 并发调度 ----------
+# ---------- 顺序执行驱动(默认)/ 并发调度(concurrent=True) ----------
 
 
 def run_plan(
@@ -245,6 +247,10 @@ def run_plan(
     M1 增强:
     - concurrent=True:用 asyncio.gather + Semaphore(max_concurrency) 并发调度所有批次,
       同步 agent_fn 用 asyncio.to_thread 包装;结果顺序与输入一致(gather 语义)。
+      仅适用于批次真正独立的场景:共享宿主场景/输出路径的批次执行器(如
+      assembly/pipeline 的 builder+critic 双环)必须保持 concurrent=False。
+      并发下多批次共用同一 session 时,tool_call 事件按写入先后交错落盘;
+      同一调用的 call/result 事件对共享 toolCallId,SessionStore 锁保证事件链单链不分叉。
     - doom_loop 检测结合 hint 提取的评分(overall=/score=)做无进展判定。
     - 每次 agent_fn 调用包装为 SubagentResult 累积到 PlanRunResult.subagent_results。
     """
@@ -288,10 +294,12 @@ async def _run_plan_concurrent(
     *,
     max_concurrency: int = MAX_CONCURRENCY,
 ) -> PlanRunResult:
-    """并发调度所有批次(M1):asyncio.gather + Semaphore(max_concurrency)。
+    """并发调度所有批次:asyncio.gather + Semaphore(max_concurrency)。
 
     每批用 asyncio.to_thread 包装同步 _run_batch;结果顺序与输入一致(gather 语义)。
     每批独立 subagent_results 列表(线程隔离),最后按批次顺序合并。
+    批内 FIX 重试环保持严格顺序(返工指令依赖上轮结果),并行只发生在批次之间;
+    共享 session 的并发写由 SessionStore 内部 RLock 串行化,事件链保持单链。
     """
     sem = asyncio.Semaphore(max_concurrency)
 
@@ -402,7 +410,7 @@ def _call_agent(batch: str, attempt: int, rework: str | None, agent_fn: AgentFn,
     return report
 
 
-# ---------- M1 待接:真实子代理派发与裁决 ----------
+# ---------- 统一裁决(judge);真实子代理派发与 child session 见 orchestrator/runtime.py ----------
 
 
 def judge(
