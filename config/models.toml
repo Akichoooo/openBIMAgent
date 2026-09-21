@@ -1,5 +1,6 @@
 # config/models.toml
 # 通道一:官方(GLM/Gemini 直连,正式跑批);通道二:agentrouter(联调测试,低额度)
+# 直连方言:anthropic(Anthropic Messages API)、openai-responses(OpenAI Responses API),示例见下
 # 数值为调研值,未经控制台确认;glm-5.2 不支持 vision(用户控制台确认 2026-07-21)
 [providers.glm]
 type = "openai-compatible"
@@ -21,6 +22,14 @@ default_headers = { "User-Agent" = "claude-cli/2.0.0 (external, cli)" }
 type = "openai-compatible"
 base_url = "https://freetokenfaucet.com/v1"
 api_key_env = "FREETOKENFAUCET_API_KEY"
+
+[providers.anthropic]                 # Anthropic Messages API 直连(anthropic 方言)
+type = "anthropic"
+api_key_env = "ANTHROPIC_API_KEY"
+
+[providers.openai]                    # OpenAI Responses API 直连(openai-responses 方言)
+type = "openai-responses"
+api_key_env = "OPENAI_API_KEY"
 
 [models."glm-5.2"]
 provider = "glm"
@@ -73,6 +82,14 @@ capabilities = ["tools"]
 [models."mimo-v2.5-pro"]
 provider = "freetokenfaucet"
 capabilities = ["tools"]
+
+[models."claude-opus-4-8-direct"]     # anthropic 方言示例:Anthropic 直连
+provider = "anthropic"
+capabilities = ["tools", "vision"]
+
+[models."gpt-5.5-direct"]             # openai-responses 方言示例:OpenAI 直连
+provider = "openai"
+capabilities = ["tools", "vision"]
 
 [profiles]                          # OPENBIMAGENT_PROFILE 切换,默认 official
 [profiles.official]

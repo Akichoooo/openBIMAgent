@@ -4,9 +4,11 @@
 - docs/architecture/COMPONENTS.md §4 providers([resilience]:韧性集中,业务代码不重复造)
 - config/models.toml [providers.*] 的 type 字段
 
-方言:openai-completions / openai-responses / anthropic / google-genai。
-M0 只实现 openai-compatible(走 openai-completions 方言,GLM/agentrouter 已够联调);
-anthropic / google-genai / openai-responses 留 TODO(M1)。
+方言:openai-completions / openai-responses / anthropic / google-genai,均已实现:
+- openai-completions:OpenAI 兼容端点(GLM/agentrouter/freetokenfaucet),httpx SSE。
+- google-genai:Google Gen AI SDK(同步 generate_content)。
+- anthropic:Anthropic Messages API(POST /v1/messages,x-api-key + anthropic-version,SSE)。
+- openai-responses:OpenAI Responses API(POST /v1/responses,Bearer,SSE)。
 """
 
 from __future__ import annotations
@@ -196,8 +198,8 @@ def chat(
     返回 OpenAI chat.completion 形态 dict;abort 时正常返回并带 ``aborted=True`` 与部分内容。
     default_headers:provider 级额外请求头(models.toml [providers.*].default_headers),
     与方言注入的 Authorization/Content-Type 合并,后者优先(鉴权不被覆盖)。
-    extra_params:reasoning_payload 等额外请求体字段,openai-completions 方言并入请求体。
-    TODO(M1): anthropic 与 google-genai、openai-responses 方言。
+    extra_params:reasoning_payload 等额外请求体字段,并入 HTTP 方言请求体
+    (google-genai 方言走 SDK,忽略 extra_params)。
     """
     if dialect is Dialect.OPENAI_COMPLETIONS:
         return _chat_openai_completions(
@@ -224,7 +226,33 @@ def chat(
             cancel_event=cancel_event,
             default_headers=default_headers,
         )
-    raise NotImplementedError(f"TODO(M1): {dialect} 方言未实现")
+    if dialect is Dialect.ANTHROPIC:
+        return _chat_anthropic(
+            model=model,
+            messages=messages,
+            base_url=base_url,
+            api_key=api_key,
+            tools=tools,
+            tool_choice=tool_choice,
+            timeout_s=timeout_s,
+            cancel_event=cancel_event,
+            default_headers=default_headers,
+            extra_params=extra_params,
+        )
+    if dialect is Dialect.OPENAI_RESPONSES:
+        return _chat_openai_responses(
+            model=model,
+            messages=messages,
+            base_url=base_url,
+            api_key=api_key,
+            tools=tools,
+            tool_choice=tool_choice,
+            timeout_s=timeout_s,
+            cancel_event=cancel_event,
+            default_headers=default_headers,
+            extra_params=extra_params,
+        )
+    raise NotImplementedError(f"未实现的方言: {dialect}")
 
 
 def _chat_google_genai(
@@ -635,6 +663,545 @@ def _assemble_completion(acc: dict[str, Any], *, aborted: bool) -> dict[str, Any
     if acc["usage"]:
         result["usage"] = acc["usage"]
     return result
+
+
+def _stream_sse_with_abort(
+    *,
+    url: str,
+    payload: dict[str, Any],
+    headers: dict[str, str],
+    timeout_s: int,
+    cancel_event: threading.Event | None,
+    consume_line: Any,
+) -> bool:
+    """SSE 流消费 + 全程可 abort(与 _chat_openai_completions 同语义,供 HTTP 方言复用)。
+
+    worker 线程逐行交给 consume_line(返回 False 即收尾),主线程每 0.5s 轮询 cancel_event,
+    置位即关闭连接。返回是否 aborted;非 abort 的异常原样上抛(HTTPStatusError/TransportError
+    由 registry 判定重试,WAF HTML 挑战页统一转 WAFChallengeError)。
+    """
+    holder: dict[str, Any] = {}
+    errors: list[BaseException] = []
+
+    def _worker() -> None:
+        try:
+            with httpx.Client(timeout=httpx.Timeout(timeout_s)) as client:
+                holder["client"] = client
+                with client.stream("POST", url, json=payload, headers=headers) as resp:
+                    holder["response"] = resp
+                    resp.raise_for_status()
+                    ct = resp.headers.get("content-type", "").lower()
+                    if "text/html" in ct:
+                        raise WAFChallengeError(
+                            f"响应为 HTML(content-type={ct!r}),疑似 WAF 挑战页(速率限流);退避后重试"
+                        )
+                    for line in resp.iter_lines():
+                        if not consume_line(line):
+                            break
+        except BaseException as exc:  # abort 关闭连接时 worker 也会在此落地
+            errors.append(exc)
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    thread.start()
+    aborted = False
+    while thread.is_alive():
+        thread.join(timeout=ABORT_POLL_INTERVAL_S)
+        if cancel_event is not None and cancel_event.is_set():
+            aborted = True
+            resp = holder.get("response")
+            if resp is not None:
+                resp.close()
+            elif holder.get("client") is not None:
+                holder["client"].close()
+            thread.join(timeout=5)
+            break
+    if errors and not aborted:
+        raise errors[0]
+    return aborted
+
+
+def _new_stream_acc() -> dict[str, Any]:
+    return {
+        "content_parts": [],
+        "reasoning_parts": [],
+        "tool_calls": {},
+        "finish_reason": None,
+        "usage": None,
+    }
+
+
+# ---------- anthropic(Anthropic Messages API) ----------
+
+ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com"
+ANTHROPIC_VERSION = "2023-06-01"
+_ANTHROPIC_DEFAULT_MAX_TOKENS = 8192
+_ANTHROPIC_STOP_MAP = {
+    "end_turn": "stop",
+    "tool_use": "tool_calls",
+    "max_tokens": "length",
+    "stop_sequence": "stop",
+    "refusal": "content_filter",
+}
+
+
+def _chat_anthropic(
+    *,
+    model: str,
+    messages: list[dict[str, Any]],
+    base_url: str | None,
+    api_key: str | None,
+    tools: list[dict[str, Any]] | None,
+    tool_choice: str | dict[str, Any] | None,
+    timeout_s: int,
+    cancel_event: threading.Event | None,
+    default_headers: dict[str, str] | None,
+    extra_params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Anthropic Messages 方言:POST {base_url}/v1/messages,x-api-key + anthropic-version 鉴权。
+
+    用流式(SSE)以支持 abort 返回部分内容。system 消息提升为顶层 system 参数;
+    OpenAI function tools → Anthropic tools(name/description/input_schema);
+    tool_calls/tool 角色消息 → tool_use/tool_result 内容块(连续同角色消息合并,
+    满足 Anthropic 交替角色约束)。max_tokens 为 API 必填,缺省 8192,可由 extra_params 覆盖。
+    """
+    base = (base_url or ANTHROPIC_DEFAULT_BASE_URL).rstrip("/")
+    url = f"{base}/v1/messages"
+    system, anthropic_messages = _messages_to_anthropic(messages)
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": anthropic_messages,
+        "max_tokens": _ANTHROPIC_DEFAULT_MAX_TOKENS,
+        "stream": True,
+        **(extra_params or {}),
+    }
+    if system:
+        payload["system"] = system
+    anthropic_tools = _tools_to_anthropic(tools)
+    if anthropic_tools:
+        payload["tools"] = anthropic_tools
+        choice = _tool_choice_to_anthropic(tool_choice)
+        if choice is not None:
+            payload["tool_choice"] = choice
+    # default_headers 在前:x-api-key/anthropic-version 始终由方言注入,不被覆盖
+    headers = {
+        **(default_headers or {}),
+        "x-api-key": api_key or "",
+        "anthropic-version": ANTHROPIC_VERSION,
+        "Content-Type": "application/json",
+    }
+    acc = _new_stream_acc()
+    aborted = _stream_sse_with_abort(
+        url=url,
+        payload=payload,
+        headers=headers,
+        timeout_s=timeout_s,
+        cancel_event=cancel_event,
+        consume_line=lambda line: _consume_anthropic_sse_line(line, acc),
+    )
+    return _assemble_completion(acc, aborted=aborted)
+
+
+def _messages_to_anthropic(messages: list[dict[str, Any]]) -> tuple[str | None, list[dict[str, Any]]]:
+    """OpenAI messages → (system, Anthropic messages);连续同角色合并,满足交替角色约束。"""
+    system_parts: list[str] = []
+    anthropic_messages: list[dict[str, Any]] = []
+
+    def _append(role: str, blocks: list[dict[str, Any]]) -> None:
+        if not blocks:
+            return
+        if anthropic_messages and anthropic_messages[-1]["role"] == role:
+            anthropic_messages[-1]["content"].extend(blocks)
+        else:
+            anthropic_messages.append({"role": role, "content": blocks})
+
+    for message in messages:
+        role = str(message.get("role") or "user")
+        content = message.get("content", "")
+        if role == "system":
+            text = _content_text(content)
+            if text:
+                system_parts.append(text)
+            continue
+        if role == "tool":
+            _append(
+                "user",
+                [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": str(message.get("tool_call_id") or ""),
+                        "content": _content_text(content),
+                    }
+                ],
+            )
+            continue
+        anthropic_role = "assistant" if role == "assistant" else "user"
+        blocks = _content_to_anthropic_blocks(content)
+        for tool_call in message.get("tool_calls") or []:
+            fn = tool_call.get("function") or {}
+            blocks.append(
+                {
+                    "type": "tool_use",
+                    "id": str(tool_call.get("id") or ""),
+                    "name": str(fn.get("name") or "tool"),
+                    "input": _json_object_or_text(fn.get("arguments", {})),
+                }
+            )
+        _append(anthropic_role, blocks or [{"type": "text", "text": ""}])
+    if not anthropic_messages:
+        anthropic_messages = [{"role": "user", "content": [{"type": "text", "text": ""}]}]
+    return ("\n\n".join(system_parts) or None), anthropic_messages
+
+
+def _content_to_anthropic_blocks(content: Any) -> list[dict[str, Any]]:
+    """OpenAI 字符串/content-parts → Anthropic 内容块,支持 data-URI 与 http(s) 图片。"""
+    if isinstance(content, str):
+        return [{"type": "text", "text": content}] if content else []
+    if not isinstance(content, list):
+        return [{"type": "text", "text": str(content)}]
+    blocks: list[dict[str, Any]] = []
+    for item in content:
+        if not isinstance(item, dict):
+            blocks.append({"type": "text", "text": str(item)})
+            continue
+        if item.get("type") == "text":
+            blocks.append({"type": "text", "text": str(item.get("text") or "")})
+            continue
+        if item.get("type") == "image_url":
+            image = item.get("image_url") or {}
+            url = image.get("url") if isinstance(image, dict) else image
+            if isinstance(url, str) and url.startswith("data:"):
+                mime_type, data = _decode_data_uri(url)
+                blocks.append(
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": mime_type,
+                            "data": base64.b64encode(data).decode("ascii"),
+                        },
+                    }
+                )
+            elif isinstance(url, str) and url.startswith(("http://", "https://")):
+                blocks.append({"type": "image", "source": {"type": "url", "url": url}})
+            else:
+                raise DialectError("anthropic 方言只支持 base64 data-URI 或 http(s) image_url")
+            continue
+        blocks.append({"type": "text", "text": json.dumps(item, ensure_ascii=False)})
+    return blocks
+
+
+def _tools_to_anthropic(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """OpenAI function tools → Anthropic tools(name/description/input_schema)。"""
+    anthropic_tools: list[dict[str, Any]] = []
+    for item in tools or []:
+        if item.get("type") != "function" or not isinstance(item.get("function"), dict):
+            continue
+        fn = item["function"]
+        anthropic_tools.append(
+            {
+                "name": str(fn.get("name") or "tool"),
+                "description": str(fn.get("description") or ""),
+                "input_schema": fn.get("parameters") or {"type": "object", "properties": {}},
+            }
+        )
+    return anthropic_tools
+
+
+def _tool_choice_to_anthropic(tool_choice: Any) -> dict[str, Any] | None:
+    """OpenAI tool_choice → Anthropic tool_choice(auto/none/any/tool)。"""
+    if tool_choice is None or tool_choice == "auto":
+        return {"type": "auto"}
+    if tool_choice == "none":
+        return {"type": "none"}
+    if tool_choice == "required":
+        return {"type": "any"}
+    if isinstance(tool_choice, dict):
+        fn = tool_choice.get("function") or {}
+        if fn.get("name"):
+            return {"type": "tool", "name": str(fn["name"])}
+    return None
+
+
+def _consume_anthropic_sse_line(line: str, acc: dict[str, Any]) -> bool:
+    """解析一行 Anthropic SSE 并入 acc;message_stop 时返回 False。纯函数,可单测。"""
+    line = line.strip()
+    if not line or not line.startswith("data:"):
+        return True
+    data = json.loads(line[len("data:") :].strip())
+    if not isinstance(data, dict):
+        return True
+    event_type = data.get("type")
+    if event_type == "message_start":
+        usage = (data.get("message") or {}).get("usage") or {}
+        _accumulate_anthropic_usage(acc, usage)
+    elif event_type == "content_block_start":
+        block = data.get("content_block") or {}
+        if block.get("type") == "tool_use":
+            acc["tool_calls"][data.get("index", 0)] = {
+                "id": str(block.get("id") or ""),
+                "type": "function",
+                "function": {"name": str(block.get("name") or ""), "arguments": ""},
+            }
+    elif event_type == "content_block_delta":
+        delta = data.get("delta") or {}
+        delta_type = delta.get("type")
+        if delta_type == "text_delta" and delta.get("text"):
+            acc["content_parts"].append(delta["text"])
+        elif delta_type == "thinking_delta" and delta.get("thinking"):
+            acc["reasoning_parts"].append(delta["thinking"])
+        elif delta_type == "input_json_delta" and delta.get("partial_json"):
+            slot = acc["tool_calls"].get(data.get("index", 0))
+            if slot is not None:
+                slot["function"]["arguments"] += delta["partial_json"]
+    elif event_type == "message_delta":
+        stop_reason = (data.get("delta") or {}).get("stop_reason")
+        if stop_reason:
+            acc["finish_reason"] = _ANTHROPIC_STOP_MAP.get(str(stop_reason), "stop")
+        _accumulate_anthropic_usage(acc, data.get("usage") or {})
+    elif event_type == "message_stop":
+        return False
+    elif event_type == "error":
+        # 只透传服务端错误类型/消息,不含请求头/鉴权信息(api_key 不外泄)
+        error = data.get("error") or {}
+        raise DialectError(f"anthropic SSE error: {error.get('type')}: {error.get('message')}")
+    return True
+
+
+def _accumulate_anthropic_usage(acc: dict[str, Any], usage: dict[str, Any]) -> None:
+    """Anthropic usage(input_tokens/output_tokens)累积为 OpenAI usage 形态。"""
+    if not usage:
+        return
+    current = acc["usage"] or {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    current["prompt_tokens"] += int(usage.get("input_tokens") or 0)
+    current["completion_tokens"] += int(usage.get("output_tokens") or 0)
+    current["total_tokens"] = current["prompt_tokens"] + current["completion_tokens"]
+    acc["usage"] = current
+
+
+# ---------- openai-responses(OpenAI Responses API) ----------
+
+OPENAI_RESPONSES_DEFAULT_BASE_URL = "https://api.openai.com"
+
+
+def _chat_openai_responses(
+    *,
+    model: str,
+    messages: list[dict[str, Any]],
+    base_url: str | None,
+    api_key: str | None,
+    tools: list[dict[str, Any]] | None,
+    tool_choice: str | dict[str, Any] | None,
+    timeout_s: int,
+    cancel_event: threading.Event | None,
+    default_headers: dict[str, str] | None,
+    extra_params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """OpenAI Responses 方言:POST {base_url}/v1/responses,Bearer 鉴权,SSE 流式。
+
+    system 消息提升为 instructions;assistant.tool_calls → function_call 条目,
+    tool 角色 → function_call_output 条目;tools 展平为 Responses 形态
+    (type/name/description/parameters 顶层)。响应归一化为 chat.completion。
+    """
+    base = (base_url or OPENAI_RESPONSES_DEFAULT_BASE_URL).rstrip("/")
+    url = f"{base}/v1/responses"
+    instructions, input_items = _messages_to_responses_input(messages)
+    payload: dict[str, Any] = {
+        "model": model,
+        "input": input_items,
+        "stream": True,
+        **(extra_params or {}),
+    }
+    if instructions:
+        payload["instructions"] = instructions
+    responses_tools = _tools_to_responses(tools)
+    if responses_tools:
+        payload["tools"] = responses_tools
+        choice = _tool_choice_to_responses(tool_choice)
+        if choice is not None:
+            payload["tool_choice"] = choice
+    # default_headers 在前:Authorization/Content-Type 始终由方言按 api_key 注入,不被覆盖
+    headers = {
+        **(default_headers or {}),
+        "Authorization": f"Bearer {api_key or ''}",
+        "Content-Type": "application/json",
+    }
+    acc = _new_stream_acc()
+    aborted = _stream_sse_with_abort(
+        url=url,
+        payload=payload,
+        headers=headers,
+        timeout_s=timeout_s,
+        cancel_event=cancel_event,
+        consume_line=lambda line: _consume_responses_sse_line(line, acc),
+    )
+    return _assemble_completion(acc, aborted=aborted)
+
+
+def _messages_to_responses_input(messages: list[dict[str, Any]]) -> tuple[str | None, list[dict[str, Any]]]:
+    """OpenAI messages → (instructions, Responses input 条目列表)。"""
+    system_parts: list[str] = []
+    items: list[dict[str, Any]] = []
+    for message in messages:
+        role = str(message.get("role") or "user")
+        content = message.get("content", "")
+        if role == "system":
+            text = _content_text(content)
+            if text:
+                system_parts.append(text)
+            continue
+        if role == "tool":
+            items.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": str(message.get("tool_call_id") or ""),
+                    "output": _content_text(content),
+                }
+            )
+            continue
+        if role == "assistant":
+            text = _content_text(content)
+            if text:
+                items.append(
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": text}],
+                    }
+                )
+            for tool_call in message.get("tool_calls") or []:
+                fn = tool_call.get("function") or {}
+                arguments = fn.get("arguments", "")
+                items.append(
+                    {
+                        "type": "function_call",
+                        "call_id": str(tool_call.get("id") or ""),
+                        "name": str(fn.get("name") or "tool"),
+                        "arguments": arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False),
+                    }
+                )
+            continue
+        items.append(
+            {
+                "type": "message",
+                "role": "user",
+                "content": _content_to_responses_parts(content),
+            }
+        )
+    if not items:
+        items = [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": ""}]}]
+    return ("\n\n".join(system_parts) or None), items
+
+
+def _content_to_responses_parts(content: Any) -> list[dict[str, Any]]:
+    """OpenAI 字符串/content-parts → Responses input_text/input_image 条目。"""
+    if isinstance(content, str):
+        return [{"type": "input_text", "text": content}]
+    if not isinstance(content, list):
+        return [{"type": "input_text", "text": str(content)}]
+    parts: list[dict[str, Any]] = []
+    for item in content:
+        if not isinstance(item, dict):
+            parts.append({"type": "input_text", "text": str(item)})
+            continue
+        if item.get("type") == "text":
+            parts.append({"type": "input_text", "text": str(item.get("text") or "")})
+            continue
+        if item.get("type") == "image_url":
+            image = item.get("image_url") or {}
+            url = image.get("url") if isinstance(image, dict) else image
+            if not isinstance(url, str) or not url:
+                raise DialectError("openai-responses 方言的 image_url 缺少 url")
+            parts.append({"type": "input_image", "image_url": url})
+            continue
+        parts.append({"type": "input_text", "text": json.dumps(item, ensure_ascii=False)})
+    return parts or [{"type": "input_text", "text": ""}]
+
+
+def _tools_to_responses(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """OpenAI function tools → Responses 展平形态(name/description/parameters 顶层)。"""
+    responses_tools: list[dict[str, Any]] = []
+    for item in tools or []:
+        if item.get("type") != "function" or not isinstance(item.get("function"), dict):
+            continue
+        fn = item["function"]
+        responses_tools.append(
+            {
+                "type": "function",
+                "name": str(fn.get("name") or "tool"),
+                "description": str(fn.get("description") or ""),
+                "parameters": fn.get("parameters") or {"type": "object", "properties": {}},
+            }
+        )
+    return responses_tools
+
+
+def _tool_choice_to_responses(tool_choice: Any) -> Any | None:
+    """OpenAI tool_choice → Responses tool_choice(字符串直通;指定函数转展平 dict)。"""
+    if tool_choice is None:
+        return None
+    if isinstance(tool_choice, str):
+        return tool_choice
+    if isinstance(tool_choice, dict):
+        fn = tool_choice.get("function") or {}
+        if fn.get("name"):
+            return {"type": "function", "name": str(fn["name"])}
+    return None
+
+
+def _consume_responses_sse_line(line: str, acc: dict[str, Any]) -> bool:
+    """解析一行 Responses SSE 并入 acc;response.completed 时返回 False。纯函数,可单测。"""
+    line = line.strip()
+    if not line or not line.startswith("data:"):
+        return True
+    data = json.loads(line[len("data:") :].strip())
+    if not isinstance(data, dict):
+        return True
+    event_type = data.get("type")
+    if event_type == "response.output_text.delta" and data.get("delta"):
+        acc["content_parts"].append(data["delta"])
+    elif event_type in ("response.reasoning_text.delta", "response.reasoning_summary_text.delta"):
+        if data.get("delta"):
+            acc["reasoning_parts"].append(data["delta"])
+    elif event_type == "response.output_item.added":
+        item = data.get("item") or {}
+        if item.get("type") == "function_call":
+            key = str(item.get("id") or data.get("output_index") or len(acc["tool_calls"]))
+            acc["tool_calls"][key] = {
+                "id": str(item.get("call_id") or item.get("id") or ""),
+                "type": "function",
+                "function": {"name": str(item.get("name") or ""), "arguments": ""},
+            }
+    elif event_type == "response.function_call_arguments.delta" and data.get("delta"):
+        slot = acc["tool_calls"].get(str(data.get("item_id") or ""))
+        if slot is not None:
+            slot["function"]["arguments"] += data["delta"]
+    elif event_type == "response.function_call_arguments.done":
+        item = data.get("item_id")
+        slot = acc["tool_calls"].get(str(item or ""))
+        if slot is not None and not slot["function"]["arguments"] and data.get("arguments"):
+            slot["function"]["arguments"] = data["arguments"]
+    elif event_type in ("response.completed", "response.incomplete"):
+        response = data.get("response") or {}
+        usage = response.get("usage") or {}
+        if usage:
+            prompt = int(usage.get("input_tokens") or 0)
+            completion = int(usage.get("output_tokens") or 0)
+            acc["usage"] = {
+                "prompt_tokens": prompt,
+                "completion_tokens": completion,
+                "total_tokens": int(usage.get("total_tokens") or prompt + completion),
+            }
+        if acc["finish_reason"] is None:
+            if acc["tool_calls"]:
+                acc["finish_reason"] = "tool_calls"
+            elif event_type == "response.incomplete":
+                acc["finish_reason"] = "length"
+        return False
+    elif event_type in ("response.failed", "error"):
+        # 只透传服务端错误 code/message,不含请求头/鉴权信息(api_key 不外泄)
+        error = data.get("response", {}).get("error") or data.get("error") or {}
+        raise DialectError(f"openai-responses SSE error: {error.get('code')}: {error.get('message')}")
+    return True
 
 
 class CircuitBreaker:
