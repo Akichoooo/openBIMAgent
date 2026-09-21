@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react"
-import { api, SessionItem } from "@/services/api"
+import { api, SessionItem, eventSuggestsIrUpdate } from "@/services/api"
 import { Header } from "@/components/layout/Header"
 import { Sidebar, getSessionTitle } from "@/components/layout/Sidebar"
 import { CanvasViewport } from "@/components/viewport/CanvasViewport"
@@ -288,6 +288,22 @@ export default function App() {
       })
   }, [currentSessionId, refreshTrigger])
 
+  // 运行中 IR 产物实时投影：事件流出现 compiled_utility_ir 新建/更新信号时合并触发 refreshTrigger，
+  // 3D 视口无需手动切换会话即可跟进（窗口内多次命中只刷新一次，间隔 ≥2.5s）
+  const irScanRef = React.useRef(0)
+  const irTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    const from = irScanRef.current
+    irScanRef.current = sessionEvents.length
+    if (from >= sessionEvents.length) return
+    const hit = sessionEvents.slice(from).some((ev) => eventSuggestsIrUpdate(ev))
+    if (!hit || irTimerRef.current) return
+    irTimerRef.current = setTimeout(() => {
+      irTimerRef.current = null
+      setRefreshTrigger((c) => c + 1)
+    }, 2500)
+  }, [sessionEvents])
+
   // Global keyboard shortcuts (⌘K for new chat, ⌘, for settings)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -480,7 +496,7 @@ export default function App() {
           ) : (
             <div className="flex-1 min-h-0 min-w-0 relative overflow-hidden">
               {viewMode === "trace" ? (
-                <TraceTimeline sessionId={currentSessionId} />
+                <TraceTimeline sessionId={currentSessionId} eventsVersion={sessionEvents.length} />
               ) : (
                 <CanvasViewport
                   viewMode={viewMode}

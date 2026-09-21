@@ -20,6 +20,8 @@ import {
 
 interface TraceTimelineProps {
   sessionId: string | null
+  /** 运行中事件流版本号（App 侧 sessionEvents.length）：变化时防抖增量重取，轨迹不再停滞 */
+  eventsVersion?: number
 }
 
 interface EventMeta {
@@ -139,9 +141,19 @@ function EmptyHint({ text, sub }: { text: string; sub?: string }) {
  * （sha256 短链）→ 六维评分 → 子代理生命周期 → 交付回执。既是 UI 补强，又是 A1
  * trajectory_accuracy / evidence_chain 的直观呈现（答辩可展示"每一步都有据可查"）。
  */
-export const TraceTimeline: React.FC<TraceTimelineProps> = ({ sessionId }) => {
+export const TraceTimeline: React.FC<TraceTimelineProps> = ({ sessionId, eventsVersion }) => {
   const [events, setEvents] = useState<SessionEvent[]>([])
   const [loading, setLoading] = useState(false)
+  const lastFetchRef = React.useRef(0)
+
+  const fetchEvents = React.useCallback(() => {
+    if (!sessionId) return
+    lastFetchRef.current = Date.now()
+    api
+      .getSessionEvents(sessionId, 500)
+      .then((evs) => setEvents(evs))
+      .catch(() => {})
+  }, [sessionId])
 
   useEffect(() => {
     if (!sessionId) {
@@ -155,6 +167,15 @@ export const TraceTimeline: React.FC<TraceTimelineProps> = ({ sessionId }) => {
       .catch(() => setEvents([]))
       .finally(() => setLoading(false))
   }, [sessionId])
+
+  // 运行中实时跟随：事件版本号变化时防抖重取（两次拉取间隔 ≥2s，避免事件风暴打满后端）
+  useEffect(() => {
+    if (!sessionId || eventsVersion === undefined || eventsVersion === 0) return
+    if (eventsVersion <= events.length) return
+    const wait = Math.max(0, 2000 - (Date.now() - lastFetchRef.current))
+    const t = setTimeout(fetchEvents, wait)
+    return () => clearTimeout(t)
+  }, [eventsVersion, sessionId, events.length, fetchEvents])
 
   return (
     <div className="w-full h-full overflow-y-auto bg-background">

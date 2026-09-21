@@ -172,17 +172,263 @@ function rid(): string {
   return "fe-" + Math.random().toString(36).slice(2, 10)
 }
 
-if (typeof window !== "undefined" && (window as any).__WB_TOKEN) {
-  try {
-    localStorage.setItem("openbimagent_token", (window as any).__WB_TOKEN)
-  } catch {}
-}
-
-function getHeaders(custom: Record<string, string> = {}): Record<string, string> {
-  let token = typeof window !== "undefined" ? (window as any).__WB_TOKEN : ""
+/** 工作台令牌：优先 window.__WB_TOKEN（后端伺服 dist 时注入），回退 localStorage 缓存；vite dev 下可为空 */
+export function getWorkbenchToken(): string {
+  let token = typeof window !== "undefined" ? window.__WB_TOKEN || "" : ""
   if (!token && typeof localStorage !== "undefined") {
     token = localStorage.getItem("openbimagent_token") || ""
   }
+  return token
+}
+
+if (typeof window !== "undefined" && window.__WB_TOKEN) {
+  try {
+    localStorage.setItem("openbimagent_token", window.__WB_TOKEN)
+  } catch {}
+}
+
+/**
+ * 会话事件 SSE 流地址。EventSource 无法设置请求头，生产环境鉴权（Bearer + X-Request-ID）
+ * 由后端改为接受 ?token= 查询参数；无令牌（vite dev）时保持裸地址。
+ */
+export function buildSessionEventsStreamUrl(sessionId: string): string {
+  const base = `/api/v1/sessions/${encodeURIComponent(sessionId)}/events/stream`
+  const token = getWorkbenchToken()
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base
+}
+
+/** 事件是否暗示 compiled_utility_ir 产物已新建/更新（驱动 3D 视口免手动刷新） */
+export function eventSuggestsIrUpdate(ev: SessionEvent): boolean {
+  const p = ev.payload || {}
+  if (p.ir || p.result_ir) return true
+  if (p.customType === "artifact_committed" && p.artifact) {
+    const a = p.artifact
+    const hay = `${a.kind || ""} ${a.path || ""} ${a.relative_path || ""}`.toLowerCase()
+    if (hay.includes("compiled_utility_ir")) return true
+  }
+  if (ev.type === "tool_call") {
+    const views = [p.args_summary, p.result_llm_view, p.result_ui_view]
+    for (const v of views) {
+      const s = typeof v === "string" ? v : v ? JSON.stringify(v) : ""
+      if (s.toLowerCase().includes("compiled_utility_ir")) return true
+    }
+  }
+  return false
+}
+
+export interface RunActivity {
+  role?: string
+  tool?: string
+  at?: string
+}
+
+// ---- 子代理生命周期（customType 见 backend session/schema.py CustomType）----
+
+const SUBAGENT_CREATED_TYPES = new Set(["subagent_created", "subagent_started"])
+const SUBAGENT_TERMINAL_TYPES = new Set(["subagent_completed", "subagent_failed", "subagent_cancelled"])
+
+/** 事件是否是审批信号（approval_requested/decided → 立即刷新 HITL 卡片，不等 3s 轮询） */
+export function isApprovalSignal(ev: SessionEvent): boolean {
+  const ct = ev.payload?.customType
+  return ct === "approval_requested" || ct === "approval_decided"
+}
+
+/** 从 subagent 工具调用 payload 提取 request_id（result_ui_view 结构化优先，llm_view/args 文本兜底） */
+export function extractSubagentRequestId(payload: any): string | undefined {
+  if (!payload) return undefined
+  const ui = payload.result_ui_view
+  if (ui && typeof ui === "object") {
+    const rid = ui.request_id || ui.handle?.request_id
+    if (typeof rid === "string" && rid) return rid
+  }
+  const text = `${payload.result_llm_view || ""} ${payload.args_summary || ""}`
+  const m = text.match(/request_id=([0-9A-Za-z-]+)/)
+  return m?.[1]
+}
+
+/** 工具卡视图模型：phase=call/result 事件对按 toolCallId 配对；requestId 对上生命周期事件时携带终态 */
+export interface ToolCardModel {
+  callEv: SessionEvent
+  resultEv?: SessionEvent
+  pending: boolean
+  role?: string
+  requestId?: string
+  terminalStatus?: "completed" | "failed" | "cancelled"
+  receipt?: boolean
+}
+
+/** 内联时间线标记（未与工具卡关联上的子代理终态/交付回执） */
+export interface LifecycleMarkerModel {
+  ev: SessionEvent
+  status: "completed" | "failed" | "cancelled" | "delivery"
+  role?: string
+  receipt?: boolean
+  error?: string
+}
+
+export type ThreadItem =
+  | { kind: "message"; ev: SessionEvent }
+  | { kind: "tool"; card: ToolCardModel }
+  | { kind: "marker"; marker: LifecycleMarkerModel }
+
+function isResultPhase(p: any): boolean {
+  return p.phase === "result" || p.status != null || p.result_llm_view != null || p.result_ui_view != null
+}
+
+/**
+ * 把会话事件流编译为主编排视图渲染序列：
+ * message 原样；tool_call 按 toolCallId 配对成卡（未配对 result 的卡为进行中）；
+ * subagent 生命周期事件先尝试按 request_id 认领工具卡（卡翻终态徽章，不再渲染标记），
+ * 认领不上的渲染为内联时间线标记；delivery_receipt 认领失败时折叠进终态标记。
+ */
+export function deriveThreadView(events: SessionEvent[]): ThreadItem[] {
+  const roleByReq = new Map<string, string>()
+  const terminalByReq = new Map<string, { status: "completed" | "failed" | "cancelled"; ev: SessionEvent; error?: string }>()
+  const receiptByReq = new Map<string, SessionEvent>()
+  for (const ev of events) {
+    const p = ev.payload || {}
+    const ct = p.customType
+    const rid = p.request_id ? String(p.request_id) : ""
+    if (!rid) continue
+    if (SUBAGENT_CREATED_TYPES.has(ct)) {
+      if (p.role && !roleByReq.has(rid)) roleByReq.set(rid, String(p.role).toLowerCase())
+    } else if (SUBAGENT_TERMINAL_TYPES.has(ct)) {
+      terminalByReq.set(rid, {
+        status: ct.replace("subagent_", "") as "completed" | "failed" | "cancelled",
+        ev,
+        error: p.error?.message,
+      })
+    } else if (ct === "delivery_receipt") {
+      receiptByReq.set(rid, ev)
+    }
+  }
+
+  const cards = new Map<string, ToolCardModel>()
+  const cardOrder: ToolCardModel[] = []
+  for (const ev of events) {
+    if (ev.type !== "tool_call") continue
+    const p = ev.payload || {}
+    const key = String(p.toolCallId || ev.id)
+    let card = cards.get(key)
+    if (!card) {
+      card = { callEv: ev, pending: true }
+      cards.set(key, card)
+      cardOrder.push(card)
+    }
+    if (isResultPhase(p)) {
+      card.resultEv = ev
+      card.pending = false
+    } else {
+      card.callEv = ev
+    }
+  }
+
+  const claimed = new Set<string>()
+  for (const card of cardOrder) {
+    const merged = { ...(card.callEv.payload || {}), ...(card.resultEv?.payload || {}) }
+    const isSub = merged.toolName === "subagent" || !!merged.agent_role || !!merged.agent || !!merged.batch
+    if (!isSub) continue
+    const rid = extractSubagentRequestId(merged)
+    if (!rid) continue
+    card.requestId = rid
+    claimed.add(rid)
+    const argsRole = String(merged.args_summary || "").match(/role=([a-z_]+)/i)?.[1]
+    card.role =
+      String(merged.agent_role || merged.agent || merged.batch || argsRole || "").toLowerCase() ||
+      roleByReq.get(rid)
+    const t = terminalByReq.get(rid)
+    if (t) card.terminalStatus = t.status
+    if (receiptByReq.has(rid)) card.receipt = true
+  }
+
+  const items: ThreadItem[] = []
+  const emitted = new Set<ToolCardModel>()
+  for (const ev of events) {
+    if (ev.type === "message") {
+      items.push({ kind: "message", ev })
+      continue
+    }
+    if (ev.type === "tool_call") {
+      const p = ev.payload || {}
+      const card = cards.get(String(p.toolCallId || ev.id))
+      if (card && !emitted.has(card)) {
+        emitted.add(card)
+        items.push({ kind: "tool", card })
+      }
+      continue
+    }
+    if (ev.type === "custom") {
+      const p = ev.payload || {}
+      const ct = p.customType
+      const rid = p.request_id ? String(p.request_id) : ""
+      if (SUBAGENT_TERMINAL_TYPES.has(ct)) {
+        if (rid && claimed.has(rid)) continue // 卡已翻终态徽章
+        const t = terminalByReq.get(rid)
+        items.push({
+          kind: "marker",
+          marker: {
+            ev,
+            status: (t?.status || "completed") as "completed" | "failed" | "cancelled",
+            role: roleByReq.get(rid),
+            receipt: receiptByReq.has(rid),
+            error: t?.error,
+          },
+        })
+      } else if (ct === "delivery_receipt") {
+        if (rid && claimed.has(rid)) continue // 卡内已标注交付
+        if (rid && terminalByReq.has(rid)) continue // 折叠进终态标记
+        items.push({ kind: "marker", marker: { ev, status: "delivery", role: roleByReq.get(rid), receipt: true } })
+      }
+    }
+  }
+  return items
+}
+
+/** 运行收尾统计：窗口内已配对 result 的工具调用次数 + 用时秒数（数据全部来自已有事件） */
+export function deriveRunWrapUp(
+  events: SessionEvent[],
+  sinceMs: number,
+  untilMs: number
+): { toolCalls: number; seconds: number } {
+  let toolCalls = 0
+  for (const ev of events) {
+    if (ev.type !== "tool_call") continue
+    if (!isResultPhase(ev.payload || {})) continue
+    const t = Date.parse(ev.created_at || "")
+    if (!Number.isNaN(t) && t < sinceMs - 5000) continue // 容忍服务端时钟轻微提前
+    toolCalls++
+  }
+  return { toolCalls, seconds: Math.max(0, Math.round((untilMs - sinceMs) / 1000)) }
+}
+
+/** 从事件流尾部推导当前活动：最近工具调用的子代理角色 + 工具名（状态行 "modeler · bash" 数据源）。
+ *  已达终态的子代理调用不再视为当前活动，继续向前寻找；custom 生命周期事件不算活动。 */
+export function deriveRunActivity(events: SessionEvent[]): RunActivity {
+  const terminalReqs = new Set<string>()
+  for (const ev of events) {
+    const p = ev.payload || {}
+    if (SUBAGENT_TERMINAL_TYPES.has(p.customType) && p.request_id) {
+      terminalReqs.add(String(p.request_id))
+    }
+  }
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i]
+    const p = ev.payload || {}
+    if (ev.type === "tool_call") {
+      const rid = extractSubagentRequestId(p)
+      if (rid && terminalReqs.has(rid)) continue // 该子代理已终态,活动行不停留在它身上
+      const role = String(p.agent_role || p.agent || p.batch || "").toLowerCase() || undefined
+      return { role, tool: p.toolName || undefined, at: ev.created_at }
+    }
+    if (ev.type === "message" && p.role === "assistant") {
+      return { role: "assistant", at: ev.created_at }
+    }
+  }
+  return {}
+}
+
+function getHeaders(custom: Record<string, string> = {}): Record<string, string> {
+  const token = getWorkbenchToken()
   const base: Record<string, string> = {
     "X-Request-ID": rid(),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -766,6 +1012,11 @@ export const api = {
   // Runtime Info
   async getRuntimeInfo(): Promise<any> {
     return request("/api/v1/demo/runtime-info")
+  },
+
+  // 上下文构成（含服务端自动压缩预算 context_budget_ratio）
+  async getContextInfo(): Promise<{ compaction?: { context_budget_ratio?: number } }> {
+    return request("/api/v1/context")
   },
 
   // Audit 审计日志(安全操作留痕,倒序)

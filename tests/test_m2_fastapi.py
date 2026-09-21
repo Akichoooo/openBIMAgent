@@ -100,7 +100,8 @@ def test_web_ui_accessible() -> None:
     resp = client.get("/")
     assert resp.status_code == 200
     assert "openBIMAgent" in resp.text
-    assert "three.min.js" in resp.text
+    # 双形态伺服：frontend/dist 存在时发 React SPA，否则回退内嵌旧版单页（three.js CDN）。
+    assert ("/assets/" in resp.text) or ("three.min.js" in resp.text)
 
 
 def test_plugins_inventory_endpoint() -> None:

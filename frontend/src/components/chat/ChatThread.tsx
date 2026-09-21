@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react"
-import { api, SessionEvent, ApprovalItem, ModelsSettingsData } from "@/services/api"
+import { api, SessionEvent, ApprovalItem, ModelsSettingsData, buildSessionEventsStreamUrl, deriveRunActivity, deriveThreadView, deriveRunWrapUp, isApprovalSignal } from "@/services/api"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
@@ -47,6 +47,8 @@ import {
   Folder,
   Laptop,
   Code2,
+  Loader2,
+  Ban,
 } from "lucide-react"
 import { toast } from "sonner"
 import { ModelPicker, type ReasoningLevel } from "./ModelPicker"
@@ -64,7 +66,7 @@ const PLAYBOOK_OPTIONS = [
 
 // 斜杠命令:通用(agent 标配)+ 建模专用(匹配 BIM 需求)
 const SLASH_COMMANDS = [
-  { cmd: "/compact", desc: "压缩上下文(总结历史,释放窗口)" },
+  { cmd: "/compact", desc: "上下文压缩说明(服务端自动执行)" },
   { cmd: "/clear", desc: "清空当前输入与流式态" },
   { cmd: "/model", desc: "切换模型(下方芯片)" },
   { cmd: "/effort", desc: "切换思考档位(off~max)" },
@@ -189,6 +191,18 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
   // Context 预算比率与百分比 (驱动发送键外围环形进度条)
   const ctxRatio = Math.min(1, Math.max(0, usedTokens / Math.max(contextWindow, 1)))
   const ctxPct = Math.round(ctxRatio * 100)
+  // 服务端自动压缩预算比 (/api/v1/context → compaction.context_budget_ratio,缺省 0.8)
+  const [budgetRatio, setBudgetRatio] = useState(0.8)
+  useEffect(() => {
+    api
+      .getContextInfo()
+      .then((res) => {
+        const r = res?.compaction?.context_budget_ratio
+        if (typeof r === "number" && r > 0 && r <= 1) setBudgetRatio(r)
+      })
+      .catch(() => {})
+  }, [])
+  const budgetPct = Math.round(budgetRatio * 100)
 
   // Context 预算上报 App → Header 预算条(pi-mono 范式)
   useEffect(() => {
@@ -292,7 +306,23 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
     }
   }
 
-  // 事件加载：优先 SSE 实时跟随（/events/stream），失败回退 3s 轮询
+  // 运行状态查询：驱动「停止运行」按钮显隐（SSE 终态/事件到达时也会即时调用，避免 10s 轮询滞后）
+  const checkRunActive = async () => {
+    if (!sessionId) {
+      setRunActive(false)
+      return
+    }
+    try {
+      const res = await api.getActiveRun()
+      const runs: any[] = res?.runs || (res?.run ? [res.run] : [])
+      setRunActive(runs.some((r) => r.active && r.session_id === sessionId))
+    } catch {
+      setRunActive(false)
+    }
+  }
+
+  // 事件加载：优先 SSE 实时跟随（/events/stream，EventSource 无法设请求头 → ?token= 鉴权），
+  // 断开回退 3s 轮询；兜底期间每 ~30s 尝试恢复 SSE，onopen 成功后停轮询（断流自愈）
   useEffect(() => {
     loadEvents()
     loadApprovals()
@@ -303,60 +333,84 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
       return () => clearInterval(timer)
     }
 
+    let disposed = false
     let fallbackTimer: ReturnType<typeof setInterval> | null = null
+    let retryTimer: ReturnType<typeof setInterval> | null = null
     let es: EventSource | null = null
-    try {
-      es = new EventSource(`/api/v1/sessions/${sessionId}/events/stream`)
-      es.onmessage = (msg) => {
-        try {
-          const ev = JSON.parse(msg.data) as SessionEvent
-          setEvents((prev) =>
-            prev.some((p) => p.id && p.id === ev.id) ? prev : [...prev, ev]
-          )
-        } catch {}
-      }
-      es.onerror = () => {
-        // SSE 断开/不支持：回退轮询
-        es?.close()
-        if (!fallbackTimer) {
-          fallbackTimer = setInterval(() => {
-            loadEvents()
-            loadApprovals()
-          }, 3000)
-        }
-      }
-    } catch {
-      fallbackTimer = setInterval(() => {
-        loadEvents()
-        loadApprovals()
-      }, 3000)
+
+    const stopFallback = () => {
+      if (fallbackTimer) clearInterval(fallbackTimer)
+      fallbackTimer = null
     }
+    const stopRetry = () => {
+      if (retryTimer) clearInterval(retryTimer)
+      retryTimer = null
+    }
+    const startFallback = () => {
+      if (!fallbackTimer) {
+        fallbackTimer = setInterval(() => {
+          loadEvents()
+          loadApprovals()
+        }, 3000)
+      }
+      if (!retryTimer) {
+        retryTimer = setInterval(connect, 30000)
+      }
+    }
+
+    function connect() {
+      if (disposed) return
+      try {
+        es = new EventSource(buildSessionEventsStreamUrl(sessionId!))
+        es.onopen = () => {
+          // SSE 恢复成功：停轮询与重试
+          stopFallback()
+          stopRetry()
+        }
+        es.onmessage = (msg) => {
+          try {
+            const ev = JSON.parse(msg.data) as SessionEvent
+            setEvents((prev) =>
+              prev.some((p) => p.id && p.id === ev.id) ? prev : [...prev, ev]
+            )
+            // 审批请求/裁决信号：立即刷新 HITL 决策门卡片,不等 3s 轮询
+            if (isApprovalSignal(ev)) loadApprovals()
+          } catch {}
+        }
+        es.onerror = () => {
+          // 运行结束后服务端主动关流（或鉴权失败/网络断开）：立即排空尾部事件并刷新运行态，
+          // 回退 3s 轮询兜底，避免尾事件延迟与「running」状态滞留
+          es?.close()
+          es = null
+          if (disposed) return
+          loadEvents()
+          checkRunActive()
+          startFallback()
+        }
+      } catch {
+        startFallback()
+      }
+    }
+    connect()
 
     const approvalTimer = setInterval(loadApprovals, 3000)
     return () => {
+      disposed = true
       es?.close()
-      if (fallbackTimer) clearInterval(fallbackTimer)
+      stopFallback()
+      stopRetry()
       clearInterval(approvalTimer)
     }
   }, [sessionId])
 
-  // 运行状态轮询：驱动「停止运行」按钮显隐
+  // 运行状态轮询：初次 + 10s 周期 + 新事件到达即时复查
   useEffect(() => {
     if (!sessionId) {
       setRunActive(false)
       return
     }
-    const check = async () => {
-      try {
-        const res = await api.getActiveRun()
-        const runs: any[] = res?.runs || (res?.run ? [res.run] : [])
-        setRunActive(runs.some((r) => r.active && r.session_id === sessionId))
-      } catch {
-        setRunActive(false)
-      }
-    }
-    check()
-    const timer = setInterval(check, 10000)
+    checkRunActive()
+    const timer = setInterval(checkRunActive, 10000)
     return () => clearInterval(timer)
   }, [sessionId, events.length])
 
@@ -366,6 +420,7 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
     try {
       await api.stopRun(sessionId)
       toast.success("已发送停止指令：运行将在下一个审批门处安全中止")
+      stoppedRef.current = true
       setRunActive(false)
       await loadEvents()
     } catch (e: any) {
@@ -374,6 +429,74 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
       setStopping(false)
     }
   }
+
+  // 实时活动状态行（Claude Code / Devin 风格）：当前子代理角色 · 当前工具 · 已运行时长
+  const busy = sending || runActive
+  const activity = React.useMemo(() => deriveRunActivity(events), [events])
+  const threadItems = React.useMemo(() => deriveThreadView(events), [events])
+  const [activityNow, setActivityNow] = useState(() => Date.now())
+  const runStartedRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (!busy) return
+    if (runStartedRef.current == null) runStartedRef.current = Date.now()
+    setActivityNow(Date.now())
+    const t = setInterval(() => setActivityNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [busy])
+  const fmtElapsed = (sec: number) =>
+    sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`
+  const elapsedSec =
+    busy && runStartedRef.current != null
+      ? Math.max(0, Math.floor((activityNow - runStartedRef.current) / 1000))
+      : 0
+  const activityRoleTitle = activity.role
+    ? SUBAGENT_ROLES[activity.role]?.title || (activity.role === "assistant" ? "智能体" : activity.role)
+    : ""
+  const activityText = busy
+    ? sending
+      ? `模型流式推理中... · ${fmtElapsed(elapsedSec)}`
+      : [activityRoleTitle || activity.tool ? "" : "工程求解器运算中...", activityRoleTitle, activity.tool, fmtElapsed(elapsedSec)]
+          .filter(Boolean)
+          .join(" · ")
+    : ""
+
+  // 运行收尾行：run active→idle 时从已有事件推导工具调用次数与用时；被中断的运行显示「已中断」
+  const [wrapUp, setWrapUp] = useState<{ interrupted: boolean; toolCalls: number; seconds: number } | null>(null)
+  const stoppedRef = useRef(false)
+  const prevRunActiveRef = useRef(false)
+  useEffect(() => {
+    if (runActive && !prevRunActiveRef.current) setWrapUp(null) // 新运行开始,清掉上一次收尾行
+    if (!runActive && prevRunActiveRef.current) {
+      const until = Date.now()
+      const stats = deriveRunWrapUp(events, runStartedRef.current ?? until, until)
+      setWrapUp({ interrupted: stoppedRef.current, ...stats })
+      stoppedRef.current = false
+    }
+    prevRunActiveRef.current = runActive
+  }, [runActive, events])
+
+  // 会话切换：重置活动计时/收尾行/停止标记等瞬态,避免跨会话残留
+  useEffect(() => {
+    runStartedRef.current = null
+    prevRunActiveRef.current = false
+    stoppedRef.current = false
+    setWrapUp(null)
+    setStopping(false)
+  }, [sessionId])
+
+  // Esc 全局打断（对齐现有打断按钮 handler；输入框聚焦时不劫持按键）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || !busy) return
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.isContentEditable)) return
+      e.preventDefault()
+      handleStopAll()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy])
 
   // 记录用户是否处于视口底部（若用户向上翻阅查阅历史，轮询/新事件绝不强制滚到底部打扰用户）
   const isNearBottomRef = useRef(true)
@@ -664,8 +787,11 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
         toast.success("已清空输入")
         break
       case "/compact":
-        setUsedTokens((t: number) => Math.max(0, Math.round(t * 0.35)))
-        toast.success("上下文已压缩：历史总结，释放约 65% 窗口")
+        // 后端无手动压缩端点：上下文压缩由服务端按预算自动执行（保留最近分组+总结历史），
+        // 前端 token 计数仅为本地估算，不做伪造的乘法修改
+        toast.info("上下文压缩由服务端自动执行", {
+          description: `用量接近上下文预算时后端自动总结历史并释放窗口。当前估算用量 ${fmtK(usedTokens)} / ${fmtK(contextWindow)} tokens (${ctxPct}%)`,
+        })
         break
       case "/model":
       case "/effort":
@@ -909,10 +1035,45 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
               </p>
             </div>
 
-            {/* 动态事件渲染 */}
-            {events.map((ev, idx) => {
-              const p = ev.payload || {}
-              if (ev.type === "message") {
+            {/* 动态事件渲染（deriveThreadView：消息原样 / tool_call 按 toolCallId 配对成卡 / 子代理生命周期内联标记） */}
+            {threadItems.map((item, idx) => {
+              if (item.kind === "marker") {
+                const mk = item.marker
+                const mkRole = mk.role
+                  ? SUBAGENT_ROLES[mk.role]?.title || mk.role
+                  : "子代理"
+                const MkIcon =
+                  mk.status === "completed" ? CheckCircle2
+                  : mk.status === "failed" ? XCircle
+                  : mk.status === "cancelled" ? Ban
+                  : PackageCheck
+                const mkColor =
+                  mk.status === "completed" || mk.status === "delivery" ? "text-emerald-500"
+                  : mk.status === "failed" ? "text-rose-500"
+                  : "text-muted-foreground"
+                return (
+                  <div key={mk.ev.id || `mk-${idx}`} className="flex items-center gap-1.5 px-1 text-[10px] font-mono text-muted-foreground/80 select-none">
+                    <MkIcon className={`h-3 w-3 shrink-0 ${mkColor}`} />
+                    <span>
+                      {mk.status === "delivery"
+                        ? `${mkRole} 交付清单已提交`
+                        : mk.status === "completed"
+                        ? `${mkRole} 完成${mk.receipt ? " · 交付清单已提交" : ""}`
+                        : mk.status === "failed"
+                        ? `${mkRole} 失败${mk.error ? ` · ${String(mk.error).slice(0, 60)}` : ""}`
+                        : `${mkRole} 已取消`}
+                    </span>
+                    <span className="ml-auto text-[9px] text-muted-foreground/50">
+                      {formatMessageTime(mk.ev.created_at)}
+                    </span>
+                  </div>
+                )
+              }
+              const ev = item.kind === "tool" ? (item.card.resultEv ?? item.card.callEv) : item.ev
+              const p = item.kind === "tool"
+                ? { ...(item.card.callEv.payload || {}), ...(item.card.resultEv?.payload || {}) }
+                : ev.payload || {}
+              if (item.kind === "message") {
                 const isUser = p.role === "user"
                 const content = String(p.content || "")
                 const msgKey = ev.id || String(idx)
@@ -1045,27 +1206,42 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
                     )}
                   </div>
                 )
-              } else if (ev.type === "tool_call") {
-                const toolId = ev.id || String(idx)
+              } else if (item.kind === "tool") {
+                const card = item.card
+                const toolId = String(p.toolCallId || card.callEv.id || idx)
                 const isCollapsed = collapsedTools[toolId]
                 const preview =
-                  p.result_ui_view || p.result_llm_view || p.args_summary || "算子执行完毕"
-                const isSubAgent = p.toolName === "subagent" || !!p.agent_role || !!p.agent
-                const rawRole = (p.agent_role || p.agent || p.batch || (p.toolName === "subagent" ? "planner" : "")).toLowerCase()
+                  p.result_ui_view || p.result_llm_view || p.args_summary || (card.pending ? "算子执行中..." : "算子执行完毕")
+                const isSubAgent = p.toolName === "subagent" || !!p.agent_role || !!p.agent || !!card.requestId
+                const rawRole = (card.role || p.agent_role || p.agent || p.batch || (p.toolName === "subagent" ? "planner" : "")).toLowerCase()
                 const subRole = SUBAGENT_ROLES[rawRole] || (isSubAgent ? {
                   title: `子代理 · ${rawRole || "协同任务"}`,
                   desc: "专业工程子代理协同计算",
                   badgeColor: "border-sky-500/30 text-sky-500 bg-sky-500/10",
                   icon: Bot,
                 } : null)
+                // 进行中:未配对 result 的卡显示耗时秒数(秒级跳动由 activityNow 驱动)
+                const pendingSec = card.pending
+                  ? Math.max(0, Math.floor(((busy ? activityNow : Date.now()) - (Date.parse(card.callEv.created_at || "") || Date.now())) / 1000))
+                  : 0
+                // 子代理终态(request_id 关联生命周期事件)优先于 judge verdict
+                const terminalBadge = card.terminalStatus
+                  ? card.terminalStatus === "completed"
+                    ? { text: "COMPLETED", cls: "text-emerald-500 border-emerald-500/30 bg-emerald-500/5" }
+                    : card.terminalStatus === "failed"
+                    ? { text: "FAILED", cls: "text-rose-500 border-rose-500/30 bg-rose-500/5" }
+                    : { text: "CANCELLED", cls: "text-muted-foreground border-border bg-muted/30" }
+                  : null
 
                 if (isSubAgent && subRole) {
                   const RoleIcon = subRole.icon
-                  const verdict = p.verdict || (p.phase === "SUCCESS" ? "PASS" : p.phase) || "RUNNING"
+                  const verdict = terminalBadge?.text || p.verdict || (card.pending ? "RUNNING" : p.status === "ok" ? "DONE" : p.status?.toUpperCase() || p.phase || "DONE")
                   return (
                     <div
                       key={toolId}
-                      className="rounded-xl border border-border/70 bg-card/80 overflow-hidden text-xs shadow-xs"
+                      className={`rounded-xl border overflow-hidden text-xs shadow-xs ${
+                        card.pending ? "border-sky-500/50 bg-card/80 animate-pulse" : "border-border/70 bg-card/80"
+                      }`}
                     >
                       <div
                         onClick={() => toggleToolCollapse(toolId)}
@@ -1073,7 +1249,7 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
                       >
                         <div className="flex items-center space-x-2.5">
                           <div className="p-1.5 rounded-lg bg-primary/10 text-primary">
-                            <RoleIcon className="h-4 w-4" />
+                            {card.pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RoleIcon className="h-4 w-4" />}
                           </div>
                           <div>
                             <div className="flex items-center space-x-2">
@@ -1081,7 +1257,9 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
                               <Badge
                                 variant="outline"
                                 className={`text-[10px] font-mono px-1.5 py-0 ${
-                                  verdict === "PASS"
+                                  terminalBadge
+                                    ? terminalBadge.cls
+                                    : verdict === "PASS"
                                     ? "text-emerald-500 border-emerald-500/30 bg-emerald-500/5"
                                     : verdict === "FIX"
                                     ? "text-amber-500 border-amber-500/30 bg-amber-500/5"
@@ -1092,8 +1270,14 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
                               >
                                 {verdict}
                               </Badge>
+                              {card.pending && (
+                                <span className="text-[10px] font-mono text-sky-500/80">{pendingSec}s</span>
+                              )}
                             </div>
-                            <div className="text-[10px] text-muted-foreground">{subRole.desc}</div>
+                            <div className="text-[10px] text-muted-foreground">
+                              {subRole.desc}
+                              {card.receipt && <span className="text-emerald-500/80"> · 交付清单已提交</span>}
+                            </div>
                           </div>
                         </div>
                         {isCollapsed ? (
@@ -1105,12 +1289,12 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
 
                       {!isCollapsed && (
                         <div className="p-3 pt-0 border-t border-border/40 font-mono text-[11px] text-muted-foreground bg-muted/15 leading-relaxed max-h-48 overflow-y-auto space-y-1">
-                          {p.child_session_id && (
+                          {(p.child_session_id || p.child_session_path) && (
                             <div className="text-[10px] text-muted-foreground/70">
-                              子会话 ID: {p.child_session_id}
+                              子会话 ID: {p.child_session_id || p.child_session_path}
                             </div>
                           )}
-                          <div className="whitespace-pre-wrap">{preview}</div>
+                          <div className="whitespace-pre-wrap">{typeof preview === "string" ? preview : JSON.stringify(preview)}</div>
                         </div>
                       )}
                     </div>
@@ -1120,7 +1304,9 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
                 return (
                   <div
                     key={toolId}
-                    className="rounded-xl border border-border/60 bg-card/60 overflow-hidden text-xs shadow-xs"
+                    className={`rounded-xl border overflow-hidden text-xs shadow-xs ${
+                      card.pending ? "border-sky-500/50 bg-card/60 animate-pulse" : "border-border/60 bg-card/60"
+                    }`}
                   >
                     <div
                       onClick={() => toggleToolCollapse(toolId)}
@@ -1128,14 +1314,27 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
                     >
                       <div className="flex items-center space-x-2">
                         <div className="p-1 rounded-md bg-primary/10 text-primary">
-                          <Wrench className="h-3.5 w-3.5" />
+                          {card.pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wrench className="h-3.5 w-3.5" />}
                         </div>
                         <span className="font-mono font-medium text-foreground">
                           {p.toolName || "geometry_solver"}
                         </span>
-                        <Badge variant="outline" className="text-[10px] font-mono px-1 py-0 text-emerald-500 border-emerald-500/30">
-                          {p.phase || "SUCCESS"}
-                        </Badge>
+                        {card.pending ? (
+                          <>
+                            <Badge variant="outline" className="text-[10px] font-mono px-1 py-0 text-sky-500 border-sky-500/30 bg-sky-500/5">
+                              RUNNING
+                            </Badge>
+                            <span className="text-[10px] font-mono text-sky-500/80">{pendingSec}s</span>
+                          </>
+                        ) : (
+                          <Badge variant="outline" className={`text-[10px] font-mono px-1 py-0 ${
+                            p.status === "error" || p.status === "denied" || p.status === "rejected"
+                              ? "text-rose-500 border-rose-500/30"
+                              : "text-emerald-500 border-emerald-500/30"
+                          }`}>
+                            {p.status?.toUpperCase() || "OK"}
+                          </Badge>
+                        )}
                       </div>
                       {isCollapsed ? (
                         <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
@@ -1146,7 +1345,7 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
 
                     {!isCollapsed && (
                       <div className="p-2.5 pt-0 border-t border-border/40 font-mono text-[11px] text-muted-foreground bg-muted/10 leading-relaxed max-h-40 overflow-y-auto">
-                        {preview}
+                        {typeof preview === "string" ? preview : JSON.stringify(preview)}
                       </div>
                     )}
                   </div>
@@ -1154,6 +1353,20 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
               }
               return null
             })}
+
+            {/* 运行收尾行：active→idle 时从事件推导（被中断的运行显示「已中断」） */}
+            {wrapUp && !runActive && (
+              <div className="flex items-center justify-center gap-1.5 pt-1 text-[10px] font-mono text-muted-foreground/70 select-none">
+                {wrapUp.interrupted ? (
+                  <Ban className="h-3 w-3 text-rose-500/70" />
+                ) : (
+                  <CheckCircle2 className="h-3 w-3 text-emerald-500/70" />
+                )}
+                <span>
+                  {wrapUp.interrupted ? "已中断" : "已完成"} · {wrapUp.toolCalls} 次工具调用 · 用时 {fmtElapsed(wrapUp.seconds)}
+                </span>
+              </div>
+            )}
 
             {/* 流式生成中的 assistant 气泡：思维链（斜体）+ 逐字正文 + 闪烁光标 */}
             {streamingMsg && (
@@ -1220,6 +1433,24 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
 
       {/* 底部输入器 Composer (统一贴底对话框，对齐图二与图一环境条) */}
       <div className="p-3 border-t border-border/70 bg-background/50 space-y-2 shrink-0">
+        {/* 上下文用量细条 (Claude Code 范式)：已用占比 + 服务端自动压缩阈值 */}
+        <div
+          className="flex items-center gap-2 px-0.5 select-none"
+          title={`上下文占用 ${fmtK(usedTokens)} / ${fmtK(contextWindow)} (${ctxPct}%)；服务端将在 ${budgetPct}% 处自动压缩历史`}
+        >
+          <div className="flex-1 h-1 rounded-full bg-muted/60 overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all duration-500 ${
+                ctxPct >= budgetPct ? "bg-rose-500" : ctxRatio >= budgetRatio * 0.75 ? "bg-amber-500" : "bg-primary/70"
+              }`}
+              style={{ width: `${ctxPct}%` }}
+            />
+          </div>
+          <span className="text-[9px] font-mono text-muted-foreground/60 shrink-0">
+            {fmtK(usedTokens)}/{fmtK(contextWindow)} · 自动压缩于 {budgetPct}%
+          </span>
+        </div>
+
         {/* Queued Messages 排队条 (对齐现代 Agent IDE 范式) */}
         {queuedMsgs.length > 0 && (
           <div className="rounded-xl border border-border/80 bg-background/95 backdrop-blur-md shadow-xs overflow-hidden transition-all text-xs">
@@ -1286,7 +1517,7 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
               </span>
               <span className="font-medium text-foreground">1 task running</span>
               <span className="text-[11px] text-muted-foreground font-mono">
-                {sending ? "模型流式推理中..." : "工程求解器运算中..."}
+                {activityText || "工程求解器运算中..."}
               </span>
             </div>
             <button
