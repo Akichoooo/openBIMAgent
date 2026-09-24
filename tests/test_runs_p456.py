@@ -28,6 +28,11 @@ def client(ws: Path) -> TestClient:
     os.environ["OPENBIMAGENT_PENDING_APPROVALS"] = str(ws / "pending.json")
     os.environ["OPENBIMAGENT_WORKBENCH_TOKEN"] = "test-wb-token"
     os.environ["OPENBIMAGENT_MAX_CONCURRENT_RUNS"] = "2"
+    os.environ["OPENBIMAGENT_RUN_LLM"] = "0"  # 真管线但禁 LLM：模板路径,不真调工作台模型 API
+    # 隔离：清空进程级共享票据注册表（收集期 fastapi_app 模块级 app 构建可能已装入遗留票据）
+    from openbimagent.server import approvals as _appr
+
+    _appr._pending.clear()
     from openbimagent.server.fastapi_app import build_demo_app
 
     class _RidClient(TestClient):
@@ -46,6 +51,7 @@ def client(ws: Path) -> TestClient:
         "OPENBIMAGENT_PENDING_APPROVALS",
         "OPENBIMAGENT_WORKBENCH_TOKEN",
         "OPENBIMAGENT_MAX_CONCURRENT_RUNS",
+        "OPENBIMAGENT_RUN_LLM",
     ):
         os.environ.pop(key, None)
 

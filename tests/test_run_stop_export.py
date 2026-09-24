@@ -20,6 +20,11 @@ def client(tmp_path_factory: pytest.TempPathFactory) -> TestClient:
     os.environ["OPENBIMAGENT_PENDING_APPROVALS"] = str(tmp / "pending.json")
     os.environ["OPENBIMAGENT_ARCHIVE_DIR"] = str(tmp / "archive")
     os.environ["OPENBIMAGENT_SKILLS_ROOT"] = str(tmp / "skills")
+    os.environ["OPENBIMAGENT_RUN_LLM"] = "0"  # 模板路径,不真调工作台模型 API
+    # 隔离：清空进程级共享票据注册表（收集期 fastapi_app 模块级 app 构建可能已装入遗留票据）
+    from openbimagent.server import approvals as _appr
+
+    _appr._pending.clear()
     from openbimagent.server.fastapi_app import build_demo_app
 
     class _RidClient(TestClient):
@@ -30,7 +35,7 @@ def client(tmp_path_factory: pytest.TempPathFactory) -> TestClient:
             return super().request(method, url, headers=headers, **kwargs)
 
     yield _RidClient(build_demo_app())
-    for key in ("OPENBIMAGENT_SESSIONS_DIR", "OPENBIMAGENT_PENDING_APPROVALS", "OPENBIMAGENT_ARCHIVE_DIR", "OPENBIMAGENT_SKILLS_ROOT"):
+    for key in ("OPENBIMAGENT_SESSIONS_DIR", "OPENBIMAGENT_PENDING_APPROVALS", "OPENBIMAGENT_ARCHIVE_DIR", "OPENBIMAGENT_SKILLS_ROOT", "OPENBIMAGENT_RUN_LLM"):
         os.environ.pop(key, None)
 
 

@@ -125,13 +125,19 @@ class TestRunEndHook:
         tmp = tmp_path_factory.mktemp("hooks-run")
         saved_env = {k: os.environ.get(k) for k in (
             "OPENBIMAGENT_WORKBENCH_TOKEN", "OPENBIMAGENT_SESSIONS_DIR",
-            "OPENBIMAGENT_PENDING_APPROVALS", "OPENBIMAGENT_ARCHIVE_DIR", "OPENBIMAGENT_SKILLS_ROOT",
+            "OPENBIMAGENT_PENDING_APPROVALS", "OPENBIMAGENT_ARCHIVE_DIR",
+            "OPENBIMAGENT_SKILLS_ROOT", "OPENBIMAGENT_RUN_LLM",
         )}
         os.environ["OPENBIMAGENT_WORKBENCH_TOKEN"] = "test-wb-token"
         os.environ["OPENBIMAGENT_SESSIONS_DIR"] = str(tmp / "sessions")
         os.environ["OPENBIMAGENT_PENDING_APPROVALS"] = str(tmp / "pending.json")
         os.environ["OPENBIMAGENT_ARCHIVE_DIR"] = str(tmp / "archive")
         os.environ["OPENBIMAGENT_SKILLS_ROOT"] = str(tmp / "skills")
+        os.environ["OPENBIMAGENT_RUN_LLM"] = "0"  # 模板规划路径，隔离真实 LLM 调用
+        # 隔离：清空进程级共享票据注册表（收集期 fastapi_app 模块级 app 构建可能已装入遗留票据）
+        from openbimagent.server import approvals as _appr
+
+        _appr._pending.clear()
         from openbimagent.server.fastapi_app import build_demo_app
 
         class _RidClient(TestClient):

@@ -26,6 +26,11 @@ def client(tmp_path_factory: pytest.TempPathFactory) -> TestClient:
     os.environ["OPENBIMAGENT_SKILLS_ROOT"] = str(tmp / "skills")  # 蒸馏候选隔离，防污染仓库 skills/
     os.environ["OPENBIMAGENT_PENDING_APPROVALS"] = str(tmp / "pending.json")
     os.environ["OPENBIMAGENT_ARCHIVE_DIR"] = str(tmp / "archive")
+    os.environ["OPENBIMAGENT_RUN_LLM"] = "0"  # 真管线但禁 LLM:模板路径,不真调工作台模型 API
+    # 隔离：清空进程级共享票据注册表（收集期 fastapi_app 模块级 app 构建可能已装入遗留票据）
+    from openbimagent.server import approvals as _appr
+
+    _appr._pending.clear()
     from openbimagent.server.fastapi_app import build_demo_app
 
     class _RidClient(TestClient):
@@ -39,6 +44,7 @@ def client(tmp_path_factory: pytest.TempPathFactory) -> TestClient:
     yield _RidClient(build_demo_app())
     os.environ.pop("OPENBIMAGENT_SESSIONS_DIR", None)
     os.environ.pop("OPENBIMAGENT_SKILLS_ROOT", None)
+    os.environ.pop("OPENBIMAGENT_RUN_LLM", None)
 
 
 @pytest.fixture(scope="module")

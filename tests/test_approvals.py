@@ -18,6 +18,12 @@ def client(tmp_path_factory: pytest.TempPathFactory) -> TestClient:
     os.environ["OPENBIMAGENT_SESSIONS_DIR"] = str(tmp / "sessions")
     os.environ["OPENBIMAGENT_SKILLS_ROOT"] = str(tmp / "skills")  # 蒸馏候选隔离，防污染仓库 skills/
     os.environ["OPENBIMAGENT_PENDING_APPROVALS"] = str(tmp / "pending.json")
+    os.environ["OPENBIMAGENT_RUN_LLM"] = "0"  # 模板规划路径，隔离真实 LLM 调用
+    # 隔离：清空进程级共享票据注册表——pytest 收集期导入 fastapi_app 触发模块级 app 构建，
+    # 会按默认路径装载仓库 out/pending_approvals.json 的历史遗留票据（expired 形态）
+    from openbimagent.server import approvals as _appr
+
+    _appr._pending.clear()
     from openbimagent.server.fastapi_app import build_demo_app
 
     class _RidClient(TestClient):
@@ -30,6 +36,8 @@ def client(tmp_path_factory: pytest.TempPathFactory) -> TestClient:
     yield _RidClient(build_demo_app())
     os.environ.pop("OPENBIMAGENT_SESSIONS_DIR", None)
     os.environ.pop("OPENBIMAGENT_SKILLS_ROOT", None)
+    os.environ.pop("OPENBIMAGENT_RUN_LLM", None)
+    os.environ.pop("OPENBIMAGENT_PENDING_APPROVALS", None)  # 不外泄：后续模块 app 构建会重读本沙箱票据文件
 
 
 def _wait_pending(client: TestClient, timeout_s: float = 90) -> dict:

@@ -68,6 +68,10 @@ def _load_pending() -> None:
         for entry in entries:
             if not isinstance(entry, dict) or "id" not in entry:
                 continue
+            existing = _pending.get(entry["id"])
+            if existing is not None and not existing.get("expired"):
+                # 活跃票据不得被磁盘重放覆盖为 expired：否则其 threading.Event 被替换，运行线程永不唤醒
+                continue
             _pending[entry["id"]] = {
                 **entry,
                 "event": threading.Event(),
