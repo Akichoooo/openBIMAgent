@@ -60,6 +60,8 @@ def make_blender_batch_executor(
             )
         approved = auto_approve
         if approval_fn is not None:
+            from openbimagent.assembly.approval_preview import summarize_operations
+
             approved = approval_fn(
                 "execute_blender_plan",
                 {
@@ -69,6 +71,8 @@ def make_blender_batch_executor(
                     "idempotency_key": plan.idempotency_key,
                     "operation_count": len(plan.operations),
                     "output_path": str(target),
+                    # 执行预览:typed plan 的逐操作清单(typed 操作全为确定性新增,即 diff 的全量右侧)
+                    "operations_preview": summarize_operations(plan.operations),
                 },
             )
         if not approved:
@@ -146,6 +150,8 @@ def make_vectorworks_batch_executor(
         if isinstance(built, VectorworksExecutionPlan):
             approved = auto_approve
             if approval_fn is not None:
+                from openbimagent.assembly.approval_preview import summarize_operations
+
                 approved = approval_fn(
                     "execute_vectorworks_plan",
                     {
@@ -155,6 +161,8 @@ def make_vectorworks_batch_executor(
                         "canonical_sha256": built.canonical_sha256,
                         "idempotency_key": built.idempotency_key,
                         "operation_count": len(built.operations),
+                        # 执行预览:typed plan 的逐操作清单
+                        "operations_preview": summarize_operations(built.operations),
                     },
                 )
                 if not approved:
