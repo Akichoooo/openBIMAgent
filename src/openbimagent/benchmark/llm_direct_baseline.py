@@ -25,6 +25,11 @@ from typing import Any, Callable
 import httpx
 
 from openbimagent.benchmark.academic_bench import MethodBenchmarkMetrics
+from openbimagent.benchmark.geometric_diff import (
+    GeometricDiffReport,
+    compare_inverts,
+    reference_inverts,
+)
 from openbimagent.benchmark.m1_5_t7 import build_benchmark_scenarios
 
 logger = logging.getLogger(__name__)
@@ -200,6 +205,9 @@ def run_llm_direct_baseline(
     total_latency = 0.0
     total_tokens = 0
     calls = 0
+    # 几何数值误差 vs 求解器参考解(逐场景累计后取均值;参考解确定性,只解一次)
+    diff_reports: list[GeometricDiffReport] = []
+    reference_cache: dict[str, dict[str, float]] = {}
 
     for sid in selected:
         scenario = registry.get(sid)
@@ -217,6 +225,12 @@ def run_llm_direct_baseline(
                 calls += 1
                 total_latency += lat
                 total_tokens += tokens
+                if inverts is not None:
+                    try:
+                        reference = reference_cache.setdefault(sid, reference_inverts(payload))
+                        diff_reports.append(compare_inverts(payload, reference, inverts))
+                    except Exception:  # noqa: BLE001 — 参考解不可得(如 B4/B5/B6 无解)不计误差,不影响布尔口径
+                        pass
                 verdicts.append(
                     _evaluate_scenario(payload, inverts)
                     if inverts is not None
@@ -249,6 +263,18 @@ def run_llm_direct_baseline(
             f"LLM-Direct 真实调用 {cfg.base_url} model={cfg.model} "
             f"(repetitions={cfg.repetitions})：拓扑口径=LLM 输出逐节点标高可解析，"
             "合规口径=覆土0.70m+坡度0.003+流向单调，水力口径=Manning 防淤流速≥0.60m/s；"
-            "同口径几何规则评测，无求解器矩阵 / 自愈介入。"
+            "同口径几何规则评测，无求解器矩阵 / 自愈介入；"
+            "几何误差口径=vs solve_network_gravity_utility 确定性参考解（逐节点标高/逐段坡度绝对偏差）。"
+        ),
+        invert_error_mean_m=(
+            round(sum(r.invert_error_mean_m for r in diff_reports) / len(diff_reports), 4)
+            if diff_reports else None
+        ),
+        invert_error_max_m=(
+            round(max(r.invert_error_max_m for r in diff_reports), 4) if diff_reports else None
+        ),
+        slope_error_mean=(
+            round(sum(r.slope_error_mean for r in diff_reports) / len(diff_reports), 4)
+            if diff_reports else None
         ),
     )

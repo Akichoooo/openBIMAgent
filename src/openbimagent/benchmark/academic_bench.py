@@ -52,6 +52,10 @@ class MethodBenchmarkMetrics:
     avg_token_count: int  # 平均消耗 Token 数 (离线确定性方法为 0)
     measured: bool = True  # 指标是否来自真实运行测量
     provenance: str = ""  # 数据来源与计算口径说明
+    # 几何数值误差（vs 确定性求解器参考解;非几何方法/未测为 None）
+    invert_error_mean_m: float | None = None
+    invert_error_max_m: float | None = None
+    slope_error_mean: float | None = None
 
 
 @dataclass(frozen=True)
