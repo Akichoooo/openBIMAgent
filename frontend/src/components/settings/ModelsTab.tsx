@@ -125,6 +125,8 @@ export function ModelsTab({ initialEditModel, onClearInitialEditModel }: ModelsT
     setData(newData)
     try {
       await api.saveModelsSettings(newData)
+      // 广播给 ChatThread/Header 重拉,避免其持有的 modelsData 快照陈旧
+      window.dispatchEvent(new CustomEvent("wb-models-change"))
       if (showToast) {
         toast.success("配置已保存")
       }
@@ -139,6 +141,7 @@ export function ModelsTab({ initialEditModel, onClearInitialEditModel }: ModelsT
     setData(newData)
     try {
       await api.saveModelsSettings(newData)
+      window.dispatchEvent(new CustomEvent("wb-models-change"))
       toast.success(`已将 ${modelId} 设为全局默认模型`)
     } catch (e: any) {
       toast.error("设置默认模型失败: " + e.message)
@@ -178,6 +181,7 @@ export function ModelsTab({ initialEditModel, onClearInitialEditModel }: ModelsT
       await api.deleteProvider(providerId)
       toast.success("供应商已删除")
       await loadModels()
+      window.dispatchEvent(new CustomEvent("wb-models-change"))
       if (selectedProvId === providerId) {
         setSelectedProvId(data?.providers.find((p) => p.id !== providerId)?.id || "")
       }
@@ -259,6 +263,7 @@ export function ModelsTab({ initialEditModel, onClearInitialEditModel }: ModelsT
 
     try {
       await api.saveModelsSettings(newData)
+      window.dispatchEvent(new CustomEvent("wb-models-change"))
       toast.success(`成功添加供应商: ${newProv.name}`)
     } catch (e: any) {
       toast.error("创建失败: " + e.message)
@@ -474,7 +479,7 @@ export function ModelsTab({ initialEditModel, onClearInitialEditModel }: ModelsT
   return (
     <div className="flex gap-6 min-h-[560px]">
       {/* 左侧供应商导轨 (对齐图二/图三) */}
-      <div className="w-56 shrink-0 flex flex-col justify-between border-r border-border/70 pr-4 space-y-3">
+      <div className="w-56 shrink-0 flex flex-col border-r border-border/70 pr-4 space-y-3">
         <div className="space-y-3">
           <div className="px-1">
             <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">

@@ -113,19 +113,24 @@ export const Header: React.FC<HeaderProps> = ({
     refreshToolset()
     window.addEventListener("wb-toolset-change", refreshToolset)
 
-    api.getModelsSettings().then((res) => {
-      const hasModels = (res?.providers || []).some((p) => (p.models || []).length > 0 && p.enabled !== false)
-      if (hasModels && res?.current) {
-        setCurrentModel(res.current)
-      } else {
+    const refreshModels = () => {
+      api.getModelsSettings().then((res) => {
+        const hasModels = (res?.providers || []).some((p) => (p.models || []).length > 0 && p.enabled !== false)
+        if (hasModels && res?.current) {
+          setCurrentModel(res.current)
+        } else {
+          setCurrentModel("")
+        }
+      }).catch(() => {
         setCurrentModel("")
-      }
-    }).catch(() => {
-      setCurrentModel("")
-    })
+      })
+    }
+    refreshModels()
+    window.addEventListener("wb-models-change", refreshModels)
 
     return () => {
       window.removeEventListener("wb-toolset-change", refreshToolset)
+      window.removeEventListener("wb-models-change", refreshModels)
     }
   }, [])
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react"
-import { api, SessionEvent, ApprovalItem, ModelsSettingsData, buildSessionEventsStreamUrl, deriveRunActivity, deriveThreadView, deriveRunWrapUp, isApprovalSignal } from "@/services/api"
+import { api, SessionEvent, ApprovalItem, ModelsSettingsData, ProviderItem, buildSessionEventsStreamUrl, deriveRunActivity, deriveThreadView, deriveRunWrapUp, isApprovalSignal } from "@/services/api"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
@@ -81,6 +81,17 @@ const SLASH_COMMANDS = [
 ]
 
 const fmtK = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n))
+
+const DEFAULT_CONTEXT_WINDOW = 128000
+
+// 首屏加载与手动切换必须走同一份解析,否则预算条会停在缺省窗口而与所选模型不符
+const resolveContextWindow = (providers: ProviderItem[] | undefined, modelId: string): number => {
+  for (const p of providers || []) {
+    const m = (p.models || []).find((x) => x.name === modelId || x.id === modelId)
+    if (m) return m.context_window ?? m.context_length ?? DEFAULT_CONTEXT_WINDOW
+  }
+  return DEFAULT_CONTEXT_WINDOW
+}
 
 const formatMessageTime = (ts?: string | number) => {
   if (!ts) return ""
@@ -172,7 +183,7 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
   const [currentModel, setCurrentModel] = useState<string>("")
   // 思考模式(统一 5 档)+ 上下文窗口 + 已用 token(用量条)+ 语音 + 斜杠命令
   const [effort, setEffort] = useState<ReasoningLevel>("medium")
-  const [contextWindow, setContextWindow] = useState<number>(128000)
+  const [contextWindow, setContextWindow] = useState<number>(DEFAULT_CONTEXT_WINDOW)
   const [usedTokens, setUsedTokens] = useState<number>(0)
   // 实时估算/解析会话上下文已用 Token 数量
   useEffect(() => {
@@ -297,6 +308,7 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
         )
         if (hasModels && res.current) {
           setCurrentModel(res.current)
+          setContextWindow(resolveContextWindow(res.providers, res.current))
         } else {
           setCurrentModel("")
         }
@@ -305,6 +317,14 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
       console.error(e)
     }
   }
+
+  // 设置弹层或其他视图保存模型配置后广播重拉,避免 modelsData/currentModel/contextWindow 陈旧
+  // (loadModels 不读组件 state,空依赖闭包安全)
+  useEffect(() => {
+    const refreshModels = () => loadModels()
+    window.addEventListener("wb-models-change", refreshModels)
+    return () => window.removeEventListener("wb-models-change", refreshModels)
+  }, [])
 
   // 运行状态查询：驱动「停止运行」按钮显隐（SSE 终态/事件到达时也会即时调用，避免 10s 轮询滞后）
   const checkRunActive = async () => {
@@ -735,20 +755,18 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
 
   const handleSelectModel = (modelId: string) => {
     setCurrentModel(modelId)
-    let ctx = 128000
-    if (modelsData?.providers) {
-      for (const p of modelsData.providers) {
-        const m = (p.models || []).find((x) => x.name === modelId || x.id === modelId)
-        if (m) {
-          ctx = m.context_window ?? m.context_length ?? 128000
-          break
-        }
-      }
-    }
-    setContextWindow(ctx)
-    if (modelsData) {
-      api.saveModelsSettings({ ...modelsData, current: modelId }).catch(() => {})
-    }
+    setContextWindow(resolveContextWindow(modelsData?.providers, modelId))
+    // saveModelsSettings 是整份 PUT:先重取最新配置再合并 current,
+    // 否则本地陈旧快照会静默覆盖设置弹层刚保存的供应商/模型修改
+    api
+      .getModelsSettings()
+      .then((fresh) => {
+        const next = { ...fresh, current: modelId }
+        setModelsData(next)
+        return api.saveModelsSettings(next)
+      })
+      .then(() => window.dispatchEvent(new CustomEvent("wb-models-change")))
+      .catch(() => {})
   }
 
   // @mention 异步候选(@rule/@file/@memory);@ir 从 irData 同步提取
@@ -1401,8 +1419,53 @@ export const ChatThread: React.FC<ChatThreadProps> = ({
 
                 <p className="text-muted-foreground leading-relaxed">
                   智能体请求执行 <code className="font-mono text-primary">{appr.operation}</code>
-                  ，该操作将修改管线标高与覆土参数。
+                  {appr.operation === "deliver"
+                    ? "，交付前请确认产出物清单与验收结论。"
+                    : "，请核对下方执行预览后裁决。"}
                 </p>
+
+                {/* 执行预览：将要创建/修改的对象清单（typed plan 逐操作 / free-code 批次资产声明） */}
+                {appr.params?.operations_preview && (
+                  <div className="rounded-lg border border-border/60 bg-background/60 p-2.5 space-y-1.5">
+                    <div className="flex items-center justify-between text-[10px] font-mono text-muted-foreground">
+                      <span>
+                        执行计划 {appr.params.operations_preview.total} 项操作
+                        {appr.params.operations_preview.truncated ? "（预览已截断）" : ""}
+                      </span>
+                      <span>
+                        {Object.entries(appr.params.operations_preview.by_kind || {})
+                          .map(([k, n]) => `${k}×${n}`)
+                          .join(" · ")}
+                      </span>
+                    </div>
+                    <div className="max-h-28 overflow-y-auto font-mono text-[10px] leading-relaxed text-muted-foreground">
+                      {(appr.params.operations_preview.items || []).map((it: any, i: number) => (
+                        <div key={i} className="truncate">
+                          <span className="text-primary/80">{it.op}</span>{" "}
+                          <span className="text-foreground/70">{it.object}</span>
+                          {it.type ? ` · ${it.type}` : ""}
+                          {it.name ? ` · ${it.name}` : ""}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {appr.params?.assets_preview && appr.params.assets_preview.length > 0 && (
+                  <div className="rounded-lg border border-border/60 bg-background/60 p-2.5 space-y-1.5">
+                    <div className="text-[10px] font-mono text-muted-foreground">
+                      批次资产声明（代码执行前对象清单）
+                    </div>
+                    <div className="max-h-28 overflow-y-auto font-mono text-[10px] leading-relaxed text-muted-foreground">
+                      {(appr.params.assets_preview || []).map((a: any, i: number) => (
+                        <div key={i} className="truncate" title={a.description}>
+                          <span className="text-foreground/70">{a.id}</span>
+                          {a.category ? ` · ${a.category}` : ""}
+                          {a.count > 1 ? ` ×${a.count}` : ""}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex items-center space-x-2 pt-1">
                   <Button
