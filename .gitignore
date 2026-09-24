@@ -47,6 +47,13 @@ scratch/
 papers/
 # Local LLM-Direct baseline config (contains API key, never commit)
 config/*.local.toml
+# 工作台自定义供应商配置（含真实 API key，本机运行期写入，绝不入库）
+config/*.local.json
+
+# 运行期本地产物：RAG 代码语料 / 蒸馏候选待审队列 / 交付自动归档
+.code_snippets/
+skills/_candidates/
+domain_packs/*/assets/auto_archive/
 
 # Pytest run logs
 .pytest-*.log
