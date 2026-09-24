@@ -110,9 +110,18 @@ def make_batch_executor(
 
         # 2. 审批门:execute_code 前 CLI 确认(ARCH §6.5)
         if approval_fn is not None:
+            from openbimagent.assembly.approval_preview import summarize_batch_assets
+
             approved = approval_fn(
                 "execute_code",
-                {"batch": batch, "batch_assets": batch_assets, "blend_path": str(blend)},
+                {
+                    "batch": batch,
+                    "batch_assets": batch_assets,
+                    "blend_path": str(blend),
+                    # 执行预览:代码在门后才生成,预览 = 将要操作的对象清单(诚实降级,不假装有代码 diff)
+                    "assets_preview": summarize_batch_assets(ir, batch_assets),
+                    "editable_scope": batch_assets,
+                },
             )
             if not approved:
                 return BatchReport(
@@ -137,6 +146,7 @@ def make_batch_executor(
             turntable_frames=turntable_frames,
             image_size=image_size,
             batch_label=batch_label,
+            dispatch_rework=rework,
         )
 
         # 4. HTML 验收页路径回调(CLI 打印)
@@ -200,6 +210,7 @@ def _run_render_phase(
     turntable_frames: int,
     image_size: int,
     batch_label: str,
+    dispatch_rework: str | None = None,
 ) -> RenderLoopResult:
     """跑 Blender 环:run_render_loop 是 async,用 asyncio.run 串行驱动(M0 顺序执行)。"""
     min_score = float(acceptance.get("min_score", 8.5))
@@ -227,6 +238,7 @@ def _run_render_phase(
                 turntable_frames=turntable_frames,
                 image_size=image_size,
                 batch_label=batch_label,
+                dispatch_rework=dispatch_rework,
             )
             # 保存交付物(.blend 工程 / 英雄镜头渲染 x1)供 deliver 门禁 C5 核对:
             # best_snapshot → blend_path;末轮视口截图 → 英雄镜头渲染 x1.png。

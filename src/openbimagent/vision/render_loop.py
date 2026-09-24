@@ -94,6 +94,7 @@ async def run_render_loop(
     turntable_frames: int = 4,
     image_size: int = 512,
     batch_label: str = "",
+    dispatch_rework: str | None = None,
 ) -> RenderLoopResult:
     """对一批资产执行 Blender 精检环直到收敛(≥min_score)或耗尽 max_iters。
 
@@ -145,7 +146,19 @@ async def run_render_loop(
 
     for iteration in range(1, max(1, max_iters) + 1):
         # 2. 建模:builder_fn 产出代码 → execute_code(addon 自动快照 + AST + 范围锁校验)
-        code = builder_fn(prev_critique, dict(batch_ctx))
+        # dispatch_rework:批次级重试时编排层判定的返工指令(此前被丢弃,重试等于从头盲生成);
+        # 只注入首轮——环内后续轮次由 prev_critique.actionable_feedback 接管反馈
+        effective_critique = prev_critique
+        if iteration == 1 and dispatch_rework and prev_critique is None:
+            from openbimagent.vision.rubric import CritiqueResult
+
+            effective_critique = CritiqueResult(
+                rubric_scores={},
+                reasoning="",
+                anchor_ref="",
+                actionable_feedback=dispatch_rework,
+            )
+        code = builder_fn(effective_critique, dict(batch_ctx))
         exec_result = await client.execute_code(code)
         # Legacy `snapshot` is the pre-exec rollback point, never the scored scene.
         # Missing evidence (including old stdio text responses) must fail closed.
@@ -252,6 +265,19 @@ async def run_render_loop(
         # 7. 收敛判定(四选一;顺序同 ADR-0004:fallback 先于 delta,防缓慢下降误判)
         if score >= min_score:
             terminate_reason, converged = "perfect_score", True
+            # RAG few-shot 语料捕获:只有过验收线的代码才入池(验收门保护语料库质量)
+            try:
+                from openbimagent.assembly.code_snippets import capture_snippet
+
+                session_path = getattr(session, "path", None)
+                capture_snippet(
+                    code,
+                    batch_ctx,
+                    score=score,
+                    session_id=session_path.stem if session_path is not None else None,
+                )
+            except Exception:  # noqa: BLE001 — 语料捕获是增益项,失败不得影响环收敛
+                pass
             break
         if prev_score is not None:
             consecutive_drops = consecutive_drops + 1 if score < prev_score else 0

@@ -371,6 +371,63 @@ def test_rework_loop_passes_prev_critique_to_builder(tmp_path) -> None:
     assert received_feedbacks[2] is not None and "0.8" in received_feedbacks[2]
 
 
+def test_dispatch_rework_reaches_builder_first_iter(tmp_path) -> None:
+    """dispatch_rework(批次级重试指令)首轮注入 builder;环内后续轮由 prev_critique 接管。"""
+    client, _ = _make_mock_client(tmp_path=tmp_path)
+    received_feedbacks: list[str | None] = []
+
+    def builder(prev_critique, batch_ctx) -> str:
+        received_feedbacks.append(prev_critique.actionable_feedback if prev_critique else None)
+        return "import bpy\nbpy.ops.mesh.primitive_cube_add()"
+
+    async def run() -> RenderLoopResult:
+        return await run_render_loop(
+            batch=["M0Cube"],
+            blend_path=tmp_path / "scene.blend",
+            min_score=9.5,
+            max_iters=2,
+            client=client,
+            critic=MockCritic([6.0, 7.0]),
+            builder_fn=builder,
+            work_dir=tmp_path / "work",
+            cameras=["Camera"],
+            dispatch_rework="请把井室直径调整为 1200mm 并重试",
+        )
+
+    asyncio.run(run())
+    assert received_feedbacks[0] == "请把井室直径调整为 1200mm 并重试"
+    # 第 2 轮起环内 prev_critique 接管(反馈来自 MockCritic,不再携带 dispatch_rework)
+    assert received_feedbacks[1] is not None and "1200mm" not in received_feedbacks[1]
+
+
+def test_dispatch_rework_ignored_when_inner_critique_present(tmp_path) -> None:
+    """环内已有 prev_critique 时 dispatch_rework 不覆盖(环内反馈优先)。"""
+    client, _ = _make_mock_client(tmp_path=tmp_path)
+    received_feedbacks: list[str | None] = []
+
+    def builder(prev_critique, batch_ctx) -> str:
+        received_feedbacks.append(prev_critique.actionable_feedback if prev_critique else None)
+        return "import bpy\nbpy.ops.mesh.primitive_cube_add()"
+
+    async def run() -> RenderLoopResult:
+        return await run_render_loop(
+            batch=["M0Cube"],
+            blend_path=tmp_path / "scene.blend",
+            min_score=9.5,
+            max_iters=3,
+            client=client,
+            critic=MockCritic([6.0, 7.0, 8.0]),
+            builder_fn=builder,
+            work_dir=tmp_path / "work",
+            cameras=["Camera"],
+            dispatch_rework="dispatch-only-hint",
+        )
+
+    asyncio.run(run())
+    assert received_feedbacks[0] == "dispatch-only-hint"
+    assert received_feedbacks[1] is not None and received_feedbacks[1] != "dispatch-only-hint"
+
+
 # ---------- cameras vs turntable ----------
 
 

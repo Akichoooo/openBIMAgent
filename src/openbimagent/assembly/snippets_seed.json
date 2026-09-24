@@ -1,0 +1,37 @@
+[
+  {
+    "id": "seed-pipe-segment",
+    "categories": ["ifc_pipe_segment", "pipe", "管"],
+    "tags": ["pipe", "segment", "cylinder", "坡度"],
+    "score": 9.0,
+    "code": "import bpy\nimport mathutils\n\n# 带坡度的直管段:两端高差由坡度推出,沿两井位连线铺设\ncoll = bpy.data.collections.get('seg_pipe') or bpy.data.collections.new('seg_pipe')\nif 'seg_pipe' not in [c.name for c in bpy.context.scene.collection.children]:\n    bpy.context.scene.collection.children.link(coll)\n\nstart = mathutils.Vector((0.0, 0.0, -3.0))\nend = mathutils.Vector((40.0, 0.0, -3.4))  # 1‰ 坡度 → 0.4m 落差\ndirection = end - start\nlength = direction.length\ncenter = (start + end) / 2\n\nbpy.ops.mesh.primitive_cylinder_add(radius=0.2, depth=length, location=center)\npipe = bpy.context.active_object\npipe.name = 'seg_pipe_main'\npipe.rotation_euler = direction.to_track_quat('-Z', 'Y').to_euler()\ncoll.objects.link(pipe)\n\nmat = bpy.data.materials.new('pipe_concrete')\nmat.use_nodes = True\nbsdf = mat.node_tree.nodes['Principled BSDF']\nbsdf.inputs['Base Color'].default_value = (0.45, 0.45, 0.42, 1.0)\nbsdf.inputs['Roughness'].default_value = 0.8\npipe.data.materials.append(mat)\n"
+  },
+  {
+    "id": "seed-manhole-chamber",
+    "categories": ["ifc_fitting", "manhole", "井"],
+    "tags": ["manhole", "chamber", "cylinder", "井室"],
+    "score": 9.0,
+    "code": "import bpy\nimport mathutils\n\n# 检查井:井室圆筒 + 收口锥 + 井盖,多子对象拆分\ncoll = bpy.data.collections.get('mh_node') or bpy.data.collections.new('mh_node')\nif 'mh_node' not in [c.name for c in bpy.context.scene.collection.children]:\n    bpy.context.scene.collection.children.link(coll)\n\nbase = mathutils.Vector((0.0, 0.0, -3.0))\n\nbpy.ops.mesh.primitive_cylinder_add(radius=0.6, depth=2.4, location=base + mathutils.Vector((0, 0, 1.2)))\nchamber = bpy.context.active_object\nchamber.name = 'mh_node_chamber'\ncoll.objects.link(chamber)\n\nbpy.ops.mesh.primitive_cone_add(radius1=0.6, radius2=0.3, depth=0.6, location=base + mathutils.Vector((0, 0, 2.7)))\ntaper = bpy.context.active_object\ntaper.name = 'mh_node_taper'\ncoll.objects.link(taper)\n\nbpy.ops.mesh.primitive_cylinder_add(radius=0.32, depth=0.08, location=base + mathutils.Vector((0, 0, 3.04)))\ncover = bpy.context.active_object\ncover.name = 'mh_node_cover'\ncoll.objects.link(cover)\n\nmat = bpy.data.materials.new('manhole_cast_iron')\nmat.use_nodes = True\nbsdf = mat.node_tree.nodes['Principled BSDF']\nbsdf.inputs['Metallic'].default_value = 0.85\nbsdf.inputs['Roughness'].default_value = 0.45\nchamber.data.materials.append(mat)\ntaper.data.materials.append(mat)\ncover.data.materials.append(mat)\n"
+  },
+  {
+    "id": "seed-valve-fitting",
+    "categories": ["ifc_fitting", "valve", "阀"],
+    "tags": ["valve", "fitting", "housing", "阀件"],
+    "score": 8.8,
+    "code": "import bpy\nimport mathutils\n\n# 阀件:阀体 + 阀杆 + 手轮,至少拆 3 个子对象\ncoll = bpy.data.collections.get('fitting_valve') or bpy.data.collections.new('fitting_valve')\nif 'fitting_valve' not in [c.name for c in bpy.context.scene.collection.children]:\n    bpy.context.scene.collection.children.link(coll)\n\norigin = mathutils.Vector((12.0, 0.0, -2.6))\n\nbpy.ops.mesh.primitive_cube_add(size=0.5, location=origin)\nbody = bpy.context.active_object\nbody.name = 'fitting_valve_body'\ncoll.objects.link(body)\n\nbpy.ops.mesh.primitive_cylinder_add(radius=0.04, depth=0.35, location=origin + mathutils.Vector((0, 0, 0.42)))\nstem = bpy.context.active_object\nstem.name = 'fitting_valve_stem'\ncoll.objects.link(stem)\n\nbpy.ops.mesh.primitive_torus_add(major_radius=0.16, minor_radius=0.03, location=origin + mathutils.Vector((0, 0, 0.62)))\nwheel = bpy.context.active_object\nwheel.name = 'fitting_valve_wheel'\ncoll.objects.link(wheel)\n\nmat = bpy.data.materials.new('valve_steel')\nmat.use_nodes = True\nbsdf = mat.node_tree.nodes['Principled BSDF']\nbsdf.inputs['Metallic'].default_value = 0.9\nbsdf.inputs['Roughness'].default_value = 0.3\nbody.data.materials.append(mat)\nstem.data.materials.append(mat)\nwheel.data.materials.append(mat)\n"
+  },
+  {
+    "id": "seed-batch-array",
+    "categories": ["array", "批量", "阵列"],
+    "tags": ["array", "batch", "loop", "批量阵列"],
+    "score": 8.6,
+    "code": "import bpy\nimport mathutils\n\n# 批量阵列:同型构件沿直线等距复制(如灯杆/套管排布),循环内统一 link 进范围集合\ncoll = bpy.data.collections.get('array_posts') or bpy.data.collections.new('array_posts')\nif 'array_posts' not in [c.name for c in bpy.context.scene.collection.children]:\n    bpy.context.scene.collection.children.link(coll)\n\nspacing = 10.0\ncount = 6\nfor i in range(count):\n    x = i * spacing\n    bpy.ops.mesh.primitive_cylinder_add(radius=0.08, depth=6.0, location=mathutils.Vector((x, 1.5, 0.0)))\n    post = bpy.context.active_object\n    post.name = f'array_posts_{i:02d}'\n    coll.objects.link(post)\n\nbpy.context.scene.render.engine = 'BLENDER_EEVEE'\n"
+  },
+  {
+    "id": "seed-road-terrain",
+    "categories": ["terrain_surface", "terrain", "路"],
+    "tags": ["terrain", "road", "plane", "地面"],
+    "score": 8.5,
+    "code": "import bpy\nimport mathutils\n\n# 道路地面:细分平面 + 高程微扰(模拟路面),材质深沥青\ncoll = bpy.data.collections.get('street_surface') or bpy.data.collections.new('street_surface')\nif 'street_surface' not in [c.name for c in bpy.context.scene.collection.children]:\n    bpy.context.scene.collection.children.link(coll)\n\nbpy.ops.mesh.primitive_plane_add(size=120.0, location=mathutils.Vector((20.0, 0.0, 0.0)))\nground = bpy.context.active_object\nground.name = 'street_surface_main'\nbpy.ops.object.mode_set(mode='EDIT')\nbpy.ops.mesh.subdivide(number_cuts=4)\nbpy.ops.object.mode_set(mode='OBJECT')\ncoll.objects.link(ground)\n\nmat = bpy.data.materials.new('asphalt')\nmat.use_nodes = True\nbsdf = mat.node_tree.nodes['Principled BSDF']\nbsdf.inputs['Base Color'].default_value = (0.08, 0.08, 0.09, 1.0)\nbsdf.inputs['Roughness'].default_value = 0.95\nground.data.materials.append(mat)\n\nbpy.context.scene.render.engine = 'BLENDER_EEVEE'\n"
+  }
+]

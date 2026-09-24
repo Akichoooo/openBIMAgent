@@ -214,6 +214,18 @@ def _build_modeler_messages(
         "批次内资产声明(JSON):\n" + json.dumps(assets, ensure_ascii=False, indent=2),
         "输出契约:只输出 Python 代码块(可 ```python fence 包裹),不要任何解释文字;"
         "禁止 os/subprocess/shutil/__import__/写文件。",
+    ]
+    # RAG few-shot:检索与本批资产同类的已验证代码片段,钉 API 调用形态(防语法幻觉);
+    # 检索/渲染任一失败静默跳过(无范例不阻断建模)
+    try:
+        from openbimagent.assembly.code_snippets import format_snippet_block, retrieve_snippets
+
+        snippet_block = format_snippet_block(retrieve_snippets(batch_ctx))
+        if snippet_block:
+            blocks.append(snippet_block)
+    except Exception:  # noqa: BLE001 — 范例检索是增益项,失败不得影响主链路
+        pass
+    blocks.extend([
         # 风格锚点(M0 冒烟教训:modeler 易退化成灰色盒体,critic style/material 双低分)。
         # 资产 description 已被 planner 注入 style/wear 槽位,以下词表强制模型把风格落成具体几何与材质节点。
         "风格锚点(必须落实,禁止只产灰盒):"
@@ -242,7 +254,7 @@ def _build_modeler_messages(
         f"  if {aid!r} not in [c.name for c in bpy.context.scene.collection.children]:\n"
         f"      bpy.context.scene.collection.children.link(coll)\n"
         f"  # 创建每个对象 obj 后:coll.objects.link(obj)",
-    ]
+    ])
     if prev_critique is not None and prev_critique.actionable_feedback:
         blocks.append(
             "上轮 critic 返工指令(必须落实在代码里):\n" + prev_critique.actionable_feedback
