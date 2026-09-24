@@ -1,7 +1,7 @@
 # openBIMAgent 阶段交接状态
 
-版本：v3.5
-更新时间：2026-09-21（Asia/Shanghai）
+版本：v3.6
+更新时间：2026-09-24（Asia/Shanghai）
 维护状态：**ACTIVE**
 工作区：`D:\devloop\workSpace\app_ZCode\openBIMAgent`
 远程仓库：`https://github.com/Akichoooo/openBIMAgent.git`
@@ -31,6 +31,7 @@ M3 VW 通路 = PASS（真机验收 2026-08-23:1 passed in 8.22s;m3_registry_e2e.
 Agent 工程吸收 = PASS（2026-09-19 批次，分支 feat/agent-engineering-absorption：schema 版本化/压缩 v2/OBSK/doom-loop/stop-gate、subagent output_schema 契约、投影 rewind/fork、SQLite 幂等、headless CLI、MCP serve、项目信任、组织 requirements 锁定、审批 fail-closed 加固；计划书 docs/research/2026-09-17_agent_engineering_implementation_plan.md，遗留登记 DEFERRED_ITEMS.md）
 流式实时化   = PASS（2026-09-21：SSE 生产通路打通——EventSource ?token= 认证豁免 X-Request-ID、规范跟随端点 offset 增量读 + Last-Event-ID 恢复 + 流预算、前端活动状态行/Trace/3D 视口运行期联动刷新、/compact 假命令诚实化）
 Provider 方言 = PASS（2026-09-21：anthropic Messages 与 openai-responses 方言落地，四方言齐备；models.toml 增直连 provider 示例）
+Web 真链路   = PASS（2026-09-24 批次：Web「新建任务」接工作台真 LLM 规划链（缺 key 降级模板并如实发 llm_planner 事件，不假成功）+ 无 CAD 主机离线 IFC4X3/IDS 交付进归档与工件白名单 + HITL 审批卡渲染执行预览 + 生成精度四项（RAG few-shot 语料 / dispatch rework 透传 / spatial_constraints 回验 linter / benchmark 几何 diff）+ 审批票据进程级共享状态污染修复；逐项收益与证据边界见 docs/research/2026-09-24_web_run_llm_chain_and_accuracy_batch.md）
 ```
 
 ## 2. 恢复坐标
@@ -82,11 +83,12 @@ HEAD：以 `git rev-parse HEAD` 实测为准
 ## 4. 最新有效质量证据
 
 ```text
-全仓 pytest：1357 passed, 9 skipped, 2 warnings（2026-09-21 实测，5m48s；含双宿主真机 4 测）
-前端 vitest：14 passed；pnpm build 通过；oxlint 0 errors
+全仓 pytest：1391 passed, 9 skipped, 2 warnings（2026-09-24 实测，8m59s；含双宿主真机 4 测）
+前端 vitest：14 passed；pnpm build 与 tsc 通过；oxlint 0 errors
 规则自检：真实知识源 33/33 样例重放通过（test_rule_self_tests）
-Ruff 静态检查（src/）：All checks passed!（2026-09-21 清零，含 4 处存量违规修复）
+Ruff 静态检查（src/ + 本轮改动文件）：All checks passed!
 消融电池确定性：test_self_healing_ablation 跨运行逐字节一致
+Web 真链路 e2e（2026-09-24，有 key 实测）：llm_planner mode=llm → 20 语义资产 / 56 空间约束 → domain_gate PASS → deliver 审批门人工放行 → ifc_delivery pass（checked_entity_count=6, findings=64）→ 12,818B IFC4X3_ADD2 经工件端点可读、4 产物入归档 index
 ```
 
 ## 5. 新会话与快速启动
@@ -98,9 +100,14 @@ Ruff 静态检查（src/）：All checks passed!（2026-09-21 清零，含 4 处
 
 ## 6. 未完成债务与唯一下一动作
 
-- **待提交**：2026-09-21 本轮改动（SSE 生产通路、provider 双方言、会话存储并发竞争修复、前端实时化、ruff 清零及全部测试）尚未 commit，建议按机制拆 3–4 个提交（server-sse / providers / frontend / fix+docs）。
-- **论文侧**：B10 LLM 超时 ×3 与 LLM 行多次运行方差待写入 limitations；execpolicy 吸收可作 rule-driven 可验证性论据。
+- **执行模式承诺与实现仍不符**：设置页三档模式无对应行为，服务端只有 `agent` / `yolo` 生效（`runs.py`）。2026-09-24 批次只完成选型建议（Ask/Plan/Build/Audit）并否掉增量编辑模式（宿主侧对象级回滚不可验证即不承诺），**代码一行未动**。
+- **RAG few-shot 效果无量化**：机制（仅 PASS 入库 / 去重 / 检索 / 零重合不注入）有测试，"降低宿主 API 语法幻觉"这一主张缺 A/B；5 例种子为手写。
+- **约束 linter 只证不误报**：真 LLM 运行 56 条约束 0 违规；对真违规的召回未验证（缺自然违规样本）。几何回验刻意不做（scene-IR ↔ compiled-IR 无 id 桥）。
+- **前端审批卡与预览未浏览器实测**：仅 tsc/vitest 层通过；IDS 那 64 个 finding 的语义未逐条核。
+- **子代理并发 + 多批次未过真模型**：只过了确定性模板。
+- **`fastapi_app` import 期建 app**（生成 token、按默认路径读磁盘票据）是本轮测试污染的物理根因；本批只加守卫与测试清表，未改设计（惰性构建牵动 uvicorn 入口，需单独拍板）。
+- **论文侧**：B10 LLM 超时 ×3 与 LLM 行多次运行方差待写入 limitations；execpolicy 吸收可作 rule-driven 可验证性论据；几何 diff 指标（invert/坡度/覆土误差）已可作为精度量化口径，但需补一轮完整 `llm_direct_baseline` 才有可引用数字。
 - **VLM 六维评分区**仍为演示数值（前端其余区域已全真实化）。
 - **双轨编排**：模板流水线轨不经过 `core/loop.py` 治理面，属事实缺口非完成态；收敛路径与触发条件已登记 `DEFERRED_ITEMS.md` §4.1。
 - **Provider 方言**：anthropic / openai-responses 已落地但仅 mock 单测覆盖，未对真实端点冒烟；直连 profile 的 reasoning effort 映射待细化。
-- **唯一下一动作**：① 本轮改动推送远程；② 论文正文写作（素材已备齐：docs/学术材料/实验数据与limitations草稿_2026-08-23.md，LLM 行已升级为 n=3 均值±标准差 60.0±0.0 / 7105±330ms / 10447±294 tok）。
+- **唯一下一动作**：① 论文正文写作（素材已备齐：docs/学术材料/实验数据与limitations草稿_2026-08-23.md，LLM 行已升级为 n=3 均值±标准差 60.0±0.0 / 7105±330ms / 10447±294 tok）；② 若要兑现三档模式承诺，先定 Ask/Plan/Build/Audit 边界再动 `runs.py`；③ 补一轮完整 `llm_direct_baseline` 使几何 diff 指标产出可引用数字。

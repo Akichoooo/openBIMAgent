@@ -11,7 +11,8 @@
   - M2 P0–P5：FastAPI 只读/写控制服务、SSE 事实流、现代三栏 WebGL 3D 数字化工程工作台。
   - 进阶突破：规则自愈式求解器 (`SelfHealingSolver`)、三维空间拓扑图谱引擎 (`SpatialBIMGraph`)、BIMBench 消融实验套件。
   - 微内核 (2026-08)：`registry.invoke` 承重调度、UI-Slots 动态标签、Profile 补丁层（消融实验 = 补丁声明）、Benchmark 数据诚信契约 (measured/provenance)、外部插件 manifest 发现加载。
-- 质量基线：**1357 passed, 9 skipped, 2 warnings**（2026-09-21 实测），Ruff 静态检查（src/）100% 通过。
+  - Web 真链路 (2026-09-24)：Web「新建任务」接工作台真 LLM 规划链 + 无 CAD 主机离线 IFC4X3/IDS 交付 + HITL 审批附执行预览 + 生成精度四项（RAG few-shot / dispatch rework 透传 / 空间约束回验 linter / 几何 diff 指标）。
+- 质量基线：**1391 passed, 9 skipped**（2026-09-24 实测，8m59s），Ruff 静态检查（src/）100% 通过。
 - 最新进度与详细交接：[持续交接与进度状态](architecture/PROJECT_HANDOFF_STATUS.md)。
 - 手动测试与快速上手：[手动测试指南](../MANUAL_TESTING_GUIDE.md)。
 
@@ -59,6 +60,7 @@
 | [11_kimi_intake.md](research/11_kimi_intake.md) | 早期 Kimi/K3 主架构师评审：质量门、假设验证、Domain Pack 断层和选型建议 | 历史评审 2026-07-21 |
 | [12_glm_constraints_verify.md](research/12_glm_constraints_verify.md) | 市政 `constraints.yaml` 规范二轮核实与扩充依据 | GLM Relay 008，REFERENCE |
 | [2026-09-17_agent_engineering_implementation_plan.md](research/2026-09-17_agent_engineering_implementation_plan.md) | Agent 工程吸收实施计划（对标 Claude Code/Codex/opencode/DSH，F/G/A/D 批次总纲） | 主会话 2026-09 |
+| [2026-09-24_web_run_llm_chain_and_accuracy_batch.md](research/2026-09-24_web_run_llm_chain_and_accuracy_batch.md) | 本批 9 项改动逐项：收益 / 不做的后果 / 证据强度分级 / 欠账清单 / 复核方法 | 主会话 2026-09-24 |
 
 ## 审计
 
@@ -119,3 +121,4 @@ K3/Kimi 是早期主架构师和 Relay 编排会话身份，**不是项目里程
 - 2026-08-02~03:完成 M1 G1–G5 与双宿主 typed adapter：Vectorworks typed plan、不可变 Manifest、双宿主语义协议、IFC4X3/IDS、失败恢复、Blender/Vectorworks 真实宿主 adapter 均形成边界提交；Blender 5.2.0 LTS 真实 G6 通过，Vectorworks 2024 GUI approved job 待执行。最新证据统一转由 `PROJECT_HANDOFF_STATUS.md` 维护。
 - 2026-08-03:Wiki 收口为四层文档模型；新增 `PROJECT_HANDOFF_STATUS.md`、`PROJECT_MASTER_WORKFLOW.md` 和 `DOCUMENTATION_GOVERNANCE.md`，明确 K3/Kimi 是早期架构/接力身份而非里程碑，Relay 历史留在 Git；ARCHITECTURE/COMPONENTS 同步标记 v0.9，README 与架构图改用当前 typed IR、双宿主和 G6 状态。
 - 2026-09-21:Agent 工程吸收批次收口回填——交接状态升 v3.5（分支/路径/测试基线 1357 实测）；research 索引收录 2026-09-17 吸收计划书；本轮新增 SSE 生产通路（EventSource ?token= 认证 + offset 增量跟随端点）、anthropic/openai-responses provider 方言、前端运行期实时联动（活动状态行/Trace/3D 视口）与 `DEFERRED_ITEMS.md` §4.1 双轨编排登记。
+- 2026-09-24:Web 真链路批次收口——交接状态升 v3.6（测试基线 1391 passed / 9 skipped 实测 8m59s）；research 新增 [Web run 真 LLM 链与生成精度批次](research/2026-09-24_web_run_llm_chain_and_accuracy_batch.md)（逐项收益/不做的后果/证据强度分级/欠账清单）。本轮九项改动：Web「新建任务」接工作台真 LLM 规划链（缺 key 降级模板并如实发事件，不假成功）、无 CAD 主机离线 IFC4X3/IDS 交付进归档与工件白名单、HITL 审批卡渲染执行预览（typed 逐操作 / 自由代码附批次资产声明）、dispatch rework 透传渲染循环首轮先验、RAG few-shot 代码语料（仅 PASS 入库 + 5 例种子）、spatial_constraints 回验 linter、benchmark 几何 diff 指标、前端模型配置变更实时联动与陈旧覆写修复、审批票据进程级共享状态污染修复（`_load_pending` 不再覆盖活跃票据 + 5 个 run 类测试模块隔离）。**已知欠账**：三档执行模式仍只有 `agent`/`yolo` 生效（承诺与实现不符未修）、few-shot 降幻觉效果无 A/B、前端审批卡未浏览器实测——详见该文档 §3。
