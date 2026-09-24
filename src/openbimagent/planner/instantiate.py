@@ -327,10 +327,13 @@ def _normalize_llm_ir(ir: dict[str, Any], playbook: dict[str, Any]) -> None:
 
 
 def _validate_scene_ir(ir: dict[str, Any]) -> None:
-    """IR 合格性总闸:schema 门禁 + C2 坐标哨兵 + 批次引用完整性;任一不过抛 ValueError(触发重试/FIX)。"""
+    """IR 合格性总闸:schema 门禁 + C2 坐标哨兵 + 批次引用完整性 + 空间约束回验;任一不过抛 ValueError(触发重试/FIX)。"""
     errors = schema_gate.validate_artifact("scene_graph_ir", ir)
     errors.extend(_c2_violations(ir))
     errors.extend(_batch_ref_errors(ir))
+    from openbimagent.planner.constraint_lint import constraint_lint_violations
+
+    errors.extend(constraint_lint_violations(ir))
     if errors:
         raise ValueError("Scene Graph IR 未通过校验:\n" + "\n".join(f"  - {e}" for e in errors))
 
@@ -395,6 +398,8 @@ def _build_ir_messages(playbook: dict[str, Any], slots_filled: dict[str, Any]) -
         '"batches": [["资产id", "..."]]}。'
         "C2 铁律:只出语义不出坐标——任何字段都禁止出现 (x, y) / [x, y, z] 形态的绝对坐标数值;"
         "batches 引用的 id 必须已在 assets 声明。"
+        "空间约束铁律:subject/object 必须是已声明的资产 id(containment/adjacency 必须带 object);"
+        "spacing 的 value 必须是正数(米);同一 (type, subject, object) 只声明一条、数值不得自相矛盾。"
     )
     return [
         {"role": "system", "content": _load_role_brief("planner")},
