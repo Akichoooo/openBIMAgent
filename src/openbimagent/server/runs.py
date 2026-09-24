@@ -55,6 +55,11 @@ def _sessions_dir() -> Path:
     return Path(override) if override else _DEFAULT_SESSIONS_DIR
 
 
+def _run_llm_enabled() -> bool:
+    """Web run 是否接工作台 LLM；测试沙箱置 OPENBIMAGENT_RUN_LLM=0 强制模板路径（不真调 API）。"""
+    return os.environ.get("OPENBIMAGENT_RUN_LLM", "1").strip().lower() not in {"0", "false", "off"}
+
+
 def _bigrams(text: str) -> set[str]:
     """CJK 友好的二元 token 集（英文按词、其余按字 bigram），用于归档相似度检索。"""
     tokens: set[str] = set()
@@ -195,18 +200,37 @@ def _execute_run(
         if default_input.is_file():
             solver_input = default_input
 
+        # G-web：接工作台 LLM（设置页配置）——有 key 走真 planner 链，缺 key 降级模板并如实发事件
+        from openbimagent.server.workbench_llm import workbench_registry
+
+        registry = workbench_registry() if _run_llm_enabled() else None
+        try:
+            from openbimagent.session.schema import EventType
+
+            store.append_new(
+                EventType.CUSTOM,
+                {"customType": "llm_planner", "mode": "llm" if registry is not None else "template"},
+            )
+        except Exception:  # noqa: BLE001 — 事件落盘失败不影响运行
+            pass
+
         run_pipeline(
             playbook_path=playbook,
             out_dir=out_dir,
             sessions_dir=sessions_dir,
             session_id=session_id,
+            registry=registry,
             input_func=lambda _prompt="": "",
             approval_fn=make_web_approval_fn(session_id, sessions_dir, auto_approve=(mode == "yolo")),
             utility_solver_input=solver_input,
         )
+        # G-web：无 CAD 主机的离线 IFC 交付（domain_gate PASS 才投影；失败只发事件不推翻运行结论）
+        ifc_info = _deliver_offline_ifc(out_dir, store)
         _runs[session_id].update(
             active=False, status="done", done_at=datetime.now(timezone.utc).isoformat()
         )
+        if ifc_info is not None:
+            _runs[session_id]["ifc_delivery"] = ifc_info
     except Exception as exc:  # noqa: BLE001 — 运行失败必须可视化而非吞掉
         _runs[session_id].update(
             active=False,
@@ -249,6 +273,14 @@ def _execute_run(
             pass
 
 
+#: 离线 IFC 交付产物（build_ifc_ids_package 固定文件名；进归档与工件白名单，前端可下载）
+_IFC_DELIVERY_FILES = (
+    "municipal_utility.ifc",
+    "municipal_utility.ids",
+    "ifc_ids_validation_report.json",
+    "ifc_ids_rule_evidence.json",
+)
+
 #: 运行结束后归档的关键工件名（存在才拷，缺省跳过）
 _ARCHIVE_FILES = (
     "artifact_manifest.json",
@@ -258,7 +290,60 @@ _ARCHIVE_FILES = (
     "rule_evidence_bundle.json",
     "domain_gate_report.md",
     "PLAN.md",
+    *_IFC_DELIVERY_FILES,
 )
+
+
+def _deliver_offline_ifc(out_dir: Path, store: Any) -> dict[str, Any] | None:
+    """无 CAD 主机的离线 IFC 交付：domain_gate PASS 时把 compiled IR 投影成 IFC4X3+IDS 包。
+
+    复用测试/benchmark 同一条离线链（FakeBlenderSemanticExecutor → build_ifc_ids_package,
+    IfcOpenShell 写盘,零主机依赖）。规则身份用落盘工件 sha256 钉死
+    （rule set / gate 报告）,决策状态取 gate 结论——IFC 每个对象的 Pset 都可回溯到本 run
+    的规则评估。任何失败只发事件不抛：运行结论已由 pipeline 给出,IFC 打包是叠加交付层。
+    """
+    import hashlib
+
+    gate_path = out_dir / "domain_gate_report.json"
+    ir_path = out_dir / "compiled_utility_ir.json"
+    rule_set_path = out_dir / "municipal_rule_set.json"
+    if not (gate_path.is_file() and ir_path.is_file() and rule_set_path.is_file()):
+        return None
+    try:
+        gate = json.loads(gate_path.read_text(encoding="utf-8"))
+        if gate.get("ok") is not True:
+            return None  # fail-closed：门禁非 PASS 不交付
+        from openbimagent.assembly.rule_projection import RuleProjectionIdentity
+        from openbimagent.assembly.semantic_snapshot import FakeBlenderSemanticExecutor
+        from openbimagent.deliver.ifc_ids import build_ifc_ids_package
+        from openbimagent.utility import CompiledUtilityIR
+
+        compiled = CompiledUtilityIR.model_validate(json.loads(ir_path.read_text(encoding="utf-8")))
+        identity = RuleProjectionIdentity(
+            rule_evidence_bundle_sha256=hashlib.sha256(rule_set_path.read_bytes()).hexdigest(),
+            rule_evaluation_sha256=hashlib.sha256(gate_path.read_bytes()).hexdigest(),
+            rule_decision_status=str(gate.get("status") or "pass").lower(),
+            production_verification="eligible",
+            exception_approval_id=None,
+            exception_approval_sha256=None,
+        )
+        snapshot = FakeBlenderSemanticExecutor().execute(compiled, rule_identity=identity)
+        package = build_ifc_ids_package(snapshot, output_dir=out_dir)
+        info: dict[str, Any] = {
+            "status": "pass" if package.report.ok else "fail",
+            "files": list(_IFC_DELIVERY_FILES),
+            "checked_entity_count": package.report.checked_entity_count,
+            "findings": len(package.report.findings),
+        }
+    except Exception as exc:  # noqa: BLE001 — IFC 打包失败必须可见，但不推翻 pipeline 结论
+        info = {"status": "error", "error": str(exc), "files": list(_IFC_DELIVERY_FILES)}
+    try:
+        from openbimagent.session.schema import EventType
+
+        store.append_new(EventType.CUSTOM, {"customType": "ifc_delivery", **info})
+    except Exception:  # noqa: BLE001 — 事件落盘失败不影响交付本身
+        pass
+    return info
 
 
 def _archive_root(pack: Path) -> Path:
@@ -852,6 +937,9 @@ def add_runs(app: FastAPI) -> None:
             }
             if name.endswith(".json"):
                 payload["data"] = json.loads(data.decode("utf-8"))
+            elif name.endswith((".ifc", ".ids")):
+                # 文本 schema（IFC4X3/IDS 均为 STEP/XML 文本），量级数十 KB，直接内联供前端下载
+                payload["text"] = data.decode("utf-8", errors="replace")
             return JSONResponse(content=payload)
         except (OSError, json.JSONDecodeError) as exc:
             return JSONResponse(status_code=500, content={"status": "error", "error": f"工件读取失败: {exc}"})

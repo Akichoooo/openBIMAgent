@@ -68,6 +68,8 @@ class CustomType(StrEnum):
     STEER_REQUESTED = "steer_requested"
     STEER_RECEIPT = "steer_receipt"
     HOST_EVENT = "host_event"
+    LLM_PLANNER = "llm_planner"
+    IFC_DELIVERY = "ifc_delivery"
 
 
 class MessagePayload(BaseModel):
