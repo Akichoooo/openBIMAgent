@@ -508,7 +508,6 @@ export default function App() {
                 sessionId={currentSessionId}
                 sessionTitle={getSessionTitle(currentSession)}
                 playbook={currentSession?.playbook || "municipal_utility"}
-                mode={currentSession?.mode}
                 irData={displayedIr}
                 onOpenSettings={handleOpenSettings}
                 onUsageChange={(used, ctx) => setCtxUsage({ used, ctx })}
@@ -516,10 +515,6 @@ export default function App() {
                 onStatusChange={setAgentStatus}
                 onSessionCreated={(newId) => {
                   setCurrentSessionId(newId)
-                  setRefreshTrigger((c) => c + 1)
-                }}
-                onSessionTitleChange={(newTitle) => {
-                  setCurrentSession((prev) => prev ? { ...prev, title: newTitle } : null)
                   setRefreshTrigger((c) => c + 1)
                 }}
                 isExpanded={true}
@@ -576,7 +571,6 @@ export default function App() {
             sessionId={currentSessionId}
             sessionTitle={getSessionTitle(currentSession)}
             playbook={currentSession?.playbook || "municipal_utility"}
-            mode={currentSession?.mode}
             irData={displayedIr}
             onOpenSettings={handleOpenSettings}
             onUsageChange={(used, ctx) => setCtxUsage({ used, ctx })}
@@ -584,10 +578,6 @@ export default function App() {
             onStatusChange={setAgentStatus}
             onSessionCreated={(newId) => {
               setCurrentSessionId(newId)
-              setRefreshTrigger((c) => c + 1)
-            }}
-            onSessionTitleChange={(newTitle) => {
-              setCurrentSession((prev) => prev ? { ...prev, title: newTitle } : null)
               setRefreshTrigger((c) => c + 1)
             }}
             isExpanded={false}

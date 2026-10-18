@@ -133,3 +133,28 @@ circuit_breaker = { failures = 5, cooldown_s = 300 }
 [tracking]
 log_tokens = true
 log_cost = true
+
+[providers.sensenova]
+type = "openai-compatible"               # 用户确认 OpenAI 兼容 /chat/completions
+base_url = "https://token.sensenova.cn/v1"
+api_key_env = "SENSENOVA_API_KEY"        # key 从环境变量读(.env via uv run --env-file)
+
+
+[models."sensenova-6.8-flash-lite"]
+provider = "sensenova"
+context_window = 256_000                 # 用户确认 256K 上下文
+capabilities = ["tools", "vision"]       # 用户确认多模态:A4 VLM 六维评分需 vision
+
+
+[profiles.sensenova]                # SenseNova 多模态单模型:A4 VLM 六维 + D 学习曲线 + LLM 基线
+orchestrator = "sensenova-6.8-flash-lite"
+planner = "sensenova-6.8-flash-lite"
+modeler = "sensenova-6.8-flash-lite"
+critic_scad = "sensenova-6.8-flash-lite"
+critic_render = "sensenova-6.8-flash-lite"   # vision:六维视觉评分
+clarify = "sensenova-6.8-flash-lite"
+researcher = "sensenova-6.8-flash-lite"
+deliver = "sensenova-6.8-flash-lite"
+lighter = "sensenova-6.8-flash-lite"
+materialist = "sensenova-6.8-flash-lite"
+

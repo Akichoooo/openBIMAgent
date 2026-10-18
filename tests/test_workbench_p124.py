@@ -1,6 +1,6 @@
 """P1/P2/P4 端点测试：SSE 事件流、素材归档、会话分支、市政入参过 domain_gate。
 
-municipal_utility 运行携带显式物理尺寸的合成 solver fixture（含完整碰撞上下文），
+municipal_utility 运行携带 pack 默认 solver_input.default.json（含完整碰撞上下文），
 应越过 domain_gate 抵达 deliver 审批门（此前 UNKNOWN 阻断）。
 """
 
@@ -49,34 +49,23 @@ def client(tmp_path_factory: pytest.TempPathFactory) -> TestClient:
 
 @pytest.fixture(scope="module")
 def municipal_run(client: TestClient) -> str:
-    """显式合成物理入参：批准全部审批门直至结束；返回 session_id。"""
-    from openbimagent.server import runs
-    from test_utility_solver import solver_payload
-
-    def _fixture_parse(_brief: str, _default_input: Path | None, *, request_id: str) -> runs.BriefParseResult:
-        payload = solver_payload()
-        payload["request_id"] = request_id
-        payload["collision_context"] = {"coverage": "complete", "obstacles": []}
-        return runs.BriefParseResult(payload=payload)
-
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(runs, "_parse_brief_to_solver_input", _fixture_parse)
-        resp = client.post("/api/v1/runs", json={"brief": "市政入参+归档+SSE 测试", "playbook": "municipal_utility"})
-        assert resp.status_code == 200, resp.text
-        session_id = resp.json()["session_id"]
-        deadline = time.time() + 180
-        while time.time() < deadline:
-            for item in client.get("/api/v1/approvals").json()["items"]:
-                client.post(f"/api/v1/approvals/{item['id']}/decide", json={"decision": "approved"})
-            run = client.get("/api/v1/runs/active").json()["run"]
-            if not run["active"]:
-                break
-            time.sleep(0.8)
+    """市政运行（带默认入参）：批准全部审批门直至结束；返回 session_id。"""
+    resp = client.post("/api/v1/runs", json={"brief": "市政入参+归档+SSE 测试", "playbook": "municipal_utility"})
+    assert resp.status_code == 200, resp.text
+    session_id = resp.json()["session_id"]
+    deadline = time.time() + 180
+    while time.time() < deadline:
+        for item in client.get("/api/v1/approvals").json()["items"]:
+            client.post(f"/api/v1/approvals/{item['id']}/decide", json={"decision": "approved"})
+        run = client.get("/api/v1/runs/active").json()["run"]
+        if not run["active"]:
+            break
+        time.sleep(0.8)
     return session_id
 
 
 def test_municipal_reaches_deliver_gate(client: TestClient, municipal_run: str) -> None:
-    """带显式物理 fixture 的市政运行应触达 deliver 审批门。"""
+    """带默认 solver_input 的市政运行应触达 deliver 审批门（不再 domain_gate UNKNOWN 阻断）。"""
     events = client.get(f"/api/v1/sessions/{municipal_run}/events?tail=500").json()["events"]
     customs = [e["payload"].get("customType") for e in events if e.get("type") == "custom"]
     assert "approval_requested" in customs, "应触达审批门（deliver）"

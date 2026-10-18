@@ -67,7 +67,7 @@ IR_SCHEMA_SNAPSHOTS = {
     ),
     "1.1": (
         "schemas/compiled_utility_ir.schema.json",
-        "9bdeaebfc70575319f399395dc757f514099941d0016bdfcb77175365a286d9a",
+        "befe4f8f36531eb584dd290725838c2e82113224f494a6fb2c5c3d65463d1e02",
     ),
 }
 COMPILED_UTILITY_IR_SCHEMA_SHA256 = IR_SCHEMA_SNAPSHOTS[CURRENT_IR_SCHEMA_VERSION][1]

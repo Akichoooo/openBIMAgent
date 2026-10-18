@@ -276,9 +276,9 @@ def _rules_are_production_eligible(rules: Any) -> bool:
         return False
     try:
         return all(
-            rule.verification.production_eligible(rule.source_clause) for rule in items
+            rule.verification.production_eligible() for rule in items
         )
-    except AttributeError:
+    except TypeError:
         return False
 
 __all__ = [

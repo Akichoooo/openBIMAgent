@@ -189,13 +189,18 @@ def chat(
     tool_choice: str | dict[str, Any] | None = None,
     timeout_s: int = 120,
     cancel_event: threading.Event | None = None,
+    cancel_reason: str | None = None,
     default_headers: dict[str, str] | None = None,
     extra_params: dict[str, Any] | None = None,
+    on_delta: Any = None,
+    diagnostics: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     """统一调用入口:按方言适配请求/响应;重试/熔断由 registry 套用(models.toml [resilience])。
 
     返回 OpenAI chat.completion 形态 dict;abort 时正常返回并带 ``aborted=True`` 与部分内容。
+    diagnostics:可选调用事件汇(由调用方持有);只写时间、状态、长度和计数,不写
+    Authorization、完整 base64 或完整 reasoning 正文。收到部分内容不等于有效业务结果。
     default_headers:provider 级额外请求头(models.toml [providers.*].default_headers),
     与方言注入的 Authorization/Content-Type 合并,后者优先(鉴权不被覆盖)。
     extra_params:reasoning_payload 等额外请求体字段,并入 HTTP 方言请求体
@@ -211,8 +216,11 @@ def chat(
             tool_choice=tool_choice,
             timeout_s=timeout_s,
             cancel_event=cancel_event,
+            cancel_reason=cancel_reason,
             default_headers=default_headers,
             extra_params=extra_params,
+            on_delta=on_delta,
+            diagnostics=diagnostics,
         )
     if dialect is Dialect.GOOGLE_GENAI:
         return _chat_google_genai(
@@ -224,7 +232,9 @@ def chat(
             tool_choice=tool_choice,
             timeout_s=timeout_s,
             cancel_event=cancel_event,
+            cancel_reason=cancel_reason,
             default_headers=default_headers,
+            diagnostics=diagnostics,
         )
     if dialect is Dialect.ANTHROPIC:
         return _chat_anthropic(
@@ -265,22 +275,43 @@ def _chat_google_genai(
     tool_choice: str | dict[str, Any] | None,
     timeout_s: int,
     cancel_event: threading.Event | None,
+    cancel_reason: str | None,
     default_headers: dict[str, str] | None,
+    diagnostics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Google Gen AI SDK 方言:消息/图片/函数调用双向适配为统一 chat.completion 形态。
 
     使用 SDK 的同步 ``models.generate_content``。调用前和返回后检查 cancel_event;
     SDK 当前不提供同步请求的跨线程安全强制中断,所以置位后以 aborted=True 丢弃完整响应,
-    保持上层 checkpoint 语义。base_url/default_headers 仅在显式配置时经 HttpOptions 透传。
+    保持上层 checkpoint 语义。这里只能记录响应后取消,不能宣称已中断在途 SDK 调用。
+    base_url/default_headers 仅在显式配置时经 HttpOptions 透传。
     """
     if not api_key:
         raise DialectError("google-genai provider 缺少 api_key")
+    transport = diagnostics if diagnostics is not None else {}
+    started = time.perf_counter()
+    transport.update(
+        transport="google-genai",
+        model_alias=model,
+        endpoint=base_url,
+        stream=False,
+        request_started_at=time.time(),
+        request_started_ms=0.0,
+        request_sent=False,
+        cancel_guarantee="post_response_only",
+    )
+
+    def mark(key: str) -> None:
+        transport[key] = round((time.perf_counter() - started) * 1000, 1)
+
     if cancel_event is not None and cancel_event.is_set():
-        return _empty_aborted_completion()
+        return aborted_completion(reason=cancel_reason or "pre_cancelled", diagnostics=transport)
     try:
         from google import genai
         from google.genai import types
     except ImportError as exc:  # pragma: no cover - pyproject 已声明依赖
+        transport.update(error_type=type(exc).__name__, error=str(exc)[:500])
+        mark("ended_at_ms")
         raise DialectError("google-genai 方言需要 google-genai 依赖") from exc
 
     system_instruction, contents = _messages_to_google_contents(messages, types)
@@ -302,16 +333,35 @@ def _chat_google_genai(
     http_options = types.HttpOptions(**http_options_kwargs)
     client = genai.Client(api_key=api_key, http_options=http_options)
     try:
+        transport["request_sent"] = True
         response = client.models.generate_content(
             model=model,
             contents=contents,
             config=types.GenerateContentConfig(**config_kwargs),
         )
+        mark("response_at_ms")
+        transport["response_received"] = True
+    except Exception as exc:
+        transport.update(error_type=type(exc).__name__, error=str(exc)[:500])
+        mark("ended_at_ms")
+        raise
     finally:
         client.close()
     if cancel_event is not None and cancel_event.is_set():
-        return _empty_aborted_completion()
-    return _google_response_to_completion(response)
+        return aborted_completion(reason=cancel_reason or "cancel_event", diagnostics=transport)
+    result = _google_response_to_completion(response)
+    message = result["choices"][0]["message"]
+    transport.update(
+        response_model=str(getattr(response, "model_version", None) or ""),
+        content_chars=len(message.get("content") or ""),
+        reasoning_chars=len(message.get("reasoning") or ""),
+        finish_reason=result["choices"][0].get("finish_reason"),
+        usage_present=bool(result.get("usage")),
+        aborted=False,
+    )
+    mark("ended_at_ms")
+    result["diagnostics"] = transport
+    return result
 
 
 def _messages_to_google_contents(messages: list[dict[str, Any]], types: Any) -> tuple[str | None, list[Any]]:
@@ -507,6 +557,28 @@ def _empty_aborted_completion() -> dict[str, Any]:
     }
 
 
+def aborted_completion(
+    *, reason: str, diagnostics: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """A cancellation is not a business success; include transport evidence.
+
+    Used both for a pre-cancelled call (no request sent) and for a call whose
+    stream was closed at the action deadline. Callers must inspect ``aborted``
+    instead of treating this as a report.
+    """
+    result = _empty_aborted_completion()
+    result["cancel_reason"] = reason
+    if diagnostics is not None:
+        diagnostics.update(
+            aborted=True,
+            cancel_reason=reason,
+            request_sent=bool(diagnostics.get("request_sent", False)),
+            worker_exited=True,
+        )
+        result["diagnostics"] = diagnostics
+    return result
+
+
 def _chat_openai_completions(
     *,
     model: str,
@@ -517,8 +589,11 @@ def _chat_openai_completions(
     tool_choice: str | dict[str, Any] | None,
     timeout_s: int,
     cancel_event: threading.Event | None,
+    cancel_reason: str | None,
     default_headers: dict[str, str] | None,
     extra_params: dict[str, Any] | None = None,
+    on_delta: Any = None,
+    diagnostics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """openai-compatible 方言:POST {base_url}/chat/completions,Bearer 鉴权。
 
@@ -526,6 +601,8 @@ def _chat_openai_completions(
     主线程每 0.5s 轮询 cancel_event,置位即关闭连接、拼装部分结果返回。
     reasoning 模型(如 agentrouter 的 glm-5.2)的 reasoning_content 分片同样累积,
     content 允许为空,不视为失败(见 _assemble_completion)。
+    on_delta(kind, text):可选文本分片回调(delta|reasoning),供 UI 实时回显旁路。
+    diagnostics:调用事件汇;只写时间/状态/长度/计数,不写密钥、base64 或 reasoning 正文。
     """
     if not base_url:
         raise DialectError("openai-compatible provider 缺少 base_url")
@@ -548,12 +625,33 @@ def _chat_openai_completions(
         "Content-Type": "application/json",
     }
 
+    transport = diagnostics if diagnostics is not None else {}
+    started = time.perf_counter()
+    transport.update(
+        transport="openai-completions",
+        model_alias=model,
+        endpoint=url,
+        stream=True,
+        request_started_at=time.time(),
+        request_started_ms=0.0,
+        request_sent=False,
+        request_options=sorted(extra_params) if extra_params else [],
+        cancel_guarantee="socket_close_requested",
+    )
+
+    def mark(key: str) -> None:
+        transport[key] = round((time.perf_counter() - started) * 1000, 1)
+
+    if cancel_event is not None and cancel_event.is_set():
+        return aborted_completion(reason=cancel_reason or "pre_cancelled", diagnostics=transport)
+
     acc: dict[str, Any] = {
         "content_parts": [],
         "reasoning_parts": [],
         "tool_calls": {},
         "finish_reason": None,
         "usage": None,
+        "response_model": None,
     }
     holder: dict[str, Any] = {}  # 主线程 abort 时要关闭的 client/response
     errors: list[BaseException] = []
@@ -562,8 +660,12 @@ def _chat_openai_completions(
         try:
             with httpx.Client(timeout=httpx.Timeout(timeout_s)) as client:
                 holder["client"] = client
+                transport["request_sent"] = True
                 with client.stream("POST", url, json=payload, headers=headers) as resp:
                     holder["response"] = resp
+                    mark("headers_at_ms")
+                    transport["http_status"] = getattr(resp, "status_code", None)
+                    transport["content_type"] = resp.headers.get("content-type", "")
                     resp.raise_for_status()
                     # WAF 检测:agentrouter 速率限流时返回 200 + text/html 挑战页,
                     # 若不拦截会被 _consume_sse_line 静默吞掉(只认 "data:" 行)→ 空响应假成功。
@@ -573,9 +675,23 @@ def _chat_openai_completions(
                             f"响应为 HTML(content-type={ct!r}),疑似 Aliyun WAF 挑战页(速率限流);退避后重试"
                         )
                     for line in resp.iter_lines():
-                        if not _consume_sse_line(line, acc):
+                        stripped = line.strip()
+                        if stripped.startswith("data:"):
+                            data_text = stripped[len("data:"):].strip()
+                            if data_text and data_text != "[DONE]":
+                                transport.setdefault("first_event_at_ms", round((time.perf_counter() - started) * 1000, 1))
+                                transport["event_count"] = int(transport.get("event_count", 0)) + 1
+                        before_content = len(acc["content_parts"])
+                        before_reasoning = len(acc["reasoning_parts"])
+                        if not _consume_sse_line(line, acc, on_delta=on_delta):
                             break
+                        if len(acc["content_parts"]) > before_content:
+                            transport.setdefault("first_content_at_ms", round((time.perf_counter() - started) * 1000, 1))
+                        if len(acc["reasoning_parts"]) > before_reasoning:
+                            transport.setdefault("first_reasoning_at_ms", round((time.perf_counter() - started) * 1000, 1))
         except BaseException as exc:  # abort 关闭连接时 worker 也会在此落地
+            transport["error_type"] = type(exc).__name__
+            transport["error"] = str(exc)[:500]
             errors.append(exc)
 
     thread = threading.Thread(target=_worker, daemon=True)
@@ -585,19 +701,40 @@ def _chat_openai_completions(
         thread.join(timeout=ABORT_POLL_INTERVAL_S)
         if cancel_event is not None and cancel_event.is_set():
             aborted = True
+            transport["cancel_reason"] = cancel_reason or "cancel_event"
+            transport["close_requested"] = True
             resp = holder.get("response")
             if resp is not None:
                 resp.close()
             elif holder.get("client") is not None:
                 holder["client"].close()
             thread.join(timeout=5)
+            transport["worker_exited"] = not thread.is_alive()
             break
+    else:
+        transport["worker_exited"] = True
+    if aborted:
+        transport["aborted"] = True
+    transport.update(
+        content_chars=sum(len(part) for part in acc["content_parts"]),
+        reasoning_chars=sum(len(part) for part in acc["reasoning_parts"]),
+        finish_reason=acc.get("finish_reason"),
+        usage_present=bool(acc.get("usage")),
+        response_model=acc.get("response_model"),
+    )
+    mark("ended_at_ms")
     if errors and not aborted:
         raise errors[0]
-    return _assemble_completion(acc, aborted=aborted)
+    result = _assemble_completion(acc, aborted=aborted)
+    if aborted:
+        result["cancel_reason"] = cancel_reason or "cancel_event"
+        transport.setdefault("cancel_reason", result["cancel_reason"])
+    if diagnostics is not None:
+        result["diagnostics"] = transport
+    return result
 
 
-def _consume_sse_line(line: str, acc: dict[str, Any]) -> bool:
+def _consume_sse_line(line: str, acc: dict[str, Any], on_delta: Any = None) -> bool:
     """解析一行 SSE 增量并入 acc;返回 False 表示流结束(``data: [DONE]``)。纯函数,可单测。"""
     line = line.strip()
     if not line or not line.startswith("data:"):
@@ -605,23 +742,30 @@ def _consume_sse_line(line: str, acc: dict[str, Any]) -> bool:
     data_str = line[len("data:") :].strip()
     if data_str == "[DONE]":
         return False
-    _apply_delta(acc, json.loads(data_str))
+    _apply_delta(acc, json.loads(data_str), on_delta=on_delta)
     return True
 
 
-def _apply_delta(acc: dict[str, Any], data: dict[str, Any]) -> None:
+def _apply_delta(acc: dict[str, Any], data: dict[str, Any], on_delta: Any = None) -> None:
     """把一个 stream chunk 的 delta 累积进 acc(content/reasoning 拼接 / tool_calls 分片合并 / usage)。"""
     # agentrouter 对 claude 系模型偶发 `data: null` 行(json.loads→None),非 dict 直接跳过不崩。
     if not isinstance(data, dict):
         return
+    # Service-side model identifier is evidence, distinct from the requested alias.
+    if data.get("model"):
+        acc["response_model"] = str(data["model"])
     for choice in data.get("choices") or []:
         delta = choice.get("delta") or {}
         if delta.get("content"):
             acc["content_parts"].append(delta["content"])
-        # reasoning 模型(如 glm-5.2):思维链在 reasoning_content(部分实现用 reasoning)分片下发
+            if on_delta is not None:
+                on_delta("delta", delta["content"])
+        # reasoning 模型(如 glm-5.2):思维链在 reasoning_content(部分实现为 reasoning)分片下发
         reasoning_piece = delta.get("reasoning_content") or delta.get("reasoning")
         if reasoning_piece:
             acc["reasoning_parts"].append(reasoning_piece)
+            if on_delta is not None:
+                on_delta("reasoning", reasoning_piece)
         for tc in delta.get("tool_calls") or []:
             idx = tc.get("index", 0)
             slot = acc["tool_calls"].setdefault(
@@ -662,6 +806,8 @@ def _assemble_completion(acc: dict[str, Any], *, aborted: bool) -> dict[str, Any
     }
     if acc["usage"]:
         result["usage"] = acc["usage"]
+    if acc.get("response_model"):
+        result["response_model"] = acc["response_model"]
     return result
 
 

@@ -29,3 +29,7 @@
 *.whl binary
 *.exe binary
 *.dll binary
+
+# W3C XSD snapshots used by the IDS schema resolver: byte-pinned, LF.
+/schemas/w3c/*.xsd text eol=lf
+/schemas/frozen/*.json text eol=lf

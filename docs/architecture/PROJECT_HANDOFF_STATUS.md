@@ -1,6 +1,6 @@
 # openBIMAgent 阶段交接状态
 
-版本：v4.5
+版本：v4.6
 更新时间：2026-10-18（Asia/Shanghai）
 维护状态：**ACTIVE**
 工作区：`D:\devloop\workSpace\app_codex\GenerativeBIM\openBIMAgent`
@@ -10,7 +10,14 @@
 
 ## 1. 当前阶段结论
 
-### 2026-10-18 IFC 交付小补丁与用户验收准备（最新，优先于下方交付收尾）
+### 2026-10-18 origin/main 合并落盘（本地 main，最新）
+
+- 以 `origin/main` `95267ce` 为基线，本地 `main` 通过 cherry-pick `7b39523` 落盘（提交 `836fd08`）；旧历史保留在本地备份分支 `backup/local-main-20261018-7b39523` 与标签 `pre-origin-sync-20261018`。
+- 合并修复：恢复 `sensenova` provider/model/profile（上游已移除，但本机视觉链路依赖）；web 默认直管输入补充显式内/外径；providers registry/dialects 重新合并 diagnostics/abort/streaming；XSD/JSON 快照统一 LF 并固定（`schemas/w3c/`、`schemas/frozen/`、IDS XSD）；benchmark 当前 schema pin 对齐上游 `befe4f8f…`；前端 App 适配上游 ChatThread props。
+- 验证：全仓 `uv run pytest tests/ -q` = **1601 passed / 6 skipped / 0 failed**；前端 46 passed、`npm run build` 通过、lint 0 errors（131 既有 warnings）；Ruff（本轮 Python 改动）通过。
+- 状态：**未推送**；远端 `main` 仍为 `95267ce`。真实页面验收与 VLM 预算仍待确认。
+
+### 2026-10-18 IFC 交付小补丁与用户验收准备（上一轮，优先于下方交付收尾）
 
 - **ifc_download 身份读取修正**：按真实生产 IFC stage 的**根部**读取 `revision`/`candidate_sha256`（此前误读 `generation` 内字段，导致真实 stage 的版本校验形同虚设）；缺失或非法（非整数 revision、非 64-hex candidate）明确拒绝；保留首次导出从 `delivery.receipt.ifc` 读取的兼容路径；文件 SHA-256 校验保持。
 - **retry_ifc 分层摘要统一**：IFC 状态只存 `delivery.receipt.ifc`（去除顶层重复副本；旧顶层 `ifc` 仅读取兼容），`delivery_layers` 在 delivery 根部与 receipt 内同步重算，消除新旧相反状态；宿主 `execution_id`/`output_path`/文件哈希不变，`topology=unverified` 不变，重试不增加宿主调用。
