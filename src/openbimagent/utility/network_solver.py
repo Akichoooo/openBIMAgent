@@ -21,9 +21,9 @@ from openbimagent.schema_gate.gate import SchemaGate, SchemaGateError
 from openbimagent.utility.compiler import compile_solved_utility_ir
 from openbimagent.utility.contracts import CoordinateReference, StrictFrozenModel
 from openbimagent.utility.rules import MunicipalRuleSet, compile_municipal_rule_set
+from openbimagent.utility.design_limits import MunicipalDesignLimits, compile_municipal_design_limits
+from openbimagent.utility.geometry import resolve_dimensions
 from openbimagent.utility.solver import (
-    MAX_DN300_TO_DN600_MANHOLE_SPACING_M,
-    MIN_COVER_BY_SURFACE_M,
     MIN_DN300_CONCRETE_SLOPE,
     MIN_SEWAGE_DIAMETER_MM,
     CollisionContext,
@@ -32,8 +32,9 @@ from openbimagent.utility.solver import (
     UtilitySolverError,
     UtilitySolverResult,
     _clash_evidence,
-    _evidence,
     _unknown_evidence,
+    _spec_evidence,
+    SUPPORTED_DIAMETER_MM,
 )
 
 NETWORK_UTILITY_SOLVER_INPUT_VERSION = "0.1"
@@ -49,16 +50,25 @@ class NetworkSolverNode(StrictFrozenModel):
     y_m: float
     ground_elevation_m: float
     invert_anchor_m: float | None = None
+    connection_radius_m: float | None = Field(default=None, gt=0)
 
 
 class NetworkSolverSegment(StrictFrozenModel):
     segment_id: str = Field(min_length=1, max_length=256)
     start_node_id: str = Field(min_length=1, max_length=256)
     end_node_id: str = Field(min_length=1, max_length=256)
-    diameter_mm: float = Field(default=MIN_SEWAGE_DIAMETER_MM, gt=0)
+    diameter_mm: float = Field(default=SUPPORTED_DIAMETER_MM, gt=0)
+    inner_diameter_mm: float | None = Field(default=None, gt=0)
+    outer_diameter_mm: float | None = Field(default=None, gt=0)
+    wall_thickness_mm: float | None = Field(default=None, gt=0)
     material: Literal["concrete"] = "concrete"
     design_slope: float = Field(default=MIN_DN300_CONCRETE_SLOPE, ge=0)
     surface_context: Literal["driveway", "sidewalk"] = "driveway"
+
+    @model_validator(mode="after")
+    def _dimensions(self) -> "NetworkSolverSegment":
+        resolve_dimensions(self.inner_diameter_mm, self.outer_diameter_mm, self.wall_thickness_mm)
+        return self
 
 
 class NetworkGravitySolverInput(StrictFrozenModel):
@@ -93,7 +103,7 @@ class NetworkGravitySolverInput(StrictFrozenModel):
                 raise ValueError(f"segment {segment.segment_id!r} 引用未知 node {exc.args[0]!r}") from exc
             if math.hypot(end.x_m - start.x_m, end.y_m - start.y_m) <= 0.0:
                 raise ValueError(f"segment {segment.segment_id!r} 起终 node 平面位置不能相同")
-            if not math.isclose(segment.diameter_mm, MIN_SEWAGE_DIAMETER_MM, abs_tol=1e-9):
+            if not math.isclose(segment.diameter_mm, SUPPORTED_DIAMETER_MM, abs_tol=1e-9):
                 raise ValueError(f"network Solver v0.1 仅支持 DN{MIN_SEWAGE_DIAMETER_MM:g}")
             outgoing[start.node_id].add(segment.segment_id)
             incoming[end.node_id].add(segment.segment_id)
@@ -147,6 +157,7 @@ def solve_network_gravity_utility(
     *,
     domain_requirements: dict[str, Any] | None = None,
     municipal_rule_set: MunicipalRuleSet | None = None,
+    design_limits: MunicipalDesignLimits | None = None,
     schema_gate: SchemaGate | None = None,
 ) -> UtilitySolverResult:
     """确定性求解单系统多节点重力 DAG，并编译为现有 ``CompiledUtilityIR v1``。"""
@@ -167,6 +178,7 @@ def solve_network_gravity_utility(
     except (ValidationError, SchemaGateError) as exc:
         raise UtilitySolverError(f"network Solver v0.1 输入或 MunicipalRuleSet 未通过门禁: {exc}") from exc
 
+    limits = design_limits or compile_municipal_design_limits(diameter_mm=SUPPORTED_DIAMETER_MM)
     nodes = {item.node_id: item for item in request.nodes}
     segments = {item.segment_id: item for item in request.segments}
     incoming_by_node: dict[str, list[NetworkSolverSegment]] = {node_id: [] for node_id in nodes}
@@ -219,11 +231,12 @@ def solve_network_gravity_utility(
         end = nodes[segment.end_node_id]
         start_port_id = f"{segment.segment_id}-start"
         end_port_id = f"{segment.segment_id}-end"
-        diameter_m = segment.diameter_mm / 1000.0
-        required_cover_m = MIN_COVER_BY_SURFACE_M[segment.surface_context]
-        start_cover_m = start.ground_elevation_m - (solved["start_invert_m"] + diameter_m)
-        end_cover_m = end.ground_elevation_m - (solved["end_invert_m"] + diameter_m)
-        minimum_cover_m = min(start_cover_m, end_cover_m)
+        inner, outer = resolve_dimensions(segment.inner_diameter_mm, segment.outer_diameter_mm, segment.wall_thickness_mm)
+        crown_offset = (inner + outer) / 2000.0 if inner is not None and outer is not None else None
+        minimum_cover_m = (
+            min(start.ground_elevation_m - solved["start_invert_m"], end.ground_elevation_m - solved["end_invert_m"]) - crown_offset
+            if crown_offset is not None else None
+        )
         node_ports[start.node_id].append(
             _port_payload(start_port_id, "outlet", start.x_m, start.y_m, solved["start_invert_m"])
         )
@@ -245,6 +258,10 @@ def solve_network_gravity_utility(
                 "end_invert_m": solved["end_invert_m"],
                 "slope": segment.design_slope,
                 "diameter_mm": segment.diameter_mm,
+                "centerline_reference": "invert",
+                "inner_diameter_mm": segment.inner_diameter_mm,
+                "outer_diameter_mm": segment.outer_diameter_mm,
+                "wall_thickness_mm": segment.wall_thickness_mm,
                 "material": segment.material,
                 "min_cover_depth_m": minimum_cover_m,
                 "ifc_class": "IfcPipeSegment",
@@ -258,7 +275,7 @@ def solve_network_gravity_utility(
                 ir_id=ir_id,
                 solved=solved,
                 minimum_cover_m=minimum_cover_m,
-                required_cover_m=required_cover_m,
+                design_limits=limits,
                 trusted_rule_set=trusted_rule_set,
             )
         )
@@ -274,7 +291,7 @@ def solve_network_gravity_utility(
         )
     )
     payload = {
-        "protocol_version": "1.0",
+        "protocol_version": "1.1",
         "ir_id": ir_id,
         "source_ir_sha256": request.source_ir_sha256,
         "solver_name": NETWORK_UTILITY_SOLVER_NAME,
@@ -298,6 +315,7 @@ def solve_network_gravity_utility(
                 "position": {"x_m": node.x_m, "y_m": node.y_m, "z_m": node.ground_elevation_m},
                 "ports": sorted(node_ports[node.node_id], key=lambda item: item["port_id"]),
                 "ground_elevation_m": node.ground_elevation_m,
+                "connection_radius_m": node.connection_radius_m,
                 "ifc_class": "IfcDistributionChamberElement",
                 "ifc_predefined_type": "MANHOLE" if node.node_type != "junction" else "INSPECTIONCHAMBER",
             }
@@ -324,8 +342,8 @@ def _segment_evidence(
     segment: NetworkSolverSegment,
     ir_id: str,
     solved: dict[str, float],
-    minimum_cover_m: float,
-    required_cover_m: float,
+    minimum_cover_m: float | None,
+    design_limits: MunicipalDesignLimits,
     trusted_rule_set: MunicipalRuleSet,
 ) -> list[dict[str, Any]]:
     evidence_prefix = f"{request.request_id}-{segment.segment_id}"
@@ -348,74 +366,28 @@ def _segment_evidence(
             ground_elevation_m=end.ground_elevation_m,
         ),
         diameter_mm=segment.diameter_mm,
+        inner_diameter_mm=segment.inner_diameter_mm,
+        outer_diameter_mm=segment.outer_diameter_mm,
+        wall_thickness_mm=segment.wall_thickness_mm,
         material=segment.material,
         design_slope=segment.design_slope,
         surface_context=segment.surface_context,
         start_invert_m=solved["start_invert_m"],
         collision_context=request.collision_context,
     )
+    checks = [
+        ("diameter", "diameter_in_spec", design_limits.min_diameter_sewage, segment.diameter_mm),
+        ("slope", "slope_in_spec", design_limits.min_slope_sewage_d300_concrete, segment.design_slope),
+        ("cover", "cover_depth_in_spec", design_limits.min_cover_depth(segment.surface_context), minimum_cover_m),
+        ("spacing", "manhole_spacing_in_spec", design_limits.max_manhole_spacing, solved["horizontal_length_m"]),
+    ]
     return [
-        _evidence(
-            evidence_id=f"{evidence_prefix}-diameter",
-            rule_id="MU-DRAIN-001",
-            check_name="diameter_in_spec",
-            passed=segment.diameter_mm >= MIN_SEWAGE_DIAMETER_MM,
-            subject_type="segment",
-            subject_id=segment.segment_id,
-            detail=f"污水管径 DN{segment.diameter_mm:g} mm，最小允许 DN{MIN_SEWAGE_DIAMETER_MM:g} mm",
-            measured_value=segment.diameter_mm,
-            limit_value=MIN_SEWAGE_DIAMETER_MM,
-            unit="mm",
-            source_clause="GB 50014-2021 §5.2.10 表 5.2.10",
-        ),
-        _evidence(
-            evidence_id=f"{evidence_prefix}-slope",
-            rule_id="MU-DRAIN-004",
-            check_name="slope_in_spec",
-            passed=segment.design_slope >= MIN_DN300_CONCRETE_SLOPE,
-            subject_type="segment",
-            subject_id=segment.segment_id,
-            detail=(
-                f"DN300 混凝土污水管设计坡度 {segment.design_slope:.6f}，"
-                f"最小允许 {MIN_DN300_CONCRETE_SLOPE:.6f}"
-            ),
-            measured_value=segment.design_slope,
-            limit_value=MIN_DN300_CONCRETE_SLOPE,
-            unit="ratio",
-            source_clause="GB 50014-2021 §5.2.10 表 5.2.10",
-        ),
-        _evidence(
-            evidence_id=f"{evidence_prefix}-cover",
-            rule_id="MU-ELEV-001" if segment.surface_context == "driveway" else "MU-ELEV-002",
-            check_name="cover_depth_in_spec",
-            passed=minimum_cover_m >= required_cover_m - INVERT_TOLERANCE_M,
-            subject_type="segment",
-            subject_id=segment.segment_id,
-            detail=(
-                f"管段两端最小实际覆土 {minimum_cover_m:.6f} m，"
-                f"{segment.surface_context} 要求不少于 {required_cover_m:.3f} m"
-            ),
-            measured_value=minimum_cover_m,
-            limit_value=required_cover_m,
-            unit="m",
-            source_clause="GB 50014-2021 §5.3.7",
-        ),
-        _evidence(
-            evidence_id=f"{evidence_prefix}-spacing",
-            rule_id="MU-WELL-001",
-            check_name="manhole_spacing_in_spec",
-            passed=solved["horizontal_length_m"] <= MAX_DN300_TO_DN600_MANHOLE_SPACING_M,
-            subject_type="segment",
-            subject_id=segment.segment_id,
-            detail=(
-                f"DN300 管段井距 {solved['horizontal_length_m']:.6f} m，"
-                f"最大允许 {MAX_DN300_TO_DN600_MANHOLE_SPACING_M:.1f} m"
-            ),
-            measured_value=solved["horizontal_length_m"],
-            limit_value=MAX_DN300_TO_DN600_MANHOLE_SPACING_M,
-            unit="m",
-            source_clause="GB 50014-2021 §5.4.4 表 5.4.4",
-        ),
+        *[_spec_evidence(
+            evidence_id=f"{evidence_prefix}-{suffix}", check_name=check_name,
+            limit=limit, measured_value=measured, subject_id=segment.segment_id,
+            describe=lambda actual, required, name=check_name: f"{name}: measured={actual:g}; required={required:g}",
+            tolerance=INVERT_TOLERANCE_M,
+        ) for suffix, check_name, limit, measured in checks],
         *_clash_evidence(
             straight_input,
             rule_set=trusted_rule_set,

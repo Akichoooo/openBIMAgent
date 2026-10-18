@@ -14,18 +14,21 @@ import re
 import uuid
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from openbimagent.assembly.rule_projection import RuleProjectionIdentity
 from openbimagent.utility.contracts import CompiledUtilityIR
+from openbimagent.utility.geometry import execution_geometry, execution_port_positions, resolve_dimensions
 
-VECTORWORKS_PLAN_VERSION = "1.0"
+VECTORWORKS_PLAN_VERSION = "1.1"
 VECTORWORKS_PROTOCOL_VERSION = "1.0"
 VECTORWORKS_HOST_API_VERSION = "2024"
 VECTORWORKS_LAYER = "M1-Municipal-Utility"
 VECTORWORKS_UNIT = "m"
+VECTORWORKS_PIPE_MESH_SEGMENTS = 24
+"""Deterministic circumferential resolution for the hollow straight-pipe mesh."""
 
 
 class VectorworksPlanError(ValueError):
@@ -88,7 +91,11 @@ class VectorworksOperation(BaseModel):
     units: str = Field(default=VECTORWORKS_UNIT, pattern=r"^m$")
     position: Coordinate | None = None
     centerline: tuple[Coordinate, ...] = ()
-    diameter_mm: float | None = Field(default=None, gt=0)
+    nominal_diameter_mm: float | None = Field(default=None, gt=0)
+    inner_diameter_mm: float | None = Field(default=None, gt=0)
+    outer_diameter_mm: float | None = Field(default=None, gt=0)
+    geometry_kind: Literal["hollow_tube_mesh"] | None = None
+    circumferential_segments: int | None = Field(default=None, ge=8, le=64)
     material: str | None = Field(default=None, min_length=1, max_length=256)
     slope: float | None = None
     ifc_class: str | None = Field(default=None, pattern=r"^Ifc[A-Za-z0-9]+$")
@@ -99,6 +106,17 @@ class VectorworksOperation(BaseModel):
 
     @model_validator(mode="after")
     def _validate_operation_shape(self) -> "VectorworksOperation":
+        geometry_fields = (
+            self.nominal_diameter_mm,
+            self.inner_diameter_mm,
+            self.outer_diameter_mm,
+            self.geometry_kind,
+            self.circumferential_segments,
+        )
+        if self.operation is not VectorworksOperationKind.CREATE_OBJECT and any(
+            value is not None for value in geometry_fields
+        ):
+            raise ValueError("只有 create_object 可以携带 pipe geometry 字段")
         if self.operation is VectorworksOperationKind.CREATE_OBJECT:
             required = {
                 "name": self.name,
@@ -111,13 +129,36 @@ class VectorworksOperation(BaseModel):
             if self.record_name is not None or self.record_fields or self.references:
                 raise ValueError("create_object 不能携带 record/topology 字段")
             if self.object_type is VectorworksObjectType.PIPE_SEGMENT:
-                if len(self.centerline) < 2 or self.diameter_mm is None or self.material is None:
-                    raise ValueError("pipe_segment 必须携带 centerline/diameter_mm/material")
-            elif self.object_type is VectorworksObjectType.UTILITY_SYSTEM:
-                if self.position is not None or self.centerline:
-                    raise ValueError("utility_system 不应携带几何坐标")
-            elif self.position is None:
-                raise ValueError(f"{self.object_type.value} 必须携带 position")
+                if (
+                    self.nominal_diameter_mm is None
+                    or self.inner_diameter_mm is None
+                    or self.outer_diameter_mm is None
+                    or self.material is None
+                ):
+                    raise ValueError(
+                        "pipe_segment 必须显式携带 nominal/inner/outer diameter 和 material；"
+                        "DN 不得当作外径"
+                    )
+                if len(self.centerline) != 2:
+                    raise ValueError(
+                        "Vectorworks pipe solid 仅支持直管：centerline 必须恰好有两个轴线端点"
+                    )
+                if self.inner_diameter_mm >= self.outer_diameter_mm:
+                    raise ValueError("pipe_segment inner diameter 必须小于 outer diameter")
+                if self.geometry_kind != "hollow_tube_mesh":
+                    raise ValueError("pipe_segment 必须显式声明 geometry_kind=hollow_tube_mesh")
+                if self.circumferential_segments is None:
+                    raise ValueError("pipe_segment 必须携带 circumferential_segments")
+            else:
+                if any(value is not None for value in geometry_fields):
+                    raise ValueError(f"{self.object_type.value} 不得携带 pipe geometry 字段")
+                if self.centerline:
+                    raise ValueError(f"{self.object_type.value} 不得携带 centerline")
+                if self.object_type is VectorworksObjectType.UTILITY_SYSTEM:
+                    if self.position is not None:
+                        raise ValueError("utility_system 不应携带几何坐标")
+                elif self.position is None:
+                    raise ValueError(f"{self.object_type.value} 必须携带 position")
         elif self.operation is VectorworksOperationKind.SET_RECORD:
             if self.record_name is None or not self.record_fields:
                 raise ValueError("set_record 必须携带 record_name 和 record_fields")
@@ -232,6 +273,8 @@ class VectorworksCapabilities(BaseModel):
     controlled_save: bool = True
     idempotent_receipts: bool = True
     semantic_snapshot: bool = True
+    pipe_solid_mesh: bool = True
+    geometry_kinds: tuple[Literal["hollow_tube_mesh"], ...] = ("hollow_tube_mesh",)
 
 
 class OperationReceipt(BaseModel):
@@ -256,6 +299,9 @@ class VectorworksExecutionReceipt(BaseModel):
     applied_operations: tuple[OperationReceipt, ...] = ()
     confirmed_object_ids: tuple[str, ...] = ()
     semantic_snapshot: dict[str, Any] | None = None
+    geometry_snapshot: dict[str, Any] | None = None
+    geometry_status: str | None = None
+    geometry_caveats: tuple[str, ...] = ()
     compensations: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
 
@@ -283,6 +329,10 @@ class VectorworksBuilder:
         rule_identity: RuleProjectionIdentity | None = None,
     ) -> VectorworksExecutionPlan:
         compiled = ir if isinstance(ir, CompiledUtilityIR) else CompiledUtilityIR.model_validate(ir)
+        try:
+            axis_ports = execution_port_positions(compiled)
+        except ValueError as exc:
+            raise VectorworksPlanError(str(exc)) from exc
         selected = set(asset_ids or ())
         operations: list[VectorworksOperation] = []
         systems = sorted(compiled.systems, key=lambda item: item.system_id)
@@ -313,7 +363,7 @@ class VectorworksBuilder:
                     continue
                 operations.extend(
                     _create_and_record_port(
-                        port,
+                        port.model_copy(update={"position": axis_ports.get(port.port_id, port.position)}),
                         node.system_id,
                         f"/nodes/{node_index}/ports/{port_index}",
                         rule_identity,
@@ -385,6 +435,13 @@ def validate_plan_capabilities(
             raise VectorworksPlanError(f"Vectorworks 能力不允许操作: {op.operation.value}")
         if op.object_type not in allowed_objects:
             raise VectorworksPlanError(f"Vectorworks 能力不允许对象类型: {op.object_type.value}")
+        if op.operation is VectorworksOperationKind.CREATE_OBJECT and op.object_type is VectorworksObjectType.PIPE_SEGMENT:
+            if not capabilities.pipe_solid_mesh:
+                raise VectorworksPlanError("Vectorworks 能力未声明 pipe_solid_mesh，拒绝直管实体计划")
+            if op.geometry_kind not in capabilities.geometry_kinds:
+                raise VectorworksPlanError(
+                    f"Vectorworks 能力不支持直管几何类型: {op.geometry_kind!r}"
+                )
         if op.operation is VectorworksOperationKind.SET_RECORD and op.object_id not in known_objects:
             raise VectorworksPlanError(f"set_record 引用未知对象: {op.object_id}")
         if op.operation is VectorworksOperationKind.CONNECT_TOPOLOGY:
@@ -556,6 +613,22 @@ def _create_and_record_segment(
     rule_identity: RuleProjectionIdentity | None,
 ) -> list[VectorworksOperation]:
     obj_type = VectorworksObjectType.PIPE_SEGMENT
+    axis, outer = execution_geometry(segment)
+    inner, resolved_outer = resolve_dimensions(
+        segment.inner_diameter_mm,
+        segment.outer_diameter_mm,
+        segment.wall_thickness_mm,
+    )
+    if inner is None or resolved_outer is None:
+        raise VectorworksPlanError(
+            f"segment {segment.segment_id!r}: Vectorworks solid pipe requires explicit inner and outer diameters"
+        )
+    if len(axis) != 2:
+        raise VectorworksPlanError(
+            f"segment {segment.segment_id!r}: Vectorworks solid pipe supports straight pipes only "
+            f"(centerline has {len(axis)} points)"
+        )
+    outer = resolved_outer
     return [
         VectorworksOperation(
             operation=VectorworksOperationKind.CREATE_OBJECT,
@@ -566,8 +639,12 @@ def _create_and_record_segment(
             layer_name=VECTORWORKS_LAYER,
             class_name=_class_name(segment.system_id),
             units=VECTORWORKS_UNIT,
-            centerline=tuple(Coordinate(**point.model_dump()) for point in segment.centerline),
-            diameter_mm=segment.diameter_mm,
+            centerline=tuple(Coordinate(**point.model_dump()) for point in axis),
+            nominal_diameter_mm=segment.diameter_mm,
+            inner_diameter_mm=inner,
+            outer_diameter_mm=outer,
+            geometry_kind="hollow_tube_mesh",
+            circumferential_segments=VECTORWORKS_PIPE_MESH_SEGMENTS,
             material=segment.material,
             slope=segment.slope,
             ifc_class=segment.ifc_class,
@@ -585,6 +662,11 @@ def _create_and_record_segment(
             {"min_cover_depth_m": segment.min_cover_depth_m},
             {
                 "DiameterMM": (segment.diameter_mm, "mm"),
+                "NominalDiameterMM": (segment.diameter_mm, "mm"),
+                "InnerDiameterMM": (inner, "mm"),
+                "OuterDiameterMM": (outer, "mm"),
+                "GeometryKind": ("hollow_tube_mesh", None),
+                "MeshSegments": (VECTORWORKS_PIPE_MESH_SEGMENTS, None),
                 "EndInvertM": (segment.end_invert_m, "m"),
                 "HorizontalLengthM": (segment.horizontal_length_m, "m"),
                 "Slope": (segment.slope, None),

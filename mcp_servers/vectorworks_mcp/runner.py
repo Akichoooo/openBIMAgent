@@ -19,6 +19,7 @@ import sys
 import time
 import traceback
 import uuid
+from collections import Counter
 from contextlib import redirect_stdout
 from datetime import datetime
 from pathlib import Path
@@ -98,11 +99,29 @@ def execute_vs_code(code: str) -> dict[str, Any]:
         }
 
 
-_PLAN_VERSION = "1.0"
+_PLAN_VERSION = "1.1"
 _PROTOCOL_VERSION = "1.0"
 _HOST_API_VERSION = "2024"
 _STATE_VERSION = "1.0"
 _SEMANTIC_SNAPSHOT_VERSION = "1.0"
+_GEOMETRY_SNAPSHOT_VERSION = "1.1"
+_PIPE_GEOMETRY_TOLERANCE_M = 1e-5
+_READBACK_TOLERANCE_BASIS = (
+    "numeric readback resolution only: 1e-5 m (0.01 mm) bound for host vertex "
+    "readback at the protocol's six-decimal-metre precision; not a surface "
+    "accuracy, fabrication or engineering acceptance tolerance"
+)
+_MESH_TOPOLOGY_SCOPE = (
+    "face count, duplicate faces, shared-edge connectivity and face orientation"
+)
+_MESH_TOPOLOGY_UNAVAILABLE_REASON = (
+    "Vectorworks 2024 exposes no non-destructive mesh face/edge readback: the "
+    "official vs.py API surface (2865 functions) contains only GetMeshVertsCnt, "
+    "GetMeshVertex, SetMeshVertex and MeshToGroup for meshes, and MeshToGroup "
+    "destructively converts the mesh to a group of 3D polygons"
+)
+_PIPE_MESH_OBJECT_TYPE = 40
+_PIPE_GEOMETRY_KIND = "hollow_tube_mesh"
 _AUTHORIZED_LAYER = "M1-Municipal-Utility"
 _SEMANTIC_DECIMAL_PLACES = 6
 _VECTORWORKS_METERS_UNIT_STYLE = 9
@@ -224,6 +243,83 @@ def _rule_domain_fields(identity: dict[str, Any] | None) -> dict[str, str]:
     return fields
 
 
+_OPERATION_FIELDS = {
+    "operation",
+    "operation_id",
+    "object_id",
+    "object_type",
+    "name",
+    "layer_name",
+    "class_name",
+    "units",
+    "position",
+    "centerline",
+    "nominal_diameter_mm",
+    "inner_diameter_mm",
+    "outer_diameter_mm",
+    "geometry_kind",
+    "circumferential_segments",
+    "material",
+    "slope",
+    "ifc_class",
+    "ifc_predefined_type",
+    "record_name",
+    "record_fields",
+    "references",
+}
+
+
+def _positive_finite(value: Any, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{label} 必须是数值")
+    number = float(value)
+    if not math.isfinite(number) or number <= 0:
+        raise ValueError(f"{label} 必须是有限正数")
+    return number
+
+
+def _pipe_axis_points(
+    operation: dict[str, Any],
+) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+    centerline = operation.get("centerline")
+    if not isinstance(centerline, list) or len(centerline) != 2:
+        raise ValueError("pipe_segment 必须是直管：centerline 必须恰好有两个轴线端点")
+    points = []
+    for point in centerline:
+        if not isinstance(point, dict) or set(point) != {"x_m", "y_m", "z_m"}:
+            raise ValueError("pipe_segment centerline 坐标必须是 {x_m,y_m,z_m}")
+        values = []
+        for axis in ("x_m", "y_m", "z_m"):
+            value = point[axis]
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+            ):
+                raise ValueError(f"pipe_segment centerline.{axis} 必须是有限数值")
+            values.append(float(value))
+        points.append(tuple(values))
+    if math.dist(points[0], points[1]) <= 1e-9:
+        raise ValueError("pipe_segment 长度无效（轴线端点重合）")
+    return points[0], points[1]
+
+
+def _validate_pipe_operation(operation: dict[str, Any]) -> None:
+    inner = _positive_finite(operation.get("inner_diameter_mm"), "inner_diameter_mm")
+    outer = _positive_finite(operation.get("outer_diameter_mm"), "outer_diameter_mm")
+    _positive_finite(operation.get("nominal_diameter_mm"), "nominal_diameter_mm")
+    if inner >= outer:
+        raise ValueError("pipe_segment inner_diameter_mm 必须小于 outer_diameter_mm")
+    if operation.get("geometry_kind") != _PIPE_GEOMETRY_KIND:
+        raise ValueError(
+            f"pipe_segment 必须显式声明 geometry_kind={_PIPE_GEOMETRY_KIND!r}；不能静默退化为轴线"
+        )
+    segments = operation.get("circumferential_segments")
+    if isinstance(segments, bool) or not isinstance(segments, int) or not 8 <= segments <= 64:
+        raise ValueError("pipe_segment circumferential_segments 必须是 8..64 的整数")
+    _pipe_axis_points(operation)
+
+
 def _validate_typed_plan(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ValueError("execution plan 必须是对象")
@@ -269,6 +365,9 @@ def _validate_typed_plan(raw: Any) -> dict[str, Any]:
     for operation in operations:
         if not isinstance(operation, dict):
             raise ValueError("typed operation 必须是对象")
+        unknown_operation_fields = sorted(set(operation) - _OPERATION_FIELDS)
+        if unknown_operation_fields:
+            raise ValueError(f"typed operation 含未知字段: {unknown_operation_fields}")
         kind = operation.get("operation")
         operation_id = operation.get("operation_id")
         object_id = operation.get("object_id")
@@ -285,8 +384,35 @@ def _validate_typed_plan(raw: Any) -> dict[str, Any]:
         if kind == "create_object":
             if operation.get("layer_name") != _AUTHORIZED_LAYER:
                 raise ValueError("create_object escaped authorized Vectorworks layer")
+            if object_type == "pipe_segment":
+                _validate_pipe_operation(operation)
+            else:
+                if any(
+                    operation.get(field) is not None
+                    for field in (
+                        "nominal_diameter_mm",
+                        "inner_diameter_mm",
+                        "outer_diameter_mm",
+                        "geometry_kind",
+                        "circumferential_segments",
+                    )
+                ):
+                    raise ValueError(f"{object_type} 不得携带 pipe geometry 字段")
+                if operation.get("centerline"):
+                    raise ValueError(f"{object_type} 不得携带 centerline")
             created.add(object_id)
         elif kind == "set_record":
+            if any(
+                operation.get(field) is not None
+                for field in (
+                    "nominal_diameter_mm",
+                    "inner_diameter_mm",
+                    "outer_diameter_mm",
+                    "geometry_kind",
+                    "circumferential_segments",
+                )
+            ):
+                raise ValueError("set_record 不得携带 pipe geometry 字段")
             if object_id not in created:
                 raise ValueError(f"set_record 引用未知对象: {object_id}")
             record_fields = operation.get("record_fields")
@@ -305,6 +431,17 @@ def _validate_typed_plan(raw: Any) -> dict[str, Any]:
             if projected != expected_rule_fields:
                 raise ValueError(f"rule_identity 与对象 {object_id!r} record 不一致")
         elif kind == "connect_topology":
+            if any(
+                operation.get(field) is not None
+                for field in (
+                    "nominal_diameter_mm",
+                    "inner_diameter_mm",
+                    "outer_diameter_mm",
+                    "geometry_kind",
+                    "circumferential_segments",
+                )
+            ):
+                raise ValueError("connect_topology 不得携带 pipe geometry 字段")
             references = operation.get("references")
             if (
                 not isinstance(references, list)
@@ -477,6 +614,31 @@ def _assert_object_layer(vs: Any, handle: Any, expected: str, object_name: str |
         )
 
 
+def _assert_blank_document(vs: Any) -> None:
+    """Reject any existing drawing object in any layer before first execution.
+
+    ALL has no active-layer, visibility, selection, name or object-type filter.
+    A group or symbol instance itself counts as a drawing object, so rejecting
+    it also protects its contents without traversing native HANDLE chains.
+    Resource definitions without drawing instances are not drawing objects.
+    """
+    for_each_object = getattr(vs, "ForEachObject", None)
+    if not callable(for_each_object):
+        raise RuntimeError("Vectorworks ForEachObject unavailable; cannot prove blank document")
+    occupied = False
+
+    def _found_object(handle: Any) -> None:
+        nonlocal occupied
+        occupied = True
+
+    for_each_object(_found_object, "(ALL)")
+    if occupied:
+        raise RuntimeError(
+            "Vectorworks first execution requires an empty unnamed document; "
+            "existing drawing objects were found. Open a blank document explicitly."
+        )
+
+
 def _ensure_document_units_meters(vs: Any) -> None:
     """Set and verify meters before interpreting typed plan coordinates."""
     unit_info = vs.GetPrimaryUnitInfo()
@@ -507,6 +669,148 @@ def _ensure_document_units_meters(vs: Any) -> None:
         )
 
 
+def _require_vs_functions(vs: Any, names: tuple[str, ...]) -> None:
+    missing = [name for name in names if not hasattr(vs, name)]
+    if missing:
+        raise RuntimeError(
+            "Vectorworks 宿主缺少直管实体所需的 API: "
+            + ", ".join(missing)
+            + "；在任何宿主写入前拒绝执行"
+        )
+
+
+def _validate_pipe_solid_host_capabilities(vs: Any, plan: dict[str, Any]) -> None:
+    """Fail before any host side effect if the mesh API is unavailable."""
+    pipe_operations = [
+        operation
+        for operation in plan["operations"]
+        if operation.get("operation") == "create_object"
+        and operation.get("object_type") == "pipe_segment"
+    ]
+    if not pipe_operations:
+        return
+    _require_vs_functions(
+        vs,
+        (
+            "BeginMesh",
+            "EndMesh",
+            "BeginPoly3D",
+            "Add3DPt",
+            "EndPoly3D",
+            "LNewObj",
+            "GetTypeN",
+            "GetMeshVertsCnt",
+            "GetMeshVertex",
+            "SetName",
+            "SetClass",
+            "Layer",
+        ),
+    )
+
+
+def _unit_vector(vector: tuple[float, float, float]) -> tuple[float, float, float]:
+    length = math.sqrt(sum(value * value for value in vector))
+    if length <= 1e-15:
+        raise ValueError("cannot normalize a zero-length vector")
+    return tuple(value / length for value in vector)
+
+
+def _cross(
+    left: tuple[float, float, float], right: tuple[float, float, float]
+) -> tuple[float, float, float]:
+    return (
+        left[1] * right[2] - left[2] * right[1],
+        left[2] * right[0] - left[0] * right[2],
+        left[0] * right[1] - left[1] * right[0],
+    )
+
+
+def _zip_strict(left: Any, right: Any) -> Any:
+    """Pairwise strict pairing helper; host Python 3.9 lacks the strict keyword."""
+    left_values = tuple(left)
+    right_values = tuple(right)
+    if len(left_values) != len(right_values):
+        raise ValueError(
+            f"strict pairing length mismatch: {len(left_values)} != {len(right_values)}"
+        )
+    return ((left_values[index], right_values[index]) for index in range(len(left_values)))
+
+
+def _dot(
+    left: tuple[float, float, float], right: tuple[float, float, float]
+) -> float:
+    return sum(a * b for a, b in _zip_strict(left, right))
+
+
+def _pipe_mesh_faces(operation: dict[str, Any]) -> list[tuple[tuple[float, float, float], ...]]:
+    """Closed mesh: outer wall, inner wall, and annular caps at both ends.
+
+    Coordinates are world metres from the typed plan axis. The mesh is a host
+    geometry object, not a native pipe/boolean solid; the readback verifies the
+    actual mesh vertices against these expected surfaces.
+    """
+    start, end = _pipe_axis_points(operation)
+    inner = _positive_finite(operation.get("inner_diameter_mm"), "inner_diameter_mm") / 2000.0
+    outer = _positive_finite(operation.get("outer_diameter_mm"), "outer_diameter_mm") / 2000.0
+    segments = operation.get("circumferential_segments")
+    if isinstance(segments, bool) or not isinstance(segments, int) or not 8 <= segments <= 64:
+        raise ValueError("circumferential_segments 必须是 8..64 的整数")
+    direction = tuple(b - a for a, b in _zip_strict(start, end))
+    length = math.sqrt(sum(value * value for value in direction))
+    if length <= 1e-9:
+        raise ValueError("pipe segment has zero length")
+    axis = tuple(value / length for value in direction)
+    reference = (0.0, 0.0, 1.0) if abs(axis[2]) < 0.9 else (1.0, 0.0, 0.0)
+    normal_a = _unit_vector(_cross(axis, reference))
+    normal_b = _cross(axis, normal_a)
+    outer_start: list[tuple[float, float, float]] = []
+    inner_start: list[tuple[float, float, float]] = []
+    outer_end: list[tuple[float, float, float]] = []
+    inner_end: list[tuple[float, float, float]] = []
+    for index in range(segments):
+        angle = 2.0 * math.pi * index / segments
+        radial = tuple(
+            math.cos(angle) * a + math.sin(angle) * b
+            for a, b in _zip_strict(normal_a, normal_b)
+        )
+        outer_start.append(tuple(p + r * outer for p, r in _zip_strict(start, radial)))
+        inner_start.append(tuple(p + r * inner for p, r in _zip_strict(start, radial)))
+        outer_end.append(tuple(p + r * outer for p, r in _zip_strict(end, radial)))
+        inner_end.append(tuple(p + r * inner for p, r in _zip_strict(end, radial)))
+    faces: list[tuple[tuple[float, float, float], ...]] = []
+    for index in range(segments):
+        following = (index + 1) % segments
+        faces.append((outer_start[index], outer_start[following], outer_end[following], outer_end[index]))
+        faces.append((inner_start[index], inner_end[index], inner_end[following], inner_start[following]))
+        faces.append((outer_start[index], inner_start[index], inner_start[following], outer_start[following]))
+        faces.append((outer_end[index], outer_end[following], inner_end[following], inner_end[index]))
+    return faces
+
+
+def _create_pipe_mesh(vs: Any, operation: dict[str, Any]) -> Any:
+    _validate_pipe_solid_host_capabilities(vs, {"operations": [operation]})
+    faces = _pipe_mesh_faces(operation)
+    vs.BeginMesh()
+    for face in faces:
+        vs.BeginPoly3D()
+        for point in face:
+            vs.Add3DPt(point)
+        vs.EndPoly3D()
+    vs.EndMesh()
+    handle = vs.LNewObj()
+    if _vectorworks_nil_handle(handle):
+        raise RuntimeError(
+            f"Vectorworks 未返回 pipe mesh handle: object_id={operation['object_id']}"
+        )
+    handle_type = int(vs.GetTypeN(handle))
+    if handle_type != _PIPE_MESH_OBJECT_TYPE:
+        raise RuntimeError(
+            f"Vectorworks pipe 对象不是 mesh: object_id={operation['object_id']} "
+            f"GetTypeN={handle_type} expected={_PIPE_MESH_OBJECT_TYPE}"
+        )
+    return handle
+
+
 def _create_typed_object(vs: Any, operation: dict[str, Any]) -> Any:
     layer_name = operation.get("layer_name")
     if layer_name != _AUTHORIZED_LAYER:
@@ -523,14 +827,7 @@ def _create_typed_object(vs: Any, operation: dict[str, Any]) -> Any:
     vs.Layer(layer_name)
     object_type = operation["object_type"]
     if object_type == "pipe_segment":
-        centerline = operation.get("centerline") or []
-        if len(centerline) < 2:
-            raise ValueError("pipe_segment 缺少 centerline")
-        vs.BeginPoly3D()
-        for point in centerline:
-            vs.Add3DPt((point["x_m"], point["y_m"], point["z_m"]))
-        vs.EndPoly3D()
-        handle = vs.LNewObj()
+        handle = _create_pipe_mesh(vs, operation)
     else:
         position = operation.get("position") or {"x_m": 0.0, "y_m": 0.0, "z_m": 0.0}
         # Groups are proper named containers in Vectorworks. Locus3D alone
@@ -632,13 +929,16 @@ def _save_controlled_document(vs: Any, target: Path) -> None:
                 "Vectorworks save refused because another document is active: "
                 f"expected={target}, actual={active_path}"
             )
-        vs.DoMenuTextByName("Save", 0)
-    else:
-        save_result = vs.SaveActiveDocument(str(target))
-        if save_result != 0:
-            raise RuntimeError(
-                f"Vectorworks SaveActiveDocument failed: code={save_result}"
-            )
+    # 宿主真机证据（2026-10-18，two-pipes 验收）：VW2024 嵌入 Python 里
+    # DoMenuTextByName("Save", 0) 是静默 no-op（不写盘、不报错），导致已命名
+    # 文档的 per-op 持久化边界不可观测。改为每次保存都走带返回码的
+    # SaveActiveDocument，并以 mtime 前进验证落盘，静默未写盘即失败。
+    before_mtime_ns = target.stat().st_mtime_ns if target.is_file() else None
+    save_result = vs.SaveActiveDocument(str(target))
+    if save_result != 0:
+        raise RuntimeError(
+            f"Vectorworks SaveActiveDocument failed: code={save_result}"
+        )
     active_after = str(vs.GetFPathName() or "")
     if not active_after or Path(active_after).resolve() != target:
         raise RuntimeError(
@@ -647,6 +947,11 @@ def _save_controlled_document(vs: Any, target: Path) -> None:
     if not target.is_file():
         raise RuntimeError(
             f"Vectorworks save did not materialize the controlled document: {target}"
+        )
+    after_mtime_ns = target.stat().st_mtime_ns
+    if before_mtime_ns is not None and after_mtime_ns == before_mtime_ns:
+        raise RuntimeError(
+            f"Vectorworks save did not write the controlled document: {target}"
         )
 
 
@@ -724,7 +1029,539 @@ def _record_definitions(plan: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return definitions
 
 
-def _project_semantic_snapshot(plan: dict[str, Any], vs: Any) -> dict[str, Any]:
+def _read_mesh_vertices(vs: Any, handle: Any) -> tuple[list[tuple[float, float, float]], int]:
+    count = int(vs.GetMeshVertsCnt(handle))
+    if count <= 0:
+        raise ValueError("Vectorworks mesh has no vertices")
+    vertices: list[tuple[float, float, float]] = []
+    index_base = 0
+    try:
+        first = vs.GetMeshVertex(handle, 0)
+    except Exception:
+        first = None
+    if first is None:
+        index_base = 1
+        vertices = [
+            _semantic_coordinate_tuple(vs.GetMeshVertex(handle, index))
+            for index in range(1, count + 1)
+        ]
+    else:
+        vertices.append(_semantic_coordinate_tuple(first))
+        for index in range(1, count):
+            vertices.append(_semantic_coordinate_tuple(vs.GetMeshVertex(handle, index)))
+    return vertices, index_base
+
+
+def _semantic_coordinate_tuple(value: Any) -> tuple[float, float, float]:
+    if not isinstance(value, (tuple, list)) or len(value) != 3:
+        raise ValueError(f"Vectorworks returned invalid mesh vertex: {value!r}")
+    point = tuple(float(item) for item in value)
+    if any(not math.isfinite(item) for item in point):
+        raise ValueError(f"Vectorworks returned non-finite mesh vertex: {value!r}")
+    return point  # type: ignore[return-value]
+
+
+def _centroid(points: list[tuple[float, float, float]]) -> tuple[float, float, float]:
+    return tuple(sum(point[index] for point in points) / len(points) for index in range(3))  # type: ignore[return-value]
+
+
+def _distance(left: tuple[float, float, float], right: tuple[float, float, float]) -> float:
+    return math.dist(left, right)
+
+
+def _polygonal_radial_deviation_mm(segments: int, diameter_mm: float) -> float:
+    """Mid-edge sagitta of a regular N-gon inscribed in the nominal circle.
+
+    The generated mesh places every ring vertex exactly on the nominal inner or
+    outer surface.  Between two adjacent vertices the wall is a straight chord
+    inside the nominal circle; its maximum radial deviation (sagitta) is
+    ``h = R * (1 - cos(pi / N))``.  This is a property of the chosen
+    circumferential discretization, not a numeric readback tolerance and not an
+    engineering acceptance threshold.
+    """
+    radius_mm = diameter_mm / 2.0
+    return radius_mm * (1.0 - math.cos(math.pi / segments))
+
+
+def _face_cycles(
+    face: tuple[tuple[float, float, float], ...],
+) -> tuple[
+    list[tuple[float, float, float]],
+    tuple[tuple[float, float, float], ...],
+    tuple[tuple[float, float, float], ...],
+]:
+    """Return (rounded original cycle, directed canonical cycle, undirected key)."""
+    points = [
+        (round(point[0], 6), round(point[1], 6), round(point[2], 6)) for point in face
+    ]
+    if not points:
+        return [], (), ()
+    rotations = [tuple(points[index:] + points[:index]) for index in range(len(points))]
+    reversed_points = list(reversed(points))
+    reversed_rotations = [
+        tuple(reversed_points[index:] + reversed_points[:index])
+        for index in range(len(reversed_points))
+    ]
+    return points, min(rotations), min([*rotations, *reversed_rotations])
+
+
+def _verify_mesh_face_topology(
+    host_faces: list[tuple[tuple[float, float, float], ...]],
+    expected_faces: list[tuple[tuple[float, float, float], ...]],
+) -> dict[str, Any]:
+    """Check mesh closure, duplicate faces, edge manifoldness and orientation.
+
+    Only usable when the host exposes a non-destructive face readback; the
+    Vectorworks 2024 adapter never does (see _read_host_mesh_faces).  Faces are
+    compared as directed vertex cycles after rounding to the protocol's
+    six-decimal-metre precision, so deleting a face, duplicating a face or
+    reversing a face's winding each fail with a distinct diagnostic instead of
+    passing on the vertex count alone.  This verifies the geometry implied by
+    the face loops, not just the vertex set.
+    """
+    host_undirected: Counter[tuple[tuple[float, float, float], ...]] = Counter()
+    host_directed: Counter[tuple[tuple[float, float, float], ...]] = Counter()
+    host_directed_key: dict[
+        tuple[tuple[float, float, float], ...], tuple[tuple[float, float, float], ...]
+    ] = {}
+    host_edges: Counter[
+        tuple[tuple[float, float, float], tuple[float, float, float]]
+    ] = Counter()
+    for face in host_faces:
+        points, directed, undirected = _face_cycles(face)
+        host_directed[directed] += 1
+        host_undirected[undirected] += 1
+        host_directed_key[directed] = undirected
+        if len(points) < 3:
+            continue
+        for index, point in enumerate(points):
+            following = points[(index + 1) % len(points)]
+            if point != following:
+                host_edges[(point, following)] += 1
+    expected_undirected: Counter[tuple[tuple[float, float, float], ...]] = Counter()
+    expected_directed: Counter[tuple[tuple[float, float, float], ...]] = Counter()
+    expected_directed_key: dict[
+        tuple[tuple[float, float, float], ...], tuple[tuple[float, float, float], ...]
+    ] = {}
+    for face in expected_faces:
+        _points, directed, undirected = _face_cycles(face)
+        expected_directed[directed] += 1
+        expected_undirected[undirected] += 1
+        expected_directed_key[directed] = undirected
+    missing = sum((expected_undirected - host_undirected).values())
+    duplicate_or_extra = sum((host_undirected - expected_undirected).values())
+    reversed_faces = 0
+    for undirected in expected_undirected:
+        expected_for_key = {
+            key for key, value in expected_directed_key.items() if value == undirected
+        }
+        for directed, count in host_directed.items():
+            if host_directed_key[directed] != undirected:
+                continue
+            if directed not in expected_for_key:
+                reversed_faces += count
+    boundary_edges = 0
+    nonmanifold_edges = 0
+    inconsistent_edges = 0
+    processed: set[
+        tuple[tuple[float, float, float], tuple[float, float, float]]
+    ] = set()
+    for (point, following), forward_count in host_edges.items():
+        key = (point, following) if point <= following else (following, point)
+        if key in processed:
+            continue
+        processed.add(key)
+        backward_count = host_edges.get((following, point), 0)
+        total = forward_count + backward_count
+        if total < 2:
+            boundary_edges += 1
+        elif total > 2:
+            nonmanifold_edges += 1
+        elif forward_count != 1 or backward_count != 1:
+            inconsistent_edges += 1
+    checks = {
+        "face_count_matches": len(host_faces) == len(expected_faces),
+        "no_missing_faces": missing == 0,
+        "no_duplicate_or_extra_faces": duplicate_or_extra == 0,
+        "face_orientation_consistent": reversed_faces == 0 and inconsistent_edges == 0,
+        "edge_manifold": boundary_edges == 0 and nonmanifold_edges == 0,
+    }
+    failures: list[str] = []
+    if missing:
+        failures.append(f"{missing} expected mesh faces are missing from the host readback")
+    if duplicate_or_extra:
+        failures.append(
+            f"{duplicate_or_extra} host mesh faces are duplicated or not part of the expected closed mesh"
+        )
+    if reversed_faces:
+        failures.append(f"{reversed_faces} host mesh faces have reversed or inconsistent winding")
+    if boundary_edges:
+        failures.append(f"{boundary_edges} mesh edges are not shared by exactly two faces")
+    if nonmanifold_edges:
+        failures.append(f"{nonmanifold_edges} mesh edges are shared by more than two faces")
+    if inconsistent_edges:
+        failures.append(f"{inconsistent_edges} mesh edges are traversed twice in the same direction")
+    return {
+        "status": "verified" if all(checks.values()) else "failed",
+        "method": "host_face_readback",
+        "scope": _MESH_TOPOLOGY_SCOPE,
+        "face_count": len(host_faces),
+        "checks": checks,
+        "failures": failures[:12],
+    }
+
+
+def _read_host_mesh_faces(
+    vs: Any, handle: Any
+) -> list[tuple[tuple[float, float, float], ...]] | None:
+    """Return host mesh face loops when the host exposes a non-destructive API.
+
+    Vectorworks 2024 does not.  The official vs.py API surface (2865 functions)
+    contains only GetMeshVertsCnt, GetMeshVertex, SetMeshVertex and MeshToGroup
+    for meshes; MeshToGroup destructively converts the mesh to a group of 3D
+    polygons, so it cannot be used for readback.  A future host adapter must be
+    added here explicitly together with its documented face semantics.
+    """
+    del vs, handle
+    return None
+
+
+def _topology_unverified(reason: str) -> dict[str, Any]:
+    return {
+        "status": "unverified",
+        "method": "no_nondestructive_host_face_api",
+        "scope": _MESH_TOPOLOGY_SCOPE,
+        "checks": {},
+        "face_count": None,
+        "failures": [],
+        "reason": reason,
+    }
+
+
+def _pipe_object_status(dimension_status: str, topology_status: str) -> str:
+    if "failed" in {dimension_status, topology_status}:
+        return "failed"
+    if dimension_status == "verified" and topology_status == "verified":
+        return "verified"
+    if dimension_status == "verified" and topology_status == "unverified":
+        return "dimension_verified_topology_unverified"
+    return "unverified"
+
+
+def _measure_pipe_mesh(vs: Any, handle: Any, operation: dict[str, Any]) -> dict[str, Any]:
+    expected_start, expected_end = _pipe_axis_points(operation)
+    expected_length = _distance(expected_start, expected_end)
+    expected_inner_mm = _positive_finite(operation.get("inner_diameter_mm"), "inner_diameter_mm")
+    expected_outer_mm = _positive_finite(operation.get("outer_diameter_mm"), "outer_diameter_mm")
+    expected_nominal_mm = _positive_finite(operation.get("nominal_diameter_mm"), "nominal_diameter_mm")
+    segments = int(operation["circumferential_segments"])
+    tolerance_m = _PIPE_GEOMETRY_TOLERANCE_M
+    tolerance_mm = tolerance_m * 1000.0
+    expected = {
+        "axis_start_m": {"x_m": expected_start[0], "y_m": expected_start[1], "z_m": expected_start[2]},
+        "axis_end_m": {"x_m": expected_end[0], "y_m": expected_end[1], "z_m": expected_end[2]},
+        "length_m": expected_length,
+        "nominal_diameter_mm": expected_nominal_mm,
+        "inner_diameter_mm": expected_inner_mm,
+        "outer_diameter_mm": expected_outer_mm,
+        "circumferential_segments": segments,
+    }
+    discretization = {
+        "circumferential_segments": segments,
+        "radial_deviation_mm": {
+            "inner": round(_polygonal_radial_deviation_mm(segments, expected_inner_mm), 6),
+            "outer": round(_polygonal_radial_deviation_mm(segments, expected_outer_mm), 6),
+        },
+        "basis": (
+            "regular N-gon mid-edge sagitta h = R*(1-cos(pi/N)); ring vertices lie "
+            "exactly on the nominal circle and the chordal wall deviates inward by at most h"
+        ),
+        "is_engineering_tolerance": False,
+    }
+    base = {
+        "stable_id": operation["object_id"],
+        "object_type": "pipe_segment",
+        "geometry_kind": operation.get("geometry_kind"),
+        "host_handle": vs.GetName(handle),
+        "expected": expected,
+        "discretization": discretization,
+        "readback_tolerance_m": tolerance_m,
+        "readback_tolerance_basis": _READBACK_TOLERANCE_BASIS,
+    }
+
+    def _early_failure(
+        dimension_status: str, dimension_checks: dict[str, Any], failures: list[str]
+    ) -> dict[str, Any]:
+        topology = _topology_unverified(_MESH_TOPOLOGY_UNAVAILABLE_REASON)
+        return {
+            **base,
+            "measured": None,
+            "dimension_status": dimension_status,
+            "dimension_checks": dimension_checks,
+            "topology_status": topology["status"],
+            "topology_checks": topology["checks"],
+            "topology_method": topology["method"],
+            "topology_scope": topology["scope"],
+            "topology_reason": topology["reason"],
+            "topology_face_count": topology["face_count"],
+            "status": _pipe_object_status(dimension_status, topology["status"]),
+            "failures": failures,
+        }
+
+    try:
+        object_type = int(vs.GetTypeN(handle))
+    except Exception as exc:
+        return _early_failure(
+            "unverified",
+            {"object_type_mesh": False},
+            [f"GetTypeN failed: {exc}"],
+        )
+    if object_type != _PIPE_MESH_OBJECT_TYPE:
+        return _early_failure(
+            "failed",
+            {"object_type_mesh": False},
+            [f"object type is {object_type}, expected mesh type {_PIPE_MESH_OBJECT_TYPE}"],
+        )
+    try:
+        vertices, index_base = _read_mesh_vertices(vs, handle)
+    except Exception as exc:
+        return _early_failure(
+            "unverified",
+            {"object_type_mesh": True},
+            [f"mesh vertex readback failed: {exc}"],
+        )
+    direction = tuple(b - a for a, b in _zip_strict(expected_start, expected_end))
+    axis = tuple(value / expected_length for value in direction)
+    inner_radius = expected_inner_mm / 2000.0
+    outer_radius = expected_outer_mm / 2000.0
+    groups: dict[str, list[tuple[float, float, float]]] = {
+        "outer_start": [], "inner_start": [], "outer_end": [], "inner_end": []
+    }
+    failures: list[str] = []
+    failure_count = 0
+    max_end_error = 0.0
+    max_radial_error = 0.0
+    for vertex in vertices:
+        offset = tuple(value - start for value, start in _zip_strict(vertex, expected_start))
+        along = _dot(offset, axis)
+        perpendicular = tuple(value - along * axis_value for value, axis_value in _zip_strict(offset, axis))
+        radial = math.sqrt(sum(value * value for value in perpendicular))
+        end_error = min(abs(along), abs(along - expected_length))
+        radial_error = min(abs(radial - inner_radius), abs(radial - outer_radius))
+        max_end_error = max(max_end_error, end_error)
+        max_radial_error = max(max_radial_error, radial_error)
+        if end_error > tolerance_m:
+            failure_count += 1
+            if len(failures) < 8:
+                failures.append(
+                    f"vertex off end planes: along={along:.9g} m error={end_error * 1000:.6g} mm"
+                )
+            continue
+        if radial_error > tolerance_m:
+            failure_count += 1
+            if len(failures) < 8:
+                failures.append(
+                    f"vertex off inner/outer surfaces: radius={radial:.9g} m error={radial_error * 1000:.6g} mm"
+                )
+            continue
+        station = "start" if abs(along) <= tolerance_m else "end"
+        if abs(radial - outer_radius) <= tolerance_m:
+            groups[f"outer_{station}"].append(vertex)
+        else:
+            groups[f"inner_{station}"].append(vertex)
+    for name, points in groups.items():
+        if len(points) < 3:
+            failures.append(f"{name} ring has fewer than 3 measurable vertices: {len(points)}")
+    outer_start_centroid = _centroid(groups["outer_start"]) if groups["outer_start"] else None
+    outer_end_centroid = _centroid(groups["outer_end"]) if groups["outer_end"] else None
+    inner_start_centroid = _centroid(groups["inner_start"]) if groups["inner_start"] else None
+    inner_end_centroid = _centroid(groups["inner_end"]) if groups["inner_end"] else None
+    measured: dict[str, Any] | None = None
+    dimension_checks = {
+        "object_type_mesh": True,
+        "vertex_count_at_least_4_rings": len(vertices) >= 4 * segments,
+        "both_ends_present": bool(groups["outer_start"] and groups["outer_end"]),
+        "both_radii_present": bool(
+            groups["inner_start"] and groups["inner_end"] and groups["outer_start"] and groups["outer_end"]
+        ),
+        "vertices_on_end_planes": max_end_error <= tolerance_m,
+        "vertices_on_inner_outer_surfaces": max_radial_error <= tolerance_m,
+    }
+    if outer_start_centroid is not None and outer_end_centroid is not None and inner_start_centroid is not None and inner_end_centroid is not None:
+        measured_length = _distance(outer_start_centroid, outer_end_centroid)
+        measured_axis = tuple(
+            (b - a) / measured_length
+            for a, b in _zip_strict(outer_start_centroid, outer_end_centroid)
+        )
+        outer_radius_measured = (
+            sum(_distance(vertex, outer_start_centroid) for vertex in groups["outer_start"])
+            + sum(_distance(vertex, outer_end_centroid) for vertex in groups["outer_end"])
+        ) / (len(groups["outer_start"]) + len(groups["outer_end"]))
+        inner_radius_measured = (
+            sum(_distance(vertex, inner_start_centroid) for vertex in groups["inner_start"])
+            + sum(_distance(vertex, inner_end_centroid) for vertex in groups["inner_end"])
+        ) / (len(groups["inner_start"]) + len(groups["inner_end"]))
+        centroid_end_error = max(
+            _distance(outer_start_centroid, expected_start),
+            _distance(outer_end_centroid, expected_end),
+            _distance(inner_start_centroid, expected_start),
+            _distance(inner_end_centroid, expected_end),
+        )
+        dimension_checks.update(
+            axis_start=centroid_end_error <= tolerance_m,
+            axis_end=centroid_end_error <= tolerance_m,
+            axis_direction=max(abs(a - b) for a, b in _zip_strict(measured_axis, axis)) <= 1e-6,
+            length=abs(measured_length - expected_length) <= tolerance_m,
+            inner_diameter=abs(inner_radius_measured * 2000.0 - expected_inner_mm) <= tolerance_mm,
+            outer_diameter=abs(outer_radius_measured * 2000.0 - expected_outer_mm) <= tolerance_mm,
+        )
+        measured = {
+            "vertex_count": len(vertices),
+            "vertex_index_base": index_base,
+            "ring_vertex_counts": {name: len(points) for name, points in groups.items()},
+            "axis_start_m": {
+                "x_m": _semantic_number(outer_start_centroid[0]),
+                "y_m": _semantic_number(outer_start_centroid[1]),
+                "z_m": _semantic_number(outer_start_centroid[2]),
+            },
+            "axis_end_m": {
+                "x_m": _semantic_number(outer_end_centroid[0]),
+                "y_m": _semantic_number(outer_end_centroid[1]),
+                "z_m": _semantic_number(outer_end_centroid[2]),
+            },
+            "length_m": _semantic_number(measured_length),
+            "axis_direction": {"x": measured_axis[0], "y": measured_axis[1], "z": measured_axis[2]},
+            "inner_diameter_mm": _semantic_number(inner_radius_measured * 2000.0),
+            "outer_diameter_mm": _semantic_number(outer_radius_measured * 2000.0),
+            "max_end_error_mm": max_end_error * 1000.0,
+            "max_radial_error_mm": max_radial_error * 1000.0,
+            "max_centroid_error_mm": centroid_end_error * 1000.0,
+            "vertex_sha256": hashlib.sha256(
+                json.dumps(
+                    sorted(tuple(round(value, 6) for value in vertex) for vertex in vertices),
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
+            "sample_vertices": [
+                {"x_m": vertex[0], "y_m": vertex[1], "z_m": vertex[2]}
+                for vertex in vertices[:4]
+            ],
+        }
+    else:
+        dimension_checks.update(axis_start=False, axis_end=False, axis_direction=False, length=False, inner_diameter=False, outer_diameter=False)
+    if failure_count:
+        failures.insert(0, f"{failure_count} mesh vertices were outside the expected surfaces/end planes")
+    dimension_status = "verified" if all(dimension_checks.values()) and not failures else "failed"
+    host_faces = _read_host_mesh_faces(vs, handle)
+    if host_faces is not None:
+        topology = _verify_mesh_face_topology(host_faces, _pipe_mesh_faces(operation))
+        topology_failures = [f"topology: {item}" for item in topology["failures"]]
+    else:
+        topology = _topology_unverified(_MESH_TOPOLOGY_UNAVAILABLE_REASON)
+        topology_failures = []
+    if topology["status"] == "failed":
+        failures.extend(topology_failures)
+    topology_status = topology["status"]
+    return {
+        **base,
+        "measured": measured,
+        "dimension_status": dimension_status,
+        "dimension_checks": dimension_checks,
+        "topology_status": topology_status,
+        "topology_checks": topology["checks"],
+        "topology_method": topology["method"],
+        "topology_scope": topology["scope"],
+        "topology_reason": topology.get("reason"),
+        "topology_face_count": topology.get("face_count"),
+        "status": _pipe_object_status(dimension_status, topology_status),
+        "failures": failures[:12],
+    }
+
+
+def _project_geometry_snapshot(plan: dict[str, Any], vs: Any) -> dict[str, Any]:
+    objects: list[dict[str, Any]] = []
+    for operation in plan["operations"]:
+        if operation.get("operation") != "create_object" or operation.get("object_type") != "pipe_segment":
+            continue
+        handle = vs.GetObject(_object_name(operation))
+        if handle is None:
+            objects.append(
+                {
+                    "stable_id": operation["object_id"],
+                    "object_type": "pipe_segment",
+                    "geometry_kind": operation.get("geometry_kind"),
+                    "expected": {
+                        "axis_start_m": operation["centerline"][0],
+                        "axis_end_m": operation["centerline"][1],
+                        "inner_diameter_mm": operation.get("inner_diameter_mm"),
+                        "outer_diameter_mm": operation.get("outer_diameter_mm"),
+                    },
+                    "measured": None,
+                    "dimension_status": "failed",
+                    "dimension_checks": {"object_exists": False},
+                    "topology_status": "unverified",
+                    "topology_checks": {},
+                    "topology_method": "no_nondestructive_host_face_api",
+                    "topology_scope": _MESH_TOPOLOGY_SCOPE,
+                    "topology_reason": _MESH_TOPOLOGY_UNAVAILABLE_REASON,
+                    "topology_face_count": None,
+                    "readback_tolerance_m": _PIPE_GEOMETRY_TOLERANCE_M,
+                    "readback_tolerance_basis": _READBACK_TOLERANCE_BASIS,
+                    "status": "failed",
+                    "failures": ["pipe mesh object is missing from the host document"],
+                }
+            )
+            continue
+        objects.append(_measure_pipe_mesh(vs, handle, operation))
+    statuses = {item["status"] for item in objects}
+    if not objects:
+        status = "not_applicable"
+    elif statuses == {"verified"}:
+        status = "verified"
+    elif "failed" in statuses:
+        status = "failed"
+    elif statuses <= {"dimension_verified_topology_unverified"}:
+        status = "dimension_verified_topology_unverified"
+    else:
+        status = "unverified"
+    topology_statuses = {item["topology_status"] for item in objects}
+    if not objects:
+        topology_status = "not_applicable"
+    elif topology_statuses == {"verified"}:
+        topology_status = "verified"
+    elif "failed" in topology_statuses:
+        topology_status = "failed"
+    else:
+        topology_status = "unverified"
+    return {
+        "geometry_snapshot_version": _GEOMETRY_SNAPSHOT_VERSION,
+        "host": "vectorworks",
+        "host_adapter": "vectorworks-mesh-vertices-1.1.0",
+        "source_ir_id": plan["ir_id"],
+        "source_ir_sha256": plan["compiled_ir_sha256"],
+        "units": "m",
+        "readback_tolerance_m": _PIPE_GEOMETRY_TOLERANCE_M,
+        "readback_tolerance_basis": _READBACK_TOLERANCE_BASIS,
+        "topology_status": topology_status,
+        "topology_scope": _MESH_TOPOLOGY_SCOPE,
+        "objects": sorted(objects, key=lambda item: item["stable_id"]),
+        "status": status,
+        "limitations": [
+            "Geometry is measured from actual host mesh vertices, not from plan values or records.",
+            "Closed-solid topology (" + _MESH_TOPOLOGY_SCOPE + ") is not read back and stays unverified: " + _MESH_TOPOLOGY_UNAVAILABLE_REASON + ".",
+            "Curved surfaces are polygonal meshes; the per-object discretization sagitta describes the chordal deviation from the nominal circle and is not an engineering acceptance threshold.",
+            "The mesh has inner/outer surfaces and annular end caps; it is not a native pipe/boolean solid or a hydraulic model.",
+            "Node/manhole objects remain schematic and are not part of the pipe solid measurement.",
+        ],
+    }
+
+
+def _project_semantic_snapshot(
+    plan: dict[str, Any],
+    vs: Any,
+    geometry_snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     record_name = "OpenBIMAgent_MunicipalUtility"
     definitions = _record_definitions(plan)
     create_operations = [
@@ -761,13 +1598,21 @@ def _project_semantic_snapshot(plan: dict[str, Any], vs: Any) -> dict[str, Any]:
         if object_kind in {"node", "port"}:
             position = _read_3d_center(vs, handle)
         elif object_kind == "segment":
-            vertex_count = int(vs.GetVertNum(handle))
-            if vertex_count < 2:
-                raise ValueError(f"semantic projection pipe has fewer than two vertices: {stable_id}")
-            centerline = [
-                _semantic_coordinate(vs.GetPolyPt3D(handle, index))
-                for index in range(1, vertex_count + 1)
-            ]
+            geometry_object = next(
+                (
+                    item
+                    for item in (geometry_snapshot or {}).get("objects", [])
+                    if item.get("stable_id") == stable_id
+                ),
+                None,
+            )
+            measured = (geometry_object or {}).get("measured") or {}
+            if not measured.get("axis_start_m") or not measured.get("axis_end_m"):
+                raise ValueError(
+                    f"semantic projection cannot read measured pipe axis for {stable_id}; "
+                    "geometry readback is unavailable"
+                )
+            centerline = [measured["axis_start_m"], measured["axis_end_m"]]
         topology: list[str] = []
         if object_kind == "segment":
             topology = [
@@ -793,7 +1638,7 @@ def _project_semantic_snapshot(plan: dict[str, Any], vs: Any) -> dict[str, Any]:
                 "position": position,
                 "centerline": centerline,
                 "topology": topology,
-                "diameter_mm": records.get("DiameterMM"),
+                "diameter_mm": records.get("NominalDiameterMM", records.get("DiameterMM")),
                 "horizontal_length_m": records.get("HorizontalLengthM"),
                 "start_invert_m": records.get("StartInvertM"),
                 "end_invert_m": records.get("EndInvertM"),
@@ -836,16 +1681,32 @@ def _project_semantic_snapshot(plan: dict[str, Any], vs: Any) -> dict[str, Any]:
     return snapshot
 
 
+def _geometry_caveats(geometry_snapshot: dict[str, Any] | None) -> list[str]:
+    if not geometry_snapshot:
+        return []
+    if geometry_snapshot.get("status") == "dimension_verified_topology_unverified":
+        return [
+            "mesh dimensions were verified against actual host vertices; closed-solid "
+            "topology (" + _MESH_TOPOLOGY_SCOPE + ") is unverified: " + _MESH_TOPOLOGY_UNAVAILABLE_REASON
+        ]
+    return []
+
+
 def _receipt(
     plan: dict[str, Any],
     state: dict[str, Any],
     errors: list[str],
     semantic_snapshot: dict[str, Any] | None,
+    geometry_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     applied = set(state.get("applied_operation_ids") or [])
+    geometry_status = (geometry_snapshot or {}).get("status", "unverified")
+    geometry_ok = geometry_status in {"verified", "not_applicable"}
     complete = (
         len(applied) == len(plan["operations"])
         and semantic_snapshot is not None
+        and geometry_snapshot is not None
+        and geometry_ok
         and not errors
     )
     status = "completed" if complete else "partial"
@@ -868,6 +1729,9 @@ def _receipt(
         ],
         "confirmed_object_ids": sorted(state.get("confirmed_object_ids") or []),
         "semantic_snapshot": semantic_snapshot,
+        "geometry_snapshot": geometry_snapshot,
+        "geometry_status": geometry_status,
+        "geometry_caveats": _geometry_caveats(geometry_snapshot),
         "compensations": [
             f"restore:{object_id}"
             for object_id in sorted(state.get("confirmed_object_ids") or [])
@@ -922,6 +1786,8 @@ def execute_typed_plan(
         import vs  # type: ignore[import-not-found]
     except Exception as exc:
         raise RuntimeError(f"vs module not available: {exc}") from exc
+    # Check host mesh APIs before blank-document/unit/layer side effects.
+    _validate_pipe_solid_host_capabilities(vs, plan)
     active_document = str(vs.GetFPathName() or "")
     if target.exists():
         if not active_document:
@@ -940,6 +1806,8 @@ def execute_typed_plan(
             "Vectorworks first execution requires an unnamed blank document before any "
             f"typed host side effect: active={active_document}"
         )
+    else:
+        _assert_blank_document(vs)
 
     # Typed plan coordinates are meters. Normalize the active document before any
     # host geometry is created, including recovery runs after a host restart.
@@ -987,12 +1855,42 @@ def execute_typed_plan(
             errors.append(f"operation={operation['operation_id']}: {exc}")
             break
     semantic_snapshot = None
+    geometry_snapshot = None
     if len(applied) == len(plan["operations"]) and not errors:
         try:
-            semantic_snapshot = _project_semantic_snapshot(plan, vs)
+            geometry_snapshot = _project_geometry_snapshot(plan, vs)
+            if geometry_snapshot.get("status") not in {
+                "verified",
+                "not_applicable",
+                "dimension_verified_topology_unverified",
+            }:
+                errors.append(
+                    "geometry_readback: "
+                    + json.dumps(geometry_snapshot.get("objects", []), ensure_ascii=False)[:1200]
+                )
+        except Exception as exc:
+            geometry_snapshot = {
+                "geometry_snapshot_version": _GEOMETRY_SNAPSHOT_VERSION,
+                "host": "vectorworks",
+                "host_adapter": "vectorworks-mesh-vertices-1.1.0",
+                "source_ir_id": plan["ir_id"],
+                "source_ir_sha256": plan["compiled_ir_sha256"],
+                "units": "m",
+                "readback_tolerance_m": _PIPE_GEOMETRY_TOLERANCE_M,
+                "readback_tolerance_basis": _READBACK_TOLERANCE_BASIS,
+                "topology_status": "unverified",
+                "topology_scope": _MESH_TOPOLOGY_SCOPE,
+                "objects": [],
+                "status": "unverified",
+                "errors": [f"geometry projection failed: {exc}"],
+                "limitations": ["No host mesh geometry could be read; no measurement was fabricated."],
+            }
+            errors.append(f"geometry_projection: {exc}")
+        try:
+            semantic_snapshot = _project_semantic_snapshot(plan, vs, geometry_snapshot)
         except Exception as exc:
             errors.append(f"semantic_projection: {exc}")
-    receipt = _receipt(plan, state, errors, semantic_snapshot)
+    receipt = _receipt(plan, state, errors, semantic_snapshot, geometry_snapshot)
     if receipt["status"] == "completed":
         state["receipt"] = receipt
     _write_execution_state(sidecar, state)
@@ -1116,20 +2014,27 @@ def write_heartbeat(
     heartbeat_path: Path,
     started_at: datetime,
     vw_version: str | None = None,
+    *,
+    ipc_root: Path | str | None = None,
+    stopped_reason: str | None = None,
 ) -> None:
     """落盘心跳(每秒节流由调用方负责);外部用时间戳判断 runner 是否存活。
 
     vw_version 由 main 启动时探测一次并缓存,避免每秒 import vs。
+    ipc_root 声明 runner 实际轮询的目录,客户端据此校验两端目录契约。
+    stopped_reason 仅在受控停止后写入;正常轮询期间不出现该字段。
     """
+    payload: dict[str, Any] = {
+        "ts": time.time(),
+        "started_at": started_at.isoformat(),
+        "vw_version": vw_version if vw_version is not None else get_vw_version(),
+    }
+    if ipc_root is not None:
+        payload["ipc_root"] = str(Path(ipc_root).resolve())
+    if stopped_reason is not None:
+        payload["stopped_reason"] = stopped_reason
     heartbeat_path.write_text(
-        json.dumps(
-            {
-                "ts": time.time(),
-                "started_at": started_at.isoformat(),
-                "vw_version": vw_version if vw_version is not None else get_vw_version(),
-            },
-            ensure_ascii=False,
-        ),
+        json.dumps(payload, ensure_ascii=False),
         encoding="utf-8",
     )
 
@@ -1152,32 +2057,55 @@ def log_to_file(message: str) -> None:
         pass
 
 
-def main() -> None:
-    """runner 主循环:死循环轮询 jobs/,100ms 间隔;每 ~1s 心跳 + ~5s 存活日志。
+def run_session(
+    *,
+    ipc_root: Path | str | None = None,
+    max_seconds: float = 0.0,
+    stop_file: Path | None = None,
+    poll_interval: float = 0.1,
+    heartbeat_interval: float = 1.0,
+    alive_log_interval: float = 5.0,
+    sleep: Any = time.sleep,
+    clock: Any = time.time,
+    max_iterations: int | None = None,
+) -> str:
+    """有界轮询会话;返回停止原因(写日志/心跳,便于外部判断与测试断言)。
 
-    在 VW 内嵌 Python 中运行——UI 会显示"未响应"(脚本线程被本循环占用),
-    这是预期形态:循环仍在消费 jobs 并写 results;停止方式是关闭 VW。
-    观测:tail -f <ipc_root>/runner_log.txt(启动/存活/逐 job 消费记录)。
+    停止语义:stop 文件与时限只在两轮轮询之间检查——正在执行的宿主 API
+    调用不会被中断。正常停止不得强杀或关闭 Vectorworks:
+      - 停止等待:写入 stop 文件,runner 在当前轮询轮次结束后退出;
+      - 有界会话:max_seconds 到时自动退出;
+      - 取消执行:进行中的宿主 API 调用不可被取消,只能等它返回。
     """
     global _LOG_PATH
-    root, jobs_dir, results_dir, heartbeat_path = resolve_ipc_dirs()
+    root, jobs_dir, results_dir, heartbeat_path = resolve_ipc_dirs(ipc_root)
     jobs_dir.mkdir(parents=True, exist_ok=True)
     results_dir.mkdir(parents=True, exist_ok=True)
     _LOG_PATH = root / "runner_log.txt"
     started_at = datetime.now()
     vw_version = get_vw_version()
-    print("VW MCP runner started", flush=True)
-    print(f"  ipc_root:   {root.resolve()}", flush=True)
-    print(f"  jobs_dir:   {jobs_dir.resolve()}", flush=True)
-    print(f"  results_dir:{results_dir.resolve()}", flush=True)
-    log_to_file(f"started vw_version={vw_version} ipc_root={root.resolve()}")
+    log_to_file(
+        f"started vw_version={vw_version} ipc_root={root.resolve()} "
+        f"max_seconds={max_seconds} stop_file={stop_file}"
+    )
+    session_started = clock()
     last_heartbeat = 0.0
     last_alive_log = 0.0
     iterations = 0
     total_consumed = 0
-    write_heartbeat(heartbeat_path, started_at, vw_version)
+    stopped_reason = "unknown"
+    write_heartbeat(heartbeat_path, started_at, vw_version, ipc_root=root)
     try:
         while True:
+            if stop_file is not None and stop_file.exists():
+                stopped_reason = f"stop file observed: {stop_file}"
+                break
+            if max_seconds > 0 and clock() - session_started >= max_seconds:
+                stopped_reason = f"bounded session limit reached: {max_seconds:.1f}s"
+                break
+            if max_iterations is not None and iterations >= max_iterations:
+                stopped_reason = "max_iterations reached"
+                break
             try:
                 processed = poll_jobs_once(jobs_dir, results_dir)
                 if processed:
@@ -1187,17 +2115,57 @@ def main() -> None:
                 # 单轮异常只记录不退出:坏 job 不能杀死整个 runner
                 log_to_file(f"poll error (continuing): {traceback.format_exc(limit=3)}")
             iterations += 1
-            now = time.time()
-            if now - last_heartbeat >= 1.0:
-                write_heartbeat(heartbeat_path, started_at, vw_version)
+            now = clock()
+            if now - last_heartbeat >= heartbeat_interval:
+                write_heartbeat(heartbeat_path, started_at, vw_version, ipc_root=root)
                 last_heartbeat = now
-            if now - last_alive_log >= 5.0:
+            if now - last_alive_log >= alive_log_interval:
                 log_to_file(f"alive iter={iterations} consumed_total={total_consumed}")
                 last_alive_log = now
-            time.sleep(0.1)
+            sleep(poll_interval)
     except KeyboardInterrupt:
-        log_to_file("stopped (KeyboardInterrupt)")
-        print("Runner stopped", flush=True)
+        stopped_reason = "KeyboardInterrupt"
+    write_heartbeat(
+        heartbeat_path, started_at, vw_version, ipc_root=root, stopped_reason=stopped_reason
+    )
+    log_to_file(f"stopped reason={stopped_reason}")
+    return stopped_reason
+
+
+def main() -> None:
+    """runner 主循环:轮询 jobs/,100ms 间隔;每 ~1s 心跳 + ~5s 存活日志。
+
+    在 VW 内嵌 Python 中运行——UI 会显示"未响应"(脚本线程被轮询循环占用),
+    这是预期形态:循环仍在消费 jobs 并写 results。
+    停止方式(正常停止不得强杀/关闭 VW):
+      - 停止等待:写入 <ipc_root>/stop_runner(或 OPENBIMAGENT_VW_RUNNER_STOP_FILE),
+        runner 在下一轮轮询前退出并把 stopped_reason 写进心跳;
+      - 有界会话:设置 OPENBIMAGENT_VW_RUNNER_MAX_SECONDS=N 秒,到时自动退出;
+      - 取消执行:当前宿主 API 调用进行中时无法被中断,只能等它返回。
+    观测:tail -f <ipc_root>/runner_log.txt(启动/存活/逐 job 消费/停止记录)。
+    """
+    root, _jobs_dir, _results_dir, _heartbeat_path = resolve_ipc_dirs()
+    raw_max = os.environ.get("OPENBIMAGENT_VW_RUNNER_MAX_SECONDS", "").strip()
+    try:
+        max_seconds = float(raw_max) if raw_max else 0.0
+    except ValueError:
+        max_seconds = 0.0
+    stop_file_env = os.environ.get("OPENBIMAGENT_VW_RUNNER_STOP_FILE", "").strip()
+    stop_file = Path(stop_file_env) if stop_file_env else root / "stop_runner"
+    print("VW MCP runner started", flush=True)
+    print(f"  ipc_root:  {root.resolve()}", flush=True)
+    print(f"  stop_file: {stop_file}", flush=True)
+    print(
+        "  bounded:   "
+        + (
+            f"{max_seconds:.0f}s (OPENBIMAGENT_VW_RUNNER_MAX_SECONDS)"
+            if max_seconds > 0
+            else "unbounded until stop file is written"
+        ),
+        flush=True,
+    )
+    stopped_reason = run_session(ipc_root=root, max_seconds=max_seconds, stop_file=stop_file)
+    print(f"VW MCP runner stopped: {stopped_reason}", flush=True)
 
 
 if __name__ == "__main__":

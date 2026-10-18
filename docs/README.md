@@ -4,6 +4,8 @@
 
 ## 当前状态快照
 
+> 2026-10-16：新增[市政管网检查与修复工作台](architecture/MUNICIPAL_WORKBENCH.md)。本轮实现与外部验证边界见[交接状态顶部](architecture/PROJECT_HANDOFF_STATUS.md)；下列里程碑数字是历史记录，不代表新工作台已完成 VLM、Vectorworks 实体和 IFC 全链路验收。
+
 - 阶段：**M1/M1.5/M2 全栈落地 & 微内核插件化跃升（DSH 对标：能力调度 / Profile 补丁层 / 外部插件发现）**。
 - 已完成：
   - M1 G1–G7：Blender 5.2.0 LTS + Vectorworks 2024 双宿主真实 typed 执行与语义一致性验收。

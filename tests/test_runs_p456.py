@@ -123,8 +123,19 @@ def test_exemplar_retrieval_injects_into_run(client: TestClient, ws: Path) -> No
     assert "相似历史交付参考" in first_user["payload"]["content"]
 
 
-def test_run_artifact_endpoint(client: TestClient, ws: Path) -> None:
+def test_run_artifact_endpoint(client: TestClient, ws: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """缺陷六：工件端点返回 sha+mtime+JSON 数据；白名单与 404 语义正确。"""
+    from openbimagent.server import runs
+    from test_utility_solver import solver_payload
+
+    def _fixture_parse(_brief: str, _default_input: Path | None, *, request_id: str) -> runs.BriefParseResult:
+        # Endpoint fixture explicitly supplies synthetic physical dimensions.
+        # Incomplete collision context keeps the run at the engineering gate.
+        payload = solver_payload()
+        payload["request_id"] = request_id
+        return runs.BriefParseResult(payload=payload)
+
+    monkeypatch.setattr(runs, "_parse_brief_to_solver_input", _fixture_parse)
     resp = client.post("/api/v1/runs", json={"brief": "工件端点测试", "playbook": "municipal_utility"})
     sid = resp.json()["session_id"]
     _drive_until_done(client, sid)
@@ -134,7 +145,7 @@ def test_run_artifact_endpoint(client: TestClient, ws: Path) -> None:
     missing = client.get(f"/api/v1/runs/artifact?session={sid}&name=artifact_manifest.json")
     if missing.status_code == 404:
         pass
-    # 市政运行必产 compiled_utility_ir.json → 200 + data
+    # 显式物理输入经求解生成 compiled_utility_ir.json → 200 + data
     art = client.get(f"/api/v1/runs/artifact?session={sid}&name=compiled_utility_ir.json")
     assert art.status_code == 200, art.text
     body = art.json()

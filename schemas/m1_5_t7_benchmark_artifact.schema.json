@@ -15,7 +15,7 @@
   ],
   "additionalProperties": false,
   "properties": {
-    "artifact_version": {"const": "1.0"},
+    "artifact_version": {"enum": ["1.0", "1.1"]},
     "scenario_id": {"pattern": "^B(?:10|[1-9])$"},
     "input": {"type": "object"},
     "input_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},

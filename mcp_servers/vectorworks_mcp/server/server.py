@@ -532,6 +532,8 @@ def describe_capabilities() -> dict[str, Any]:
                 "controlled_save": True,
                 "idempotent_receipts": True,
                 "semantic_snapshot": True,
+                "pipe_solid_mesh": True,
+                "geometry_kinds": ["hollow_tube_mesh"],
             },
             "poll_interval_ms": int(POLL_INTERVAL * 1000),
             "command_timeout_s": int(COMMAND_TIMEOUT),

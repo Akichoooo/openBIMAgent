@@ -14,7 +14,7 @@ import pytest
 from openbimagent.assembly.blender_plan import BlenderBuilder
 from openbimagent.assembly.rule_projection import RuleProjectionIdentity
 from openbimagent.assembly.semantic_snapshot import SemanticSnapshot
-from test_compiled_utility_ir import solved_payload
+from utility_host_fixtures import physical_solved_payload as solved_payload
 
 _TYPED_PATH = (
     Path(__file__).resolve().parents[1]
@@ -281,7 +281,7 @@ def test_typed_host_executes_direct_operations_and_projects_semantics(tmp_path) 
     segment = next(item for item in snapshot.objects if item.stable_id == "pipe-001")
     assert segment.topology == ("mh-001-out", "mh-002-in")
     assert segment.diameter_mm == pytest.approx(300.0)
-    assert segment.centerline[1].z_m == pytest.approx(9.97)
+    assert segment.centerline[1].z_m == pytest.approx(10.12)
     assert Path(receipt["state_path"]).is_file()
 
 

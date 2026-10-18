@@ -15,6 +15,7 @@ import asyncio
 import threading
 import os
 import json
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Literal
 from pathlib import Path
@@ -93,11 +94,26 @@ def build_m2_readonly_app(
     ``invoke_max_concurrency`` 是 /api/v1/plugins/invoke 的有界并发上限，
     满载返回 503 + error code -32001（对标 Codex app-server 背压语义）。
     """
+
+    @asynccontextmanager
+    async def _lifespan(_app: FastAPI):
+        """Make repository ``.env`` available to direct ``uvicorn`` starts.
+
+        The CLI already loads it in ``main()``; this hook covers the documented
+        ``uvicorn openbimagent.server.fastapi_app:app`` path without overriding
+        variables supplied by the process/service manager.
+        """
+        from openbimagent.env import load_dotenv
+
+        load_dotenv()
+        yield
+
     app = FastAPI(
         title=M2_FASTAPI_APP_TITLE,
         version=M2_FASTAPI_APP_VERSION,
         docs_url="/api/v1/docs",
         openapi_url="/api/v1/openapi.json",
+        lifespan=_lifespan,
     )
     from openbimagent.server.auth import add_auth, load_or_create_token
 
@@ -122,6 +138,9 @@ def build_m2_readonly_app(
         add_sse_endpoint(app, sessions_dir=sessions_dir, budget=sse_budget)
     workbench_token = (settings.token if settings else None) or load_or_create_token()
     add_web_ui(app, token=workbench_token)
+    from openbimagent.server.municipal_workflow import add_municipal_workflow
+
+    add_municipal_workflow(app)
 
     @app.middleware("http")
     async def feature_availability(request: Request, call_next):

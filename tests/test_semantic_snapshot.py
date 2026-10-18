@@ -16,7 +16,7 @@ from openbimagent.assembly.semantic_snapshot import (
 )
 from openbimagent.schema_gate.gate import validate_artifact
 from openbimagent.utility import CompiledUtilityIR
-from test_compiled_utility_ir import solved_payload
+from utility_host_fixtures import physical_solved_payload as solved_payload
 
 
 def _rule_identity(**overrides) -> RuleProjectionIdentity:

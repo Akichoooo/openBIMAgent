@@ -29,7 +29,7 @@ from openbimagent.orchestrator.runtime import (
     SubagentRuntimeError,
 )
 from openbimagent.session.store import SessionStore
-from test_compiled_utility_ir import solved_payload
+from utility_host_fixtures import physical_solved_payload as solved_payload
 
 
 def _agents_dir(root: Path) -> Path:

@@ -112,7 +112,7 @@ def execute_blender_export(
                 f"headless Blender 未在 {_PORT_WAIT_TIMEOUT_S:.0f}s 内监听端口 {listen_port}\n{tail}"
             )
 
-        from openbimagent.assembly.semantic_snapshot import SemanticSnapshot
+        from openbimagent.deliver.host_delivery import HostDeliveryVerificationError, verify_host_delivery
         from openbimagent.mcp_clients.blender import BlenderMCPClient
 
         async def _run() -> tuple[Any, Any]:
@@ -133,19 +133,24 @@ def execute_blender_export(
                 await client.close()
 
         receipt, _ = asyncio.run(_run())
-        snapshot = SemanticSnapshot.model_validate(receipt.semantic_snapshot)
-        if not target.is_file() or target.stat().st_size == 0:
-            raise BlenderHostExecutionError(f"回执 completed 但输出缺失: {target}")
+        try:
+            verified = verify_host_delivery(
+                ir, receipt, host="blender", output_path=target,
+                plan_sha256=plan.canonical_sha256,
+            )
+        except HostDeliveryVerificationError as exc:
+            raise BlenderHostExecutionError(str(exc)) from exc
         return {
             "status": receipt.status.value,
             "output_path": str(target),
             "sidecar_path": str(sidecar),
             "output_bytes": target.stat().st_size,
-            "objects": len(snapshot.objects),
-            "source_ir_sha256": snapshot.source_ir_sha256,
+            "objects": len(verified["semantic_snapshot"]["objects"]),
             "plan_sha256": plan.canonical_sha256,
+            "source_ir_sha256": plan.source_ir_sha256,
             "blender_port": listen_port,
             "elapsed_ms": int((time.monotonic() - started) * 1000),
+            **verified,
         }
     finally:
         _kill_tree(proc)

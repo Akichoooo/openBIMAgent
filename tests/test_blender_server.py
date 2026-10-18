@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from openbimagent.assembly.blender_plan import BlenderBuilder
-from test_compiled_utility_ir import solved_payload
+from utility_host_fixtures import physical_solved_payload as solved_payload
 
 _SERVER_PATH = (
     Path(__file__).resolve().parents[1]

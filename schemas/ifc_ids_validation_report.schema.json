@@ -3,36 +3,228 @@
   "$id": "https://openbimagent.local/schemas/ifc_ids_validation_report.schema.json",
   "title": "IfcIdsValidationReportV1",
   "type": "object",
-  "required": ["validation_version", "ifc_schema", "ids_version", "source_ir_id", "source_ir_sha256", "rule_evidence_bundle_sha256", "rule_evaluation_sha256", "rule_decision_status", "production_verification", "status", "checked_entity_count", "findings"],
+  "required": [
+    "validation_version",
+    "ifc_schema",
+    "ids_version",
+    "source_ir_id",
+    "source_ir_sha256",
+    "status",
+    "checked_entity_count",
+    "findings"
+  ],
   "additionalProperties": false,
   "properties": {
-    "validation_version": {"type": "string", "pattern": "^1(\\.\\d+)?$"},
-    "ifc_schema": {"type": "string", "pattern": "^IFC4X3(?:_ADD2)?$"},
-    "ids_version": {"const": "1.0"},
-    "source_ir_id": {"type": "string", "minLength": 1, "maxLength": 256},
-    "source_ir_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "rule_evidence_bundle_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "rule_evaluation_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "rule_decision_status": {"enum": ["pass", "fail", "unknown", "review_required"]},
-    "production_verification": {"enum": ["eligible", "review_required"]},
-    "status": {"enum": ["PASS", "FAIL"]},
-    "checked_entity_count": {"type": "integer", "minimum": 0},
+    "validation_version": {
+      "type": "string",
+      "pattern": "^1(\\.\\d+)?$"
+    },
+    "ifc_schema": {
+      "type": "string",
+      "pattern": "^IFC4X3(?:_ADD2)?$"
+    },
+    "ids_version": {
+      "const": "1.0"
+    },
+    "source_ir_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "source_ir_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "rule_evidence_bundle_sha256": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "rule_evaluation_sha256": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "rule_decision_status": {
+      "enum": [
+        "pass",
+        "fail",
+        "unknown",
+        "review_required",
+        null
+      ]
+    },
+    "production_verification": {
+      "enum": [
+        "eligible",
+        "review_required",
+        null
+      ]
+    },
+    "status": {
+      "enum": [
+        "PASS",
+        "FAIL"
+      ]
+    },
+    "checked_entity_count": {
+      "type": "integer",
+      "minimum": 0
+    },
     "findings": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["rule_id", "status", "stable_id", "ifc_class", "field_path", "expected", "actual", "source_ir_path", "detail"],
+        "required": [
+          "rule_id",
+          "status",
+          "stable_id",
+          "ifc_class",
+          "field_path",
+          "expected",
+          "actual",
+          "source_ir_path",
+          "detail"
+        ],
         "additionalProperties": false,
         "properties": {
-          "rule_id": {"type": "string", "minLength": 1, "maxLength": 256},
-          "status": {"enum": ["PASS", "FAIL"]},
-          "stable_id": {"type": "string", "minLength": 1, "maxLength": 256},
-          "ifc_class": {"type": "string", "minLength": 1, "maxLength": 128},
-          "field_path": {"type": "string", "minLength": 1, "maxLength": 512},
-          "expected": {"type": ["string", "number", "integer", "boolean", "null"]},
-          "actual": {"type": ["string", "number", "integer", "boolean", "null"]},
-          "source_ir_path": {"type": "string", "minLength": 1, "maxLength": 512},
-          "detail": {"type": "string", "minLength": 1, "maxLength": 2000}
+          "rule_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "status": {
+            "enum": [
+              "PASS",
+              "FAIL"
+            ]
+          },
+          "stable_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "ifc_class": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "field_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "expected": {
+            "type": [
+              "string",
+              "number",
+              "integer",
+              "boolean",
+              "null"
+            ]
+          },
+          "actual": {
+            "type": [
+              "string",
+              "number",
+              "integer",
+              "boolean",
+              "null"
+            ]
+          },
+          "source_ir_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "detail": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        }
+      }
+    },
+    "delivery_evidence": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "protocol_version",
+        "identity_kind",
+        "evidence_source",
+        "rule_context_sha256",
+        "source_ir_sha256",
+        "evidence_aggregate_sha256",
+        "decision_status",
+        "production_verification",
+        "checker_version",
+        "checked_rule_count"
+      ],
+      "properties": {
+        "protocol_version": {
+          "const": "1.0"
+        },
+        "identity_kind": {
+          "const": "model_rule_evidence_aggregate"
+        },
+        "evidence_source": {
+          "enum": [
+            "confirmed_validation_result",
+            "compiled_ir_evidence_only"
+          ]
+        },
+        "rule_context_sha256": {
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "source_ir_sha256": {
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "evidence_aggregate_sha256": {
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "decision_status": {
+          "enum": [
+            "pass",
+            "fail",
+            "unknown",
+            "review_required"
+          ]
+        },
+        "production_verification": {
+          "enum": [
+            "eligible",
+            "review_required"
+          ]
+        },
+        "checker_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "checked_rule_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "candidate_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "validation_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
         }
       }
     }

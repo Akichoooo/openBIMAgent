@@ -21,7 +21,6 @@ from __future__ import annotations
 import argparse
 import atexit
 import json
-import os
 import threading
 from pathlib import Path
 from typing import Any
@@ -40,22 +39,11 @@ def _load_dotenv() -> None:
 
     registry.py 依赖 os.environ 读 api_key,但 `uv run` 不自动加载 .env,
     故在 CLI 入口显式加载,确保 AGENTROUTER_API_KEY 等就位。
-    解析逻辑与 tools/probe_agentrouter.py 的 load_env 一致(已验证可用)。
+    解析逻辑集中在 ``openbimagent.env``,FastAPI 启动钩子共用同一实现。
     """
-    env_path = Path(__file__).resolve().parents[2] / ".env"
-    if not env_path.exists():
-        return
-    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, val = line.partition("=")
-        key = key.strip()
-        val = val.strip()
-        if len(val) >= 2 and val[0] in "\"'" and val[-1] == val[0]:
-            val = val[1:-1]
-        if key and key not in os.environ:
-            os.environ[key] = val
+    from openbimagent.env import load_dotenv
+
+    load_dotenv()
 
 
 def main(argv: list[str] | None = None) -> int:

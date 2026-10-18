@@ -91,7 +91,7 @@ def test_execute_plan_tool_forwards_typed_payload_and_approval() -> None:
     """MCP 工具只转发结构化 plan，不得转译为 execute_code。"""
     server = _load_server_module()
     plan = {
-        "plan_version": "1.0",
+        "plan_version": "1.1",
         "protocol_version": "1.0",
         "host_api_version": "2024",
         "plan_id": "vw-plan-test",

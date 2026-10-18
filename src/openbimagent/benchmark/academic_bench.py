@@ -223,6 +223,11 @@ def _run_heuristic_method_row(scenarios: Sequence[str]) -> MethodBenchmarkMetric
                             "ground_elevation_m": end_node["ground_elevation_m"],
                         },
                         "diameter_mm": seg.get("diameter_mm", 300.0),
+                        # Preserve explicit synthetic physical dimensions from
+                        # the scenario; nominal size cannot supply host geometry.
+                        "inner_diameter_mm": seg.get("inner_diameter_mm"),
+                        "outer_diameter_mm": seg.get("outer_diameter_mm"),
+                        "wall_thickness_mm": seg.get("wall_thickness_mm"),
                         "material": seg.get("material", "concrete"),
                         "design_slope": seg.get("design_slope", 0.003),
                         "surface_context": seg.get("surface_context", "driveway"),

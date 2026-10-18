@@ -1,6 +1,25 @@
 """市政管网语义 IR 到确定性 compiled utility IR 的协议边界。"""
 
 from openbimagent.utility.compiler import UtilityCompileError, compile_solved_utility_ir
+from openbimagent.utility.candidate import (
+    CHECK_SCOPE,
+    CandidateValidationResult,
+    FrozenRuleContext,
+    UtilityCandidate,
+    UtilityIssue,
+    compiled_to_candidate,
+    freeze_rule_context,
+    validate_utility_candidate,
+)
+from openbimagent.utility.geometry import (
+    SegmentDistance,
+    axis_centerline,
+    closest_segment_points,
+    execution_geometry,
+    execution_port_positions,
+    resolve_dimensions,
+    upgrade_legacy_utility_ir,
+)
 from openbimagent.utility.contracts import (
     COMPILED_UTILITY_IR_VERSION,
     CompiledUtilityIR,

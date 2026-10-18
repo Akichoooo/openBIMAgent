@@ -170,3 +170,69 @@ def test_t7_reordered_registry_does_not_change_scenario_identity() -> None:
     assert {item.scenario_id: item.input_sha256 for item in scenarios} == {
         item.scenario_id: item.input_sha256 for item in reversed_scenarios
     }
+
+
+def test_t7_ir_schema_versions_reference_immutable_snapshots() -> None:
+    from openbimagent.benchmark.m1_5_t7 import (
+        COMPILED_UTILITY_IR_SCHEMA_SHA256,
+        CURRENT_IR_SCHEMA_VERSION,
+        IR_SCHEMA_SNAPSHOTS,
+        verify_ir_schema,
+    )
+
+    assert CURRENT_IR_SCHEMA_VERSION == "1.1"
+    assert set(IR_SCHEMA_SNAPSHOTS) == {"1.0", "1.1"}
+    # v1.0 是 git HEAD 归档快照，必须保持不可变身份。
+    assert verify_ir_schema("1.0") == (
+        "6230e208c3ce24ce59e3d205472763b82e6d5b2e26094ead60db36fb29f5287e"
+    )
+    assert verify_ir_schema("1.1") == COMPILED_UTILITY_IR_SCHEMA_SHA256
+    with pytest.raises(BenchmarkArtifactError, match="未知"):
+        verify_ir_schema("9.9")
+
+
+def test_t7_archived_v10_identity_is_not_overwritten() -> None:
+    from openbimagent.benchmark import m1_5_t7
+
+    assert m1_5_t7._FROZEN_INPUT_SHA256_V1_0["B1"] == (
+        "03f61c3baafaad0a338b88148e67ef51eb94d907a24fead1f7e23097813a14df"
+    )
+    assert m1_5_t7._FROZEN_INPUT_SHA256["B1"] == (
+        "59b6fdfa2d3eeb0deddc202356b94d83195db29332b389442d99061ec1172c0e"
+    )
+    assert m1_5_t7._FROZEN_INPUT_SHA256_V1_0["B1"] != m1_5_t7._FROZEN_INPUT_SHA256["B1"]
+    # B8 fixture 身份保持 v1.0 不变，冻结规则束与输入哈希因此继续有效。
+    assert (
+        m1_5_t7._FROZEN_INPUT_SHA256_V1_0["B8"]
+        == m1_5_t7._FROZEN_INPUT_SHA256["B8"]
+    )
+
+
+def test_t7_schema_snapshot_tampering_is_rejected(tmp_path: Path) -> None:
+    from openbimagent.benchmark import m1_5_t7
+
+    path = tmp_path / "schema.json"
+    path.write_bytes(b"{}")
+    with pytest.raises(BenchmarkArtifactError, match="SHA-256"):
+        m1_5_t7._verify_schema_file(path, "0" * 64, "test schema")
+    with pytest.raises(BenchmarkArtifactError, match="不可读"):
+        m1_5_t7._verify_schema_file(tmp_path / "missing.json", "0" * 64, "test schema")
+
+
+def test_t7_artifact_declares_ir_schema_identity(tmp_path) -> None:
+    from openbimagent.benchmark.m1_5_t7 import (
+        BENCHMARK_VERSION,
+        COMPILED_UTILITY_IR_SCHEMA_SHA256,
+        CURRENT_IR_SCHEMA_VERSION,
+    )
+
+    report = run_m1_5_t7_benchmark(
+        output_dir=tmp_path / "benchmark",
+        scenario_ids=("B8",),
+        repetitions=2,
+    )
+    payload = json.loads(report.scenario("B8").artifact_path.read_text(encoding="utf-8"))
+    assert payload["artifact_version"] == BENCHMARK_VERSION == "1.1"
+    definition = payload["result"]["scenario_definition"]
+    assert definition["ir_schema_version"] == CURRENT_IR_SCHEMA_VERSION
+    assert definition["ir_schema_sha256"] == COMPILED_UTILITY_IR_SCHEMA_SHA256

@@ -53,6 +53,7 @@
         "x_m": {"type": "number"},
         "y_m": {"type": "number"},
         "ground_elevation_m": {"type": "number"},
+        "connection_radius_m": {"type": ["number", "null"], "exclusiveMinimum": 0},
         "invert_anchor_m": {"type": ["number", "null"]}
       }
     },
@@ -68,6 +69,9 @@
         "start_node_id": {"type": "string", "minLength": 1, "maxLength": 256},
         "end_node_id": {"type": "string", "minLength": 1, "maxLength": 256},
         "diameter_mm": {"const": 300.0},
+        "inner_diameter_mm": {"type": ["number", "null"], "exclusiveMinimum": 0},
+        "outer_diameter_mm": {"type": ["number", "null"], "exclusiveMinimum": 0},
+        "wall_thickness_mm": {"type": ["number", "null"], "exclusiveMinimum": 0},
         "material": {"const": "concrete"},
         "design_slope": {"type": "number", "minimum": 0},
         "surface_context": {"enum": ["driveway", "sidewalk"]}

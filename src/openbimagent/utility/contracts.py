@@ -10,11 +10,11 @@ import hashlib
 import json
 import math
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
-COMPILED_UTILITY_IR_VERSION = "1.0"
+COMPILED_UTILITY_IR_VERSION = "1.1"
 GEOMETRY_TOLERANCE_M = 1e-6
 SLOPE_TOLERANCE = 1e-9
 
@@ -106,6 +106,7 @@ class UtilityNode(StrictFrozenModel):
     position: Coordinate3D
     ports: tuple[UtilityPort, ...] = Field(min_length=1)
     ground_elevation_m: float | None = None
+    connection_radius_m: float | None = Field(default=None, gt=0)
     ifc_class: str = Field(default="IfcDistributionChamberElement", pattern=r"^Ifc[A-Za-z0-9]+$")
     ifc_predefined_type: str | None = Field(default=None, max_length=128)
 
@@ -128,10 +129,22 @@ class PipeSegment(StrictFrozenModel):
     end_invert_m: float
     slope: float
     diameter_mm: float = Field(gt=0)
+    # diameter_mm is DN only. No material catalogue is implied by a nominal size.
+    centerline_reference: Literal["legacy_invert", "invert", "axis"] = "legacy_invert"
+    inner_diameter_mm: float | None = Field(default=None, gt=0)
+    outer_diameter_mm: float | None = Field(default=None, gt=0)
+    wall_thickness_mm: float | None = Field(default=None, gt=0)
     material: str = Field(min_length=1, max_length=256)
-    min_cover_depth_m: float | None = Field(default=None, ge=0)
+    min_cover_depth_m: float | None = None
     ifc_class: str = Field(default="IfcPipeSegment", pattern=r"^Ifc[A-Za-z0-9]+$")
     ifc_predefined_type: str = Field(default="RIGIDSEGMENT", min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def _dimensions_are_consistent(self) -> "PipeSegment":
+        from openbimagent.utility.geometry import resolve_dimensions
+
+        resolve_dimensions(self.inner_diameter_mm, self.outer_diameter_mm, self.wall_thickness_mm)
+        return self
 
 
 class RuleEvidence(StrictFrozenModel):
@@ -162,6 +175,17 @@ class CompiledUtilityIR(StrictFrozenModel):
     segments: tuple[PipeSegment, ...] = Field(min_length=1)
     evidence: tuple[RuleEvidence, ...] = ()
 
+    @model_serializer(mode="wrap")
+    def _preserve_legacy_wire_format(self, handler: Any) -> dict[str, Any]:
+        payload = handler(self)
+        if self.protocol_version == "1.0":
+            for segment in payload["segments"]:
+                for name in ("centerline_reference", "inner_diameter_mm", "outer_diameter_mm", "wall_thickness_mm"):
+                    segment.pop(name, None)
+            for node in payload["nodes"]:
+                node.pop("connection_radius_m", None)
+        return payload
+
     @model_validator(mode="after")
     def _validate_compiled_network(self) -> "CompiledUtilityIR":
         systems = _unique_by(self.systems, "system_id", "system")
@@ -171,6 +195,8 @@ class CompiledUtilityIR(StrictFrozenModel):
 
         ports: dict[str, tuple[UtilityNode, UtilityPort]] = {}
         for node in self.nodes:
+            if self.protocol_version == "1.0" and node.connection_radius_m is not None:
+                raise ValueError("explicit connection geometry requires compiled IR 1.1")
             if node.system_id not in systems:
                 raise ValueError(f"node {node.node_id!r} 引用未知 system {node.system_id!r}")
             for port in node.ports:
@@ -190,6 +216,12 @@ class CompiledUtilityIR(StrictFrozenModel):
             system_node_ids[node.system_id].add(node.node_id)
 
         for segment in self.segments:
+            if self.protocol_version != "1.0" and segment.centerline_reference == "legacy_invert":
+                raise ValueError("compiled IR 1.1 requires explicit centerline_reference; upgrade legacy data explicitly")
+            if self.protocol_version == "1.0" and segment.centerline_reference != "legacy_invert":
+                raise ValueError("explicit pipe geometry semantics require compiled IR 1.1")
+            if self.protocol_version == "1.0" and any(value is not None for value in (segment.inner_diameter_mm, segment.outer_diameter_mm, segment.wall_thickness_mm)):
+                raise ValueError("physical pipe dimensions require an explicit compiled IR 1.1 upgrade")
             if segment.system_id not in systems:
                 raise ValueError(f"segment {segment.segment_id!r} 引用未知 system {segment.system_id!r}")
             if segment.start_port_id == segment.end_port_id:
@@ -388,13 +420,20 @@ def _has_directed_cycle(node_ids: set[str], adjacency: dict[str, set[str]]) -> b
 def _validate_segment_geometry(segment: PipeSegment, start_port: UtilityPort, end_port: UtilityPort) -> None:
     first = segment.centerline[0]
     last = segment.centerline[-1]
-    if not _same_point(first, start_port.position):
+    if not _same_xy(first, start_port.position) or not math.isclose(start_port.position.z_m, segment.start_invert_m, abs_tol=GEOMETRY_TOLERANCE_M):
         raise ValueError(f"segment {segment.segment_id!r} centerline 起点与 start port 不一致")
-    if not _same_point(last, end_port.position):
+    if not _same_xy(last, end_port.position) or not math.isclose(end_port.position.z_m, segment.end_invert_m, abs_tol=GEOMETRY_TOLERANCE_M):
         raise ValueError(f"segment {segment.segment_id!r} centerline 终点与 end port 不一致")
-    if not math.isclose(segment.start_invert_m, first.z_m, abs_tol=GEOMETRY_TOLERANCE_M):
+    offset_m = 0.0
+    if segment.centerline_reference == "axis":
+        from openbimagent.utility.geometry import resolve_dimensions
+        inner, _ = resolve_dimensions(segment.inner_diameter_mm, segment.outer_diameter_mm, segment.wall_thickness_mm)
+        if inner is None:
+            raise ValueError("axis centerline requires known inner diameter to relate to invert elevations")
+        offset_m = inner / 2000.0
+    if not math.isclose(segment.start_invert_m + offset_m, first.z_m, abs_tol=GEOMETRY_TOLERANCE_M):
         raise ValueError(f"segment {segment.segment_id!r} start_invert_m 与起点标高不一致")
-    if not math.isclose(segment.end_invert_m, last.z_m, abs_tol=GEOMETRY_TOLERANCE_M):
+    if not math.isclose(segment.end_invert_m + offset_m, last.z_m, abs_tol=GEOMETRY_TOLERANCE_M):
         raise ValueError(f"segment {segment.segment_id!r} end_invert_m 与终点标高不一致")
 
     horizontal_length = sum(

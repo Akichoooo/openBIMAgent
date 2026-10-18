@@ -27,7 +27,7 @@ from openbimagent.mcp_clients.blender import (
     _extract_mcp_text,
     _unpack_mcp_result,
 )
-from test_compiled_utility_ir import solved_payload
+from utility_host_fixtures import physical_solved_payload as solved_payload
 
 
 # ---------- TCP 楔子服务端(响应 canned JSON,模拟 addon socket 协议) ----------

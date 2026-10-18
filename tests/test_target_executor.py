@@ -18,7 +18,7 @@ from openbimagent.assembly.vectorworks_plan import (
     ReceiptStatus,
     VectorworksBuilder,
 )
-from test_compiled_utility_ir import solved_payload
+from utility_host_fixtures import physical_solved_payload as solved_payload
 from openbimagent.orchestrator.dispatch import BatchReport, Verdict
 
 

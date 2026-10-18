@@ -619,6 +619,8 @@ def _municipal_solver_input(
     return {
         "protocol_version": "0.4",
         "request_id": "pipeline-case-001",
+        "inner_diameter_mm": 300.0,
+        "outer_diameter_mm": 360.0,
         "source_ir_sha256": "c" * 64,
         "coordinate_reference": {
             "crs_id": "LOCAL:PROJECT-M",

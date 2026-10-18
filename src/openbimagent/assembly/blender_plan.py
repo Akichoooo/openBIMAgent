@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from openbimagent.assembly.rule_projection import RuleProjectionIdentity
 from openbimagent.utility.contracts import CompiledUtilityIR
+from openbimagent.utility.geometry import execution_geometry, execution_port_positions
 
 BLENDER_PLAN_VERSION = "1.0"
 BLENDER_PROTOCOL_VERSION = "1.0"
@@ -300,6 +301,10 @@ class BlenderBuilder:
         rule_identity: RuleProjectionIdentity | None = None,
     ) -> BlenderExecutionPlan:
         compiled = ir if isinstance(ir, CompiledUtilityIR) else CompiledUtilityIR.model_validate(ir)
+        try:
+            axis_ports = execution_port_positions(compiled)
+        except ValueError as exc:
+            raise BlenderPlanError(str(exc)) from exc
         selected = set(asset_ids or ())
         operations: list[BlenderOperation] = []
         for system_index, system in enumerate(sorted(compiled.systems, key=lambda item: item.system_id)):
@@ -327,7 +332,7 @@ class BlenderBuilder:
                     continue
                 operations.extend(
                     _create_and_properties_port(
-                        port,
+                        port.model_copy(update={"position": axis_ports.get(port.port_id, port.position)}),
                         node.system_id,
                         f"/nodes/{node_index}/ports/{port_index}",
                         rule_identity,
@@ -557,6 +562,7 @@ def _create_and_properties_segment(
     rule_identity: RuleProjectionIdentity | None,
 ) -> list[BlenderOperation]:
     object_type = BlenderObjectType.PIPE_SEGMENT
+    axis, outer = execution_geometry(segment)
     return [
         BlenderOperation(
             operation=BlenderOperationKind.CREATE_OBJECT,
@@ -566,8 +572,8 @@ def _create_and_properties_segment(
             object_name=_safe_name(segment.segment_id),
             collection_name=BLENDER_COLLECTION,
             primitive=BlenderPrimitive.POLYLINE_CURVE,
-            centerline=tuple(Coordinate(**point.model_dump()) for point in segment.centerline),
-            diameter_mm=segment.diameter_mm,
+            centerline=tuple(Coordinate(**point.model_dump()) for point in axis),
+            diameter_mm=outer,
             material=segment.material,
         ),
         _properties(
@@ -582,6 +588,7 @@ def _create_and_properties_segment(
             {"min_cover_depth_m": segment.min_cover_depth_m},
             {
                 "diameter_mm": segment.diameter_mm,
+                "outer_diameter_mm": outer,
                 "end_invert_m": segment.end_invert_m,
                 "horizontal_length_m": segment.horizontal_length_m,
                 "slope": segment.slope,

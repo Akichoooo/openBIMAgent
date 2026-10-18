@@ -20,7 +20,12 @@ from openbimagent.assembly.vectorworks_plan import (
 from openbimagent.assembly.semantic_snapshot import RuleProjectionIdentity
 from openbimagent.schema_gate.gate import SchemaGate
 from openbimagent.utility import CompiledUtilityIR
-from test_compiled_utility_ir import solved_payload
+from test_compiled_utility_ir import solved_payload as legacy_solved_payload
+from openbimagent.utility.geometry import upgrade_legacy_utility_ir
+
+
+def solved_payload() -> dict:
+    return upgrade_legacy_utility_ir(legacy_solved_payload(), dimensions_by_segment={"pipe-001": {"inner_diameter_mm": 300.0, "outer_diameter_mm": 360.0}}).model_dump(mode="json")
 
 
 def _rule_identity(**overrides) -> RuleProjectionIdentity:
@@ -70,7 +75,11 @@ def test_plan_has_explicit_host_semantics_and_allowlisted_operations() -> None:
     assert all(item.class_name and item.name for item in creates)
     segment = next(item for item in creates if item.object_type is VectorworksObjectType.PIPE_SEGMENT)
     assert segment.units == "m"
-    assert segment.diameter_mm == 300.0
+    assert segment.nominal_diameter_mm == 300.0
+    assert segment.inner_diameter_mm == 300.0
+    assert segment.outer_diameter_mm == 360.0
+    assert segment.geometry_kind == "hollow_tube_mesh"
+    assert segment.circumferential_segments == 24
     assert len(segment.centerline) == 2
     assert segment.ifc_class == "IfcPipeSegment"
     segment_record = next(
@@ -79,8 +88,14 @@ def test_plan_has_explicit_host_semantics_and_allowlisted_operations() -> None:
         if item.operation is VectorworksOperationKind.SET_RECORD
         and item.object_id == segment.object_id
     )
+    fields = {item.field_name: item.value for item in segment_record.record_fields}
     units = {item.field_name: item.unit for item in segment_record.record_fields}
-    assert units["DiameterMM"] == "mm"
+    assert fields["DiameterMM"] == 300.0
+    assert fields["NominalDiameterMM"] == 300.0
+    assert fields["InnerDiameterMM"] == 300.0
+    assert fields["OuterDiameterMM"] == 360.0
+    assert fields["GeometryKind"] == "hollow_tube_mesh"
+    assert fields["MeshSegments"] == 24
     assert units["HorizontalLengthM"] == "m"
     assert units["StartInvertM"] == "m"
     assert units["EndInvertM"] == "m"
@@ -239,3 +254,37 @@ def test_same_idempotency_key_with_different_semantics_conflicts() -> None:
     conflict = different.model_copy(update={"idempotency_key": plan.idempotency_key})
     with pytest.raises((ValidationError, VectorworksPlanError)):
         VectorworksExecutionPlan.model_validate(conflict.model_dump(mode="json"))
+
+
+def test_pipe_solid_requires_straight_two_point_axis() -> None:
+    payload = solved_payload()
+    segment = payload["segments"][0]
+    segment["centerline"] = [
+        segment["centerline"][0],
+        {"x_m": 5.0, "y_m": 1.0, "z_m": 10.0},
+        segment["centerline"][1],
+    ]
+    segment["horizontal_length_m"] = 2.0 * (26.0 ** 0.5)
+    segment["slope"] = (segment["start_invert_m"] - segment["end_invert_m"]) / segment["horizontal_length_m"]
+    with pytest.raises(VectorworksPlanError, match="straight pipes only"):
+        VectorworksBuilder().build(payload)
+
+
+def test_pipe_solid_requires_explicit_inner_and_outer_dimensions() -> None:
+    payload = solved_payload()
+    payload["segments"][0].pop("inner_diameter_mm")
+    with pytest.raises((VectorworksPlanError, ValueError), match="inner|explicit"):
+        VectorworksBuilder().build(payload)
+    payload = solved_payload()
+    payload["segments"][0]["inner_diameter_mm"] = 400.0
+    payload["segments"][0]["outer_diameter_mm"] = 360.0
+    with pytest.raises(ValueError, match="outer diameter"):
+        VectorworksBuilder().build(payload)
+
+
+def test_capability_must_declare_pipe_solid_mesh() -> None:
+    plan = _plan()
+    capabilities = VectorworksCapabilities(pipe_solid_mesh=False)
+    with pytest.raises(VectorworksPlanError, match="pipe_solid_mesh"):
+        from openbimagent.assembly.vectorworks_plan import validate_plan_capabilities
+        validate_plan_capabilities(plan, capabilities)

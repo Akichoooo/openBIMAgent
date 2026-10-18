@@ -13,7 +13,7 @@ from openbimagent.assembly.vectorworks_plan import (
     VectorworksExecutionReceipt,
 )
 from openbimagent.mcp_clients.vectorworks import VectorworksClientError, VectorworksMCPClient
-from test_compiled_utility_ir import solved_payload
+from utility_host_fixtures import physical_solved_payload as solved_payload
 
 
 class FakeMCP:

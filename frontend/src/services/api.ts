@@ -15,6 +15,196 @@ export interface SessionItem {
   workspace?: string
 }
 
+export interface MunicipalVisualIssue {
+  observation_kind?: "locatable_suspicion" | "insufficient_evidence" | "parameter_check"
+  evidence_source?: "visual_observation" | "deterministic_reference" | "uncertain"
+  object_ids?: string[]
+  constraint_ids?: string[]
+  parameter_paths?: string[]
+  view_id?: string
+  evidence?: string
+  description?: string
+  suggestion?: string
+  uncertainty?: string
+  severity?: string
+}
+
+export interface MunicipalVisualAttempt {
+  model?: string
+  provider?: string
+  endpoint?: string
+  retry_index?: number
+  request_sent?: boolean
+  http_status?: number | null
+  headers_at_ms?: number
+  first_event_at_ms?: number
+  first_content_at_ms?: number
+  first_reasoning_at_ms?: number
+  ended_at_ms?: number
+  content_chars?: number
+  reasoning_chars?: number
+  finish_reason?: string | null
+  usage_present?: boolean
+  aborted?: boolean
+  cancel_reason?: string | null
+  close_requested?: boolean
+  worker_exited?: boolean
+  outcome?: string
+  error_type?: string
+  error?: string
+  [key: string]: any
+}
+
+export interface MunicipalVisualDiagnostics {
+  deadline_s?: number
+  attempts?: MunicipalVisualAttempt[]
+  request?: {
+    structured_output?: boolean
+    view_order?: string[]
+    image_count?: number
+    images?: { view_id?: string; width_px?: number; height_px?: number; encoded_bytes?: number; decoded_bytes?: number; sha256?: string }[]
+    text_chars?: number
+    context_chars?: number
+    response_schema_chars?: number
+    message_count?: number
+    reasoning_level?: string
+    cancel_reason?: string
+    [key: string]: any
+  }
+  business_outcome?: string
+  response_received?: boolean
+  model_alias?: string | null
+  response_model?: string | null
+  selected_model?: string | null
+  selected_provider?: string | null
+  selected_endpoint?: string | null
+  cancel_reason?: string | null
+  aborted?: boolean
+  error_type?: string
+  error?: string
+  [key: string]: any
+}
+
+export interface MunicipalVisualReport {
+  status?: string
+  failure_code?: string | null
+  failure_stage?: string | null
+  summary?: string
+  error?: string
+  issues?: MunicipalVisualIssue[]
+  patches?: { path: string; old_value: any; value: any; reason?: string; object_ids?: string[]; constraint_ids?: string[] }[]
+  preview?: { revision?: number; images?: Record<string, string>; image_size_px?: Record<string, number[]> } | null
+  revision?: number
+  model?: string | null
+  model_alias?: string | null
+  model_attempted?: string | null
+  model_requested?: string | null
+  model_effective?: string | null
+  provider?: string | null
+  endpoint?: string | null
+  profile?: string | null
+  usage?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number; [key: string]: any } | null
+  vlm_called?: boolean
+  duration_ms?: number | null
+  render_duration_ms?: number | null
+  vlm_duration_ms?: number | null
+  diagnostics?: MunicipalVisualDiagnostics
+  vision_config?: MunicipalVisionConfig
+  [key: string]: any
+}
+
+export interface MunicipalVisionConfig {
+  status?: string
+  profile?: string | null
+  role?: string
+  configured_model?: string | null
+  effective_model?: string | null
+  provider?: string | null
+  provider_type?: string | null
+  endpoint?: string | null
+  credential_env?: string | null
+  credential_present?: boolean
+  configured_vision?: boolean
+  requested_chain?: string[]
+  vision_chain?: string[]
+  usable_chain?: string[]
+  fallback_model?: string | null
+  message?: string
+  openscad?: { path?: string; available?: boolean }
+  error?: string
+  [key: string]: any
+}
+
+export interface MunicipalState {
+  session_id: string
+  revision: number
+  requirement_revision: number
+  candidate_sha256: string
+  review_token: string
+  candidate: Record<string, any>
+  validation: { executable: boolean; compiled_ir: any; issues: any[]; [key: string]: any }
+  locks: { path: string; value: any }[]
+  proposal: { proposal_id: string; patches: { path: string; old_value: any; value: any; reason?: string }[] } | null
+  confirmation: { revision: number } | null
+  visual: MunicipalVisualReport | null
+  delivery: {
+    status?: string
+    host_status?: string
+    error?: string
+    receipt?: any
+    host?: string
+    revision?: number
+    execution_id?: string
+    semantic_snapshot?: any
+    semantic_comparison_report?: any
+    semantic_verified?: boolean
+    geometry_snapshot?: any
+    geometry_status?: string
+    topology_status?: string
+    dimension_verified?: boolean
+    geometry_verified?: boolean
+    geometry_failures?: any[]
+    geometry_caveats?: string[]
+    ifc?: {
+      status?: string
+      generation?: {
+        status?: string
+        ifc_path?: string
+        ifc_sha256?: string
+        ifc_bytes?: number
+        ids_path?: string
+        report_path?: string
+        geometry_report_path?: string
+        rule_evidence_path?: string
+        error?: string
+      }
+      checks?: {
+        ifc_schema?: {
+          status?: string
+          schema?: string
+          validator?: string
+          scope?: string
+          issue_count?: number
+          duplicate_global_ids?: string[]
+          invalid_global_ids?: string[]
+          issues?: { level?: string; message?: string; instance?: string | null }[]
+        }
+        ids_semantic?: { status?: string; findings?: number; failures?: string[]; scope?: string }
+        geometry?: { status?: string; checked_segments?: number; segments?: any[]; failures?: string[] }
+        domain_rules?: { status?: string; production_verification?: string; checked_rule_count?: number; scope?: string }
+        status?: string
+      }
+      rule_evidence?: any
+      affected_ids?: string[]
+      error?: string
+    }
+    delivery_layers?: Record<string, any>
+    ifc_history?: any[]
+    [key: string]: any
+  }
+  history: any[]
+}
+
 export interface SessionEvent {
   id: string
   type: string
@@ -450,7 +640,8 @@ async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
     let errDetail = text
     try {
       const j = JSON.parse(text)
-      errDetail = j.error || j.message || text
+      const detail = j.detail || j.error || j.message
+      errDetail = typeof detail === "string" ? detail : detail ? JSON.stringify(detail) : text
     } catch {
       // fallback
     }
@@ -646,12 +837,46 @@ export const api = {
   },
 
   // CAD export (HITL prompt-gated)
-  async exportCad(host: "blender" | "vectorworks"): Promise<any> {
-    return request(`/api/v1/demo/export-${host}`, {
+  async exportCad(host: "blender" | "vectorworks", sessionId?: string, state?: MunicipalState): Promise<any> {
+    if (!sessionId || !state?.confirmation) throw new Error("请在「管网检查与修复」中确认当前版本后导出。")
+    const result = await request<{ state: MunicipalState }>(`/api/v1/municipal/${encodeURIComponent(sessionId)}/export`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ confirm: true }),
+      body: JSON.stringify({ confirm: true, host, base_revision: state.revision, candidate_sha256: state.candidate_sha256 }),
     })
+    return { status: result.state.delivery.status === "completed" ? "success" : "error", receipt: result.state.delivery.receipt,
+      error: result.state.delivery.error || result.state.delivery.receipt?.errors?.join("；"), state: result.state }
+  },
+
+  async retryIfc(sessionId: string, state: MunicipalState): Promise<{ state: MunicipalState }> {
+    if (!sessionId || !state?.confirmation) throw new Error("请先确认当前版本后再重试 IFC。")
+    return request(`/api/v1/municipal/${encodeURIComponent(sessionId)}/ifc-retry`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm: true, base_revision: state.revision, candidate_sha256: state.candidate_sha256 }),
+    })
+  },
+
+  municipalIfcDownloadUrl(sessionId: string): string {
+    return `/api/v1/municipal/${encodeURIComponent(sessionId)}/delivery/ifc`
+  },
+
+  async getMunicipal(sessionId: string): Promise<{ state: MunicipalState | null }> {
+    return request(`/api/v1/municipal/${encodeURIComponent(sessionId)}`)
+  },
+
+  async getMunicipalVisionConfig(): Promise<MunicipalVisionConfig> {
+    return request("/api/v1/municipal/vision-config")
+  },
+
+  async saveMunicipal(sessionId: string, body: Record<string, any>): Promise<{ state: MunicipalState }> {
+    return request(`/api/v1/municipal/${encodeURIComponent(sessionId)}`, { method: "PUT",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+  },
+
+  async municipalAction(sessionId: string, action: string, body: Record<string, any>): Promise<{ state: MunicipalState }> {
+    return request(`/api/v1/municipal/${encodeURIComponent(sessionId)}/${action}`, { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
   },
 
   // MCP settings

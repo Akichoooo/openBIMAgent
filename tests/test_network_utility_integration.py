@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 
 from openbimagent.assembly.blender_plan import (
@@ -38,6 +39,23 @@ from openbimagent.utility import (
 from test_grid_route_solver import route_payload
 from test_hydraulic_solver import hydraulic_payload
 from test_network_utility_solver import network_payload
+
+
+def physical_network_payload() -> dict:
+    """Explicit wall thickness and connection regions for host plans.
+
+    The base solver fixture keeps the legacy DN-only placeholder (inner=outer)
+    for solver-focused tests. Vectorworks solid pipes require a real annulus, so
+    host integration uses explicit 300/360 diameters, 0.6 m connection regions
+    and a ground elevation that preserves the 0.7 m cover requirement.
+    """
+    payload = deepcopy(network_payload())
+    for node in payload["nodes"]:
+        node["ground_elevation_m"] = 11.03
+        node["connection_radius_m"] = 0.6
+    for segment in payload["segments"]:
+        segment["outer_diameter_mm"] = 360.0
+    return payload
 
 
 def _passing_hydraulic_payload() -> dict:
@@ -123,10 +141,11 @@ def test_t6_exception_route_expands_into_network_before_solver() -> None:
 
 
 def test_network_solver_drives_typed_dual_host_semantic_e2e() -> None:
-    compiled = solve_network_gravity_utility(network_payload()).compiled_ir
+    solver_compiled = solve_network_gravity_utility(network_payload()).compiled_ir
+    host_compiled = solve_network_gravity_utility(physical_network_payload()).compiled_ir
     bundle = compile_municipal_rule_evidence_bundle()
     hydraulic_result = solve_hydraulic_network(
-        compiled,
+        solver_compiled,
         _passing_hydraulic_payload(),
         rule_evidence_bundle=bundle,
     )
@@ -136,25 +155,25 @@ def test_network_solver_drives_typed_dual_host_semantic_e2e() -> None:
     )
     assert domain_report.status is GateStatus.PASS
     evaluation = hydraulic_result.rule_evaluation(
-        compiled_ir=compiled,
+        compiled_ir=solver_compiled,
         rule_evidence_bundle=bundle,
     )
     rule_identity = RuleProjectionIdentity.from_rule_evaluation(evaluation)
     assert rule_identity.rule_decision_status == "pass"
-    blender_plan = BlenderBuilder().build(compiled, rule_identity=rule_identity)
-    vectorworks_plan = VectorworksBuilder().build(compiled, rule_identity=rule_identity)
+    blender_plan = BlenderBuilder().build(host_compiled, rule_identity=rule_identity)
+    vectorworks_plan = VectorworksBuilder().build(host_compiled, rule_identity=rule_identity)
     gate = SchemaGate()
 
-    assert gate.validate_artifact("compiled_utility_ir", compiled.model_dump(mode="json")) == []
+    assert gate.validate_artifact("compiled_utility_ir", host_compiled.model_dump(mode="json")) == []
     assert gate.validate_artifact("blender_execution_plan", blender_plan.model_dump(mode="json")) == []
     assert gate.validate_artifact("vectorworks_execution_plan", vectorworks_plan.model_dump(mode="json")) == []
-    assert blender_plan.compiled_ir_sha256 == vectorworks_plan.compiled_ir_sha256 == compiled.canonical_sha256()
+    assert blender_plan.compiled_ir_sha256 == vectorworks_plan.compiled_ir_sha256 == host_compiled.canonical_sha256()
 
     expected_ids = {
-        compiled.systems[0].system_id,
-        *(node.node_id for node in compiled.nodes),
-        *(port.port_id for node in compiled.nodes for port in node.ports),
-        *(segment.segment_id for segment in compiled.segments),
+        host_compiled.systems[0].system_id,
+        *(node.node_id for node in host_compiled.nodes),
+        *(port.port_id for node in host_compiled.nodes for port in node.ports),
+        *(segment.segment_id for segment in host_compiled.segments),
     }
     blender_create_ids = {
         operation.object_id
@@ -174,11 +193,11 @@ def test_network_solver_drives_typed_dual_host_semantic_e2e() -> None:
     assert vectorworks_receipt.status is ReceiptStatus.COMPLETED
 
     blender_snapshot = FakeBlenderSemanticExecutor().execute(
-        compiled,
+        host_compiled,
         rule_identity=rule_identity,
     )
     vectorworks_snapshot = FakeVectorworksSemanticExecutor().execute(
-        compiled,
+        host_compiled,
         rule_identity=rule_identity,
     )
     assert len(blender_snapshot.objects) == len(vectorworks_snapshot.objects) == len(expected_ids) == 14
@@ -237,8 +256,8 @@ def test_network_solver_output_delivers_ifc_ids_with_all_relationships(tmp_path)
 
 
 def test_network_typed_plans_are_stable_across_solver_input_order() -> None:
-    first_payload = network_payload()
-    second_payload = network_payload()
+    first_payload = physical_network_payload()
+    second_payload = physical_network_payload()
     second_payload["nodes"].reverse()
     second_payload["segments"].reverse()
     first = solve_network_gravity_utility(first_payload).compiled_ir

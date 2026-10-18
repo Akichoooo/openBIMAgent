@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbimagent.local/schemas/compiled_utility_ir.schema.json",
+  "title": "CompiledUtilityIR",
+  "description": "Solver 输出的市政管网确定性编译 IR v1。持有坐标、拓扑、工程属性、IFC 映射和规则证据；跨引用与数值一致性由 openbimagent.utility.contracts 失败关闭。",
+  "type": "object",
+  "required": [
+    "protocol_version",
+    "ir_id",
+    "source_ir_sha256",
+    "solver_name",
+    "solver_version",
+    "coordinate_reference",
+    "systems",
+    "nodes",
+    "segments",
+    "evidence"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": {"type": "string", "pattern": "^1(?:\\.\\d+)?$"},
+    "ir_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "source_ir_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "solver_name": {"type": "string", "minLength": 1, "maxLength": 256},
+    "solver_version": {"type": "string", "minLength": 1, "maxLength": 128},
+    "coordinate_reference": {"$ref": "#/$defs/coordinate_reference"},
+    "systems": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/system"}},
+    "nodes": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/node"}},
+    "segments": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/segment"}},
+    "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidence"}}
+  },
+  "$defs": {
+    "coordinate": {
+      "type": "object",
+      "required": ["x_m", "y_m", "z_m"],
+      "additionalProperties": false,
+      "properties": {
+        "x_m": {"type": "number"},
+        "y_m": {"type": "number"},
+        "z_m": {"type": "number"}
+      }
+    },
+    "coordinate_reference": {
+      "type": "object",
+      "required": ["crs_id", "origin", "horizontal_unit", "vertical_unit", "vertical_datum"],
+      "additionalProperties": false,
+      "properties": {
+        "crs_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "origin": {"$ref": "#/$defs/coordinate"},
+        "horizontal_unit": {"const": "m"},
+        "vertical_unit": {"const": "m"},
+        "vertical_datum": {"type": ["string", "null"], "maxLength": 256}
+      }
+    },
+    "system": {
+      "type": "object",
+      "required": ["system_id", "name", "system_type", "flow_regime", "ifc_class", "ifc_predefined_type"],
+      "additionalProperties": false,
+      "properties": {
+        "system_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "name": {"type": "string", "minLength": 1, "maxLength": 512},
+        "system_type": {"enum": ["stormwater", "wastewater", "combined", "water", "gas", "power", "telecom"]},
+        "flow_regime": {"enum": ["gravity", "pressure", "passive"]},
+        "ifc_class": {"type": "string", "pattern": "^Ifc[A-Za-z0-9]+$"},
+        "ifc_predefined_type": {"type": ["string", "null"], "maxLength": 128}
+      }
+    },
+    "port": {
+      "type": "object",
+      "required": ["port_id", "direction", "position", "ifc_class"],
+      "additionalProperties": false,
+      "properties": {
+        "port_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "direction": {"enum": ["inlet", "outlet", "bidirectional"]},
+        "position": {"$ref": "#/$defs/coordinate"},
+        "ifc_class": {"type": "string", "pattern": "^Ifc[A-Za-z0-9]+$"}
+      }
+    },
+    "node": {
+      "type": "object",
+      "required": [
+        "node_id",
+        "system_id",
+        "node_type",
+        "position",
+        "ports",
+        "ground_elevation_m",
+        "ifc_class",
+        "ifc_predefined_type"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "system_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "node_type": {"enum": ["manhole", "inlet", "outlet", "junction", "valve", "equipment", "terminal"]},
+        "position": {"$ref": "#/$defs/coordinate"},
+        "ports": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/port"}},
+        "ground_elevation_m": {"type": ["number", "null"]},
+        "ifc_class": {"type": "string", "pattern": "^Ifc[A-Za-z0-9]+$"},
+        "ifc_predefined_type": {"type": ["string", "null"], "maxLength": 128}
+      }
+    },
+    "segment": {
+      "type": "object",
+      "required": [
+        "segment_id",
+        "system_id",
+        "start_port_id",
+        "end_port_id",
+        "centerline",
+        "horizontal_length_m",
+        "start_invert_m",
+        "end_invert_m",
+        "slope",
+        "diameter_mm",
+        "material",
+        "min_cover_depth_m",
+        "ifc_class",
+        "ifc_predefined_type"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "segment_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "system_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "start_port_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "end_port_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "centerline": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/coordinate"}},
+        "horizontal_length_m": {"type": "number", "exclusiveMinimum": 0},
+        "start_invert_m": {"type": "number"},
+        "end_invert_m": {"type": "number"},
+        "slope": {"type": "number"},
+        "diameter_mm": {"type": "number", "exclusiveMinimum": 0},
+        "material": {"type": "string", "minLength": 1, "maxLength": 256},
+        "min_cover_depth_m": {"type": ["number", "null"], "minimum": 0},
+        "ifc_class": {"type": "string", "pattern": "^Ifc[A-Za-z0-9]+$"},
+        "ifc_predefined_type": {"type": "string", "minLength": 1, "maxLength": 128}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": [
+        "evidence_id",
+        "rule_id",
+        "check_name",
+        "status",
+        "subject_type",
+        "subject_id",
+        "detail",
+        "measured_value",
+        "limit_value",
+        "unit",
+        "source_clause"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "evidence_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "rule_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "check_name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$", "maxLength": 128},
+        "status": {"enum": ["pass", "fail", "unknown"]},
+        "subject_type": {"enum": ["network", "system", "node", "port", "segment"]},
+        "subject_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "detail": {"type": "string", "minLength": 1, "maxLength": 10000},
+        "measured_value": {"type": ["number", "string", "boolean", "null"]},
+        "limit_value": {"type": ["number", "string", "boolean", "null"]},
+        "unit": {"type": ["string", "null"], "maxLength": 64},
+        "source_clause": {"type": ["string", "null"], "maxLength": 1024}
+      }
+    }
+  }
+}

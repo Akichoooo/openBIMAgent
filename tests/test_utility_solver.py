@@ -27,6 +27,9 @@ def solver_payload() -> dict:
         "start": {"node_id": "mh-001", "x_m": 0.0, "y_m": 0.0, "ground_elevation_m": 11.0},
         "end": {"node_id": "mh-002", "x_m": 10.0, "y_m": 0.0, "ground_elevation_m": 11.0},
         "diameter_mm": 300.0,
+        # Explicit thin-wall test geometry; nominal diameter alone is insufficient.
+        "inner_diameter_mm": 300.0,
+        "outer_diameter_mm": 300.0,
         "material": "concrete",
         "design_slope": 0.003,
         "surface_context": "driveway",

@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Callable, Literal
 
 from pydantic import Field, ValidationError, model_validator
 
@@ -30,6 +30,14 @@ from openbimagent.utility.contracts import (
     CoordinateReference,
     StrictFrozenModel,
 )
+from openbimagent.utility.design_limits import (
+    DesignLimit,
+    DesignLimitError,
+    MunicipalDesignLimits,
+    cached_municipal_design_limits,
+    compile_municipal_design_limits,
+)
+from openbimagent.utility.geometry import resolve_dimensions
 from openbimagent.utility.rules import (
     MunicipalRuleSet,
     RuleSelectionStatus,
@@ -37,18 +45,79 @@ from openbimagent.utility.rules import (
     select_clearance_rule,
 )
 
+
+class UtilitySolverError(ValueError):
+    """Solver 输入或求解结果无法通过确定性门禁。
+
+    定义必须在模块级常量编译之前：``DESIGN_LIMITS`` 在导入期就会编译知识源，
+    失败时要抛这个异常；若类定义在后，导入期报错会退化成难以看懂的 NameError。
+    """
+
+
 UTILITY_SOLVER_INPUT_VERSION = "0.4"
 UTILITY_SOLVER_NAME = "municipal-straight-gravity-solver"
 UTILITY_SOLVER_VERSION = "0.4.0"
-MIN_SEWAGE_DIAMETER_MM = 300.0
-MIN_DN300_CONCRETE_SLOPE = 0.003
-MAX_DN300_TO_DN600_MANHOLE_SPACING_M = 75.0
-MIN_COVER_BY_SURFACE_M = {"driveway": 0.7, "sidewalk": 0.6}
+
+# ============ 能力面常量（关于*本实现*的陈述，写在这里是正确的）============
+# 与「规范限值」必须分开：前者是“Solver v0.4 只处理 DN300”，不随规范改版而变；
+# 后者是“规范要求污水管 ≥300mm”，必须来自受信任知识源。两者今天数值相同，
+# 旧版因此用同一个名字承担两个概念——规范一旦改版（如最小管径提到 350），
+# 能力面与规范会同时静默错掉，而且没有任何测试能发现。
+SUPPORTED_DIAMETER_MM = 300.0
+"""能力面：Solver v0.4 只处理 DN300 直管（不是规范限值）。"""
+
+SUPPORTED_MATERIAL = "concrete"
+"""能力面：Solver v0.4 只处理混凝土管（不是规范限值）。"""
+
 CLASH_TOLERANCE_M = 1e-6
 
 
-class UtilitySolverError(ValueError):
-    """Solver 输入或求解结果无法通过确定性门禁。"""
+def _require_limit(limit: DesignLimit | None, internal_name: str) -> float:
+    """取出一个可用于生产判定的限值；缺失或非 production 级即报错。
+
+    **绝不回退到写死字面量**：知识源给不出限值时，宁可让 Solver 开不了工，
+    也不能用一个没人能追溯来源的数字去判工程合规。
+    """
+    if limit is None:
+        raise UtilitySolverError(
+            f"受信任知识源未提供限值 {internal_name}；拒绝以写死常量兜底（fail-closed）"
+        )
+    if not limit.usable_for_verdict:
+        raise UtilitySolverError(
+            f"限值 {internal_name}（{limit.rule_id}）未达 production 级"
+            f"（confidence={limit.confidence}），不得用于 PASS/FAIL 判定"
+        )
+    return limit.limit_value
+
+
+def _load_design_limits() -> MunicipalDesignLimits:
+    try:
+        return cached_municipal_design_limits(diameter_mm=SUPPORTED_DIAMETER_MM)
+    except DesignLimitError as exc:
+        raise UtilitySolverError(
+            f"受信任知识源无法提供市政设计限值，Solver 拒绝以写死常量兜底: {exc}"
+        ) from exc
+
+
+#: 从 knowledge/constraints.yaml 编译的设计限值（带完整出处）。模块级编译一次并缓存；
+#: 知识源不可用时导入即报错——对一个领域 Solver 而言，这比静默用错限值安全得多。
+DESIGN_LIMITS = _load_design_limits()
+
+# ============ 规范限值（全部来自知识源，下方四个名字仅为兼容已有引用面）============
+# 旧版这四个是写死的字面量（300.0 / 0.003 / 75.0 / {driveway:0.7, sidewalk:0.6}），
+# 与 constraints.yaml 无任何代码或测试关联。现在它们是编译产物；
+# 保留旧名字是为了不打破 route_solver / network_solver / hydraulic_solver / __init__ 的引用。
+MIN_SEWAGE_DIAMETER_MM = _require_limit(DESIGN_LIMITS.min_diameter_sewage, "min_diameter_sewage")
+MIN_DN300_CONCRETE_SLOPE = _require_limit(
+    DESIGN_LIMITS.min_slope_sewage_d300_concrete, "min_slope_sewage_d300_concrete"
+)
+MAX_DN300_TO_DN600_MANHOLE_SPACING_M = _require_limit(
+    DESIGN_LIMITS.max_manhole_spacing, "max_manhole_spacing"
+)
+MIN_COVER_BY_SURFACE_M = {
+    "driveway": _require_limit(DESIGN_LIMITS.min_cover_depth_driveway, "min_cover_depth_driveway"),
+    "sidewalk": _require_limit(DESIGN_LIMITS.min_cover_depth_sidewalk, "min_cover_depth_sidewalk"),
+}
 
 
 class SolverEndpoint(StrictFrozenModel):
@@ -136,7 +205,10 @@ class StraightGravitySolverInput(StrictFrozenModel):
     coordinate_reference: CoordinateReference
     start: SolverEndpoint
     end: SolverEndpoint
-    diameter_mm: float = Field(default=MIN_SEWAGE_DIAMETER_MM, gt=0)
+    diameter_mm: float = Field(default=SUPPORTED_DIAMETER_MM, gt=0)
+    inner_diameter_mm: float | None = Field(default=None, gt=0)
+    outer_diameter_mm: float | None = Field(default=None, gt=0)
+    wall_thickness_mm: float | None = Field(default=None, gt=0)
     material: Literal["concrete"] = "concrete"
     design_slope: float = Field(default=MIN_DN300_CONCRETE_SLOPE, ge=0)
     surface_context: Literal["driveway", "sidewalk"] = "driveway"
@@ -150,7 +222,8 @@ class StraightGravitySolverInput(StrictFrozenModel):
         length = math.hypot(self.end.x_m - self.start.x_m, self.end.y_m - self.start.y_m)
         if length <= 0:
             raise ValueError("Solver v0 起终点平面位置不能相同")
-        if not math.isclose(self.diameter_mm, MIN_SEWAGE_DIAMETER_MM, abs_tol=1e-9):
+        resolve_dimensions(self.inner_diameter_mm, self.outer_diameter_mm, self.wall_thickness_mm)
+        if not math.isclose(self.diameter_mm, SUPPORTED_DIAMETER_MM, abs_tol=1e-9):
             raise ValueError("Solver v0 仅支持 DN300 污水管")
         return self
 
@@ -179,6 +252,7 @@ def solve_straight_gravity_utility(
     *,
     domain_requirements: dict[str, Any] | None = None,
     municipal_rule_set: MunicipalRuleSet | None = None,
+    design_limits: MunicipalDesignLimits | None = None,
     schema_gate: SchemaGate | None = None,
 ) -> UtilitySolverResult:
     """求解两井一直管并生成 compiled IR、规则证据和 Domain Gate 报告。"""
@@ -200,11 +274,21 @@ def solve_straight_gravity_utility(
         raise UtilitySolverError(f"Solver v0 输入或 MunicipalRuleSet 未通过门禁: {exc}") from exc
 
     length_m = math.hypot(request.end.x_m - request.start.x_m, request.end.y_m - request.start.y_m)
-    diameter_m = request.diameter_mm / 1000.0
-    required_cover_m = MIN_COVER_BY_SURFACE_M[request.surface_context]
-    start_limit_m = request.start.ground_elevation_m - required_cover_m - diameter_m
+    limits = design_limits or compile_municipal_design_limits(diameter_mm=request.diameter_mm)
+    inner_mm, outer_mm = resolve_dimensions(request.inner_diameter_mm, request.outer_diameter_mm, request.wall_thickness_mm)
+    crown_offset_m = (inner_mm + outer_mm) / 2000.0 if inner_mm is not None and outer_mm is not None else None
+    # 覆土限值驱动竖向几何（start_limit_m / end_limit_as_start_m），因此它取不到时
+    # 不能继续算：用一个无人能追溯的数字去定管内底标高，错得隐蔽且不可审。
+    cover_limit = limits.min_cover_depth(request.surface_context)
+    required_cover_m = _require_limit(cover_limit, f"min_cover_depth_{request.surface_context}")
+    diameter_limit = limits.min_diameter_sewage
+    slope_limit = limits.min_slope_sewage_d300_concrete
+    spacing_limit = limits.max_manhole_spacing
+    if crown_offset_m is None and request.start_invert_m is None:
+        raise UtilitySolverError("automatic invert placement requires known inner/outer diameters; supply dimensions or an explicit start_invert_m")
+    start_limit_m = request.start.ground_elevation_m - required_cover_m - (crown_offset_m or 0.0)
     end_limit_as_start_m = (
-        request.end.ground_elevation_m - required_cover_m - diameter_m + request.design_slope * length_m
+        request.end.ground_elevation_m - required_cover_m - (crown_offset_m or 0.0) + request.design_slope * length_m
     )
     start_invert_m = (
         min(start_limit_m, end_limit_as_start_m)
@@ -212,9 +296,10 @@ def solve_straight_gravity_utility(
         else request.start_invert_m
     )
     end_invert_m = start_invert_m - request.design_slope * length_m
-    start_cover_m = request.start.ground_elevation_m - (start_invert_m + diameter_m)
-    end_cover_m = request.end.ground_elevation_m - (end_invert_m + diameter_m)
-    minimum_actual_cover_m = min(start_cover_m, end_cover_m)
+    minimum_actual_cover_m = (
+        min(request.start.ground_elevation_m - start_invert_m, request.end.ground_elevation_m - end_invert_m) - crown_offset_m
+        if crown_offset_m is not None else None
+    )
 
     ir_id = f"utility-{request.request_id}"
     system_id = f"{request.request_id}-wastewater"
@@ -223,68 +308,44 @@ def solve_straight_gravity_utility(
     end_port_id = f"{request.end.node_id}-in"
 
     evidence = [
-        _evidence(
+        _spec_evidence(
             evidence_id=f"{request.request_id}-diameter",
-            rule_id="MU-DRAIN-001",
             check_name="diameter_in_spec",
-            passed=request.diameter_mm >= MIN_SEWAGE_DIAMETER_MM,
-            subject_type="segment",
-            subject_id=segment_id,
-            detail=(
-                f"污水管径 DN{request.diameter_mm:g} mm，最小允许 DN{MIN_SEWAGE_DIAMETER_MM:g} mm"
-            ),
+            limit=diameter_limit,
             measured_value=request.diameter_mm,
-            limit_value=MIN_SEWAGE_DIAMETER_MM,
-            unit="mm",
-            source_clause="GB 50014-2021 §5.2.10 表 5.2.10",
+            subject_id=segment_id,
+            describe=lambda m, lim: f"污水管径 DN{m:g} mm，最小允许 DN{lim:g} mm",
         ),
-        _evidence(
+        _spec_evidence(
             evidence_id=f"{request.request_id}-slope",
-            rule_id="MU-DRAIN-004",
             check_name="slope_in_spec",
-            passed=request.design_slope >= MIN_DN300_CONCRETE_SLOPE,
-            subject_type="segment",
-            subject_id=segment_id,
-            detail=(
-                f"DN300 混凝土污水管设计坡度 {request.design_slope:.6f}，"
-                f"最小允许 {MIN_DN300_CONCRETE_SLOPE:.6f}"
-            ),
+            limit=slope_limit,
             measured_value=request.design_slope,
-            limit_value=MIN_DN300_CONCRETE_SLOPE,
-            unit="ratio",
-            source_clause="GB 50014-2021 §5.2.10 表 5.2.10",
+            subject_id=segment_id,
+            describe=lambda m, lim: (
+                f"DN{SUPPORTED_DIAMETER_MM:g} 混凝土污水管设计坡度 {m:.6f}，最小允许 {lim:.6f}"
+            ),
         ),
-        _evidence(
+        _spec_evidence(
             evidence_id=f"{request.request_id}-cover",
-            rule_id="MU-ELEV-001" if request.surface_context == "driveway" else "MU-ELEV-002",
             check_name="cover_depth_in_spec",
-            passed=minimum_actual_cover_m >= required_cover_m - 1e-9,
-            subject_type="segment",
-            subject_id=segment_id,
-            detail=(
-                f"两端最小实际覆土 {minimum_actual_cover_m:.6f} m，"
-                f"{request.surface_context} 要求不少于 {required_cover_m:.3f} m"
-            ),
+            limit=cover_limit,
             measured_value=minimum_actual_cover_m,
-            limit_value=required_cover_m,
-            unit="m",
-            source_clause="GB 50014-2021 §5.3.7",
-        ),
-        _evidence(
-            evidence_id=f"{request.request_id}-spacing",
-            rule_id="MU-WELL-001",
-            check_name="manhole_spacing_in_spec",
-            passed=length_m <= MAX_DN300_TO_DN600_MANHOLE_SPACING_M,
-            subject_type="segment",
             subject_id=segment_id,
-            detail=(
-                f"DN300 管段井距 {length_m:.6f} m，最大允许 "
-                f"{MAX_DN300_TO_DN600_MANHOLE_SPACING_M:.1f} m"
+            tolerance=1e-9,
+            describe=lambda m, lim: (
+                f"两端最小实际覆土 {m:.6f} m，{request.surface_context} 要求不少于 {lim:.3f} m"
             ),
+        ),
+        _spec_evidence(
+            evidence_id=f"{request.request_id}-spacing",
+            check_name="manhole_spacing_in_spec",
+            limit=spacing_limit,
             measured_value=length_m,
-            limit_value=MAX_DN300_TO_DN600_MANHOLE_SPACING_M,
-            unit="m",
-            source_clause="GB 50014-2021 §5.4.4 表 5.4.4",
+            subject_id=segment_id,
+            describe=lambda m, lim: (
+                f"DN{SUPPORTED_DIAMETER_MM:g} 管段井距 {m:.6f} m，最大允许 {lim:.1f} m"
+            ),
         ),
         *_clash_evidence(
             request,
@@ -305,7 +366,7 @@ def solve_straight_gravity_utility(
     ]
 
     payload = {
-        "protocol_version": "1.0",
+        "protocol_version": "1.1",
         "ir_id": ir_id,
         "source_ir_sha256": request.source_ir_sha256,
         "solver_name": UTILITY_SOLVER_NAME,
@@ -352,6 +413,10 @@ def solve_straight_gravity_utility(
                 "end_invert_m": end_invert_m,
                 "slope": request.design_slope,
                 "diameter_mm": request.diameter_mm,
+                "centerline_reference": "invert",
+                "inner_diameter_mm": request.inner_diameter_mm,
+                "outer_diameter_mm": request.outer_diameter_mm,
+                "wall_thickness_mm": request.wall_thickness_mm,
                 "material": request.material,
                 "min_cover_depth_m": minimum_actual_cover_m,
                 "ifc_class": "IfcPipeSegment",
@@ -413,16 +478,23 @@ def _clash_evidence(
             )
         ]
 
-    pipe_radius_m = request.diameter_mm / 2000.0
+    inner_mm, outer_mm = resolve_dimensions(request.inner_diameter_mm, request.outer_diameter_mm, request.wall_thickness_mm)
+    if inner_mm is None or outer_mm is None:
+        return [_unknown_evidence(
+            evidence_id=f"{request.request_id}-clash-dimensions", rule_id="MU-CLEAR-GEOMETRY",
+            check_name="clash_free", subject_type="segment", subject_id=segment_id,
+            detail="实际内径或外径未知；DN不能代替实体外包络尺寸", source_clause="pipe geometry dimensions",
+        )]
+    pipe_radius_m = outer_mm / 2000.0
     design_start = Coordinate3D(
         x_m=request.start.x_m,
         y_m=request.start.y_m,
-        z_m=start_invert_m + pipe_radius_m,
+        z_m=start_invert_m + inner_mm / 2000.0,
     )
     design_end = Coordinate3D(
         x_m=request.end.x_m,
         y_m=request.end.y_m,
-        z_m=end_invert_m + pipe_radius_m,
+        z_m=end_invert_m + inner_mm / 2000.0,
     )
     evidence: list[dict[str, Any]] = []
     for obstacle in sorted(context.obstacles, key=lambda item: item.obstacle_id):
@@ -713,6 +785,55 @@ def _node_payload(
         "ifc_predefined_type": "MANHOLE",
     }
 
+
+
+def _spec_evidence(
+    *,
+    evidence_id: str,
+    check_name: str,
+    limit: DesignLimit | None,
+    measured_value: float | None,
+    subject_id: str,
+    describe: Callable[[float, float], str],
+    tolerance: float = 0.0,
+) -> dict[str, Any]:
+    """由**知识源编译出的限值**生成一条规则证据（rule_id / 限值 / 条文 / 出处全部取自限值对象）。
+
+    旧版这 4 条证据的 ``rule_id``、``limit_value``、``source_clause`` 全是写死的字面量，
+    与 ``knowledge/constraints.yaml`` 无任何关联；而同一份报告里的 ``clash_free`` 却带着
+    规则集 canonical_sha256 + 规范副本 sha256 + PDF 页表定位。5 条证据并列，
+    举证强度却分两档，读者无法分辨哪条可复核。
+    现在 5 条统一：``detail`` 末尾附 ``limit.provenance()``（知识源 sha256 + yaml 内定位路径）。
+
+    判定方向由 ``limit.comparison`` 决定（min → 实测 ≥ 限值；max → 实测 ≤ 限值），
+    不再在调用处手写比较符——手写容易把 ≤ 写成 ≥，而这种错不会被类型检查拦住。
+    """
+    if limit is None or not limit.usable_for_verdict or measured_value is None:
+        return _unknown_evidence(
+            evidence_id=evidence_id, rule_id=limit.rule_id if limit else "MU-LIMIT-UNAVAILABLE",
+            check_name=check_name, subject_type="segment", subject_id=subject_id,
+            detail="规则限值或实体尺寸不足，无法作出数值判定", source_clause=limit.source_clause if limit else "unavailable rule",
+        )
+    value = _require_limit(limit, check_name)
+    passed = (
+        measured_value >= value - tolerance
+        if limit is not None and limit.comparison == "min"
+        else measured_value <= value + tolerance
+    )
+    assert limit is not None  # _require_limit 已保证；仅为类型收窄
+    return _evidence(
+        evidence_id=evidence_id,
+        rule_id=limit.rule_id,
+        check_name=check_name,
+        passed=passed,
+        subject_type="segment",
+        subject_id=subject_id,
+        detail=f"{describe(measured_value, value)}；{limit.provenance()}",
+        measured_value=measured_value,
+        limit_value=value,
+        unit=limit.unit,
+        source_clause=limit.source_clause,
+    )
 
 
 def _evidence(

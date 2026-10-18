@@ -52,8 +52,25 @@ from openbimagent.utility import (
     solve_network_gravity_utility,
 )
 
-BENCHMARK_VERSION = "1.0"
-COMPILED_UTILITY_IR_SCHEMA_SHA256 = "6230e208c3ce24ce59e3d205472763b82e6d5b2e26094ead60db36fb29f5287e"
+BENCHMARK_VERSION = "1.1"
+CURRENT_IR_SCHEMA_VERSION = "1.1"
+# CompiledUtilityIR schema version -> (repository-relative path, immutable SHA-256).
+# v1.0 是 git 历史（commit 775fb07 / HEAD）里的基线 schema，快照文件不得改写；
+# v1.1 增加显式物理管径（inner/outer/wall）与节点连接半径，是当前 typed-host
+# 契约要求。迁移关系：B1-B7/B9/B10 的合成输入显式携带内外径（期望域状态与
+# canonical IR 哈希均未变化）；B8 的规则歧义合成 fixture 保持 v1.0 身份字符串，
+# 其冻结输入/规则束哈希因此仍然有效。
+IR_SCHEMA_SNAPSHOTS = {
+    "1.0": (
+        "schemas/frozen/compiled_utility_ir.v1.0.schema.json",
+        "6230e208c3ce24ce59e3d205472763b82e6d5b2e26094ead60db36fb29f5287e",
+    ),
+    "1.1": (
+        "schemas/compiled_utility_ir.schema.json",
+        "9bdeaebfc70575319f399395dc757f514099941d0016bdfcb77175365a286d9a",
+    ),
+}
+COMPILED_UTILITY_IR_SCHEMA_SHA256 = IR_SCHEMA_SNAPSHOTS[CURRENT_IR_SCHEMA_VERSION][1]
 _FROZEN_RULE_IDENTITY_SHA256 = "d0ce27a57125bb35a292b84e684d7527d06c1cc80ff389bc53efab5e974028f6"
 _EXPECTED = {
     "B1": "PASS",
@@ -67,7 +84,13 @@ _EXPECTED = {
     "B9": "PASS",
     "B10": "PASS",
 }
-_FROZEN_INPUT_SHA256 = {
+# B8 的规则歧义合成 bundle 是冻结 fixture：其身份在 v1.0 基线上计算，不能跟随
+# BENCHMARK_VERSION 变化，否则冻结输入与 canonical 哈希会漂移。
+_B8_FIXTURE_PROTOCOL_VERSION = "1.0"
+_B8_BUNDLE_COMPILER_VERSION = "1.0"
+# 历史基线身份（schema v1.0 / git HEAD，IR 1.1 迁移前）。仅用于归档核验，
+# 不得覆盖；当前可运行 fixture 套件使用下方 v1.1 表。
+_FROZEN_INPUT_SHA256_V1_0 = {
     "B1": "03f61c3baafaad0a338b88148e67ef51eb94d907a24fead1f7e23097813a14df",
     "B2": "c1a90eb5ed0c7e659aa6bd40bd56db58800e2f168a936152cbbc01f614eb9114",
     "B3": "6c5df6d28c59988430a19859e73f99a3c8c746a5184d383a8adba6a3183f645c",
@@ -78,6 +101,19 @@ _FROZEN_INPUT_SHA256 = {
     "B8": "fca823250835e2799eaa648a67658affda3c542a8b225d78b6c5c72ebcc21f58",
     "B9": "cfeeaa2a0e0a3fb30cc0c313442efd943833938a910334fef5daed201031c0a5",
     "B10": "8dd2c75c0d7d4456ea4a8fa9a7b3824336ccdfcaf26538fbc3a5c9d290c3bcf4",
+}
+# 当前 fixture 身份（IR 1.1：管道输入显式携带 inner/outer diameter）。
+_FROZEN_INPUT_SHA256 = {
+    "B1": "59b6fdfa2d3eeb0deddc202356b94d83195db29332b389442d99061ec1172c0e",
+    "B2": "b87f070458b3a1fceecbca34c7fb82f6098e73d9236c7d583a7ccb79c8132c8e",
+    "B3": "95d5b8f981b9b6aef5bdcdb1f1d6590400cc72efad517d598e8b5faf34b6f19c",
+    "B4": "447f9de0e66ba9ce34fa3b7c4b6ad7164a7e0e99e7957b9de879d3da9670e85f",
+    "B5": "6cd35d591a240826b38859e23cbadf8ac3d52bce8152d9baacbe3cdaecf01c47",
+    "B6": "70a1ee750ed72e9ed8eefba5325ffb35c77a92cf4b9fd8bd2a92aaf312ee2744",
+    "B7": "620e9276fb374ae5872a5debc64290a03c4f532af013df96985b971210c95ae2",
+    "B8": "fca823250835e2799eaa648a67658affda3c542a8b225d78b6c5c72ebcc21f58",
+    "B9": "2d675cd695cc49ccc710bcc433129c77a406e24755853d115e8b6b3f9655cdd5",
+    "B10": "fb35c21e057fd67af5c1962b073098b969476387d68012971a49e8df97518196",
 }
 _EXPECTED_FAILURE_MARKER = {
     "B1": "",
@@ -92,16 +128,16 @@ _EXPECTED_FAILURE_MARKER = {
     "B10": "",
 }
 _FROZEN_CANONICAL_SHA256 = {
-    "B1": "bdef739bbcbd05e599ff4ed9baacf5c7eab8745cc96d9b53014e57ec33535e20",
-    "B2": "8bd37ae8a76dab5102920ccfc845199cdb0780c0aee26fdfcd2467d36a53be02",
-    "B3": "5e672a929c6e03a52e5d5a97b200536ad435ab8d59cc25890140be5e4ec1553c",
+    "B1": "357470384579a6c823cb5f7e83348a810c7c2387207932f5da7b2ee8026fde52",
+    "B2": "7d92a59f83af1c905f8d530aa4fd691e4c49b3882da8846b8645cf86fd5981d5",
+    "B3": "0b8e809158083872459aedc79b19319bb6e36448a161e665f495b7720dcfebf3",
     "B4": None,
     "B5": None,
     "B6": None,
-    "B7": "01609bfbdaf55bdd4a77da5ecdcbbd53c534489c94ac7b64c916109c6582d49e",
+    "B7": "a42755d00fa23e28e4912786dede520939a3977875b943fa2b5651a1ec94ab89",
     "B8": "47aacb26cdd8dc44dcdca3ac5e9727a7bae557bb6554ed156fe511f3b713536b",
-    "B9": "5dd6361daee0a335f0448631b8bb3b5df5c7255fec0da00422b079e8718808a4",
-    "B10": "3944e94c620686dc087f5503e8f658631ee1998da18605b2c9ee303c734a2952",
+    "B9": "c8394d467293ef1ddc7f783269746b1aace351260290042d7e873b97039646b9",
+    "B10": "93407ece8822872a827c51166d1cbb62f86abc3446106cac7b4649ac3f8fb9f3",
 }
 
 
@@ -123,7 +159,7 @@ class BenchmarkScenario(BaseModel):
     scenario_id: str = Field(pattern=r"^B(?:10|[1-9])$")
     name: str = Field(min_length=1)
     category: str = Field(min_length=1)
-    input_version: str = Field(pattern=r"^1\.0$")
+    input_version: str = Field(pattern=r"^1\.\d+$")
     expected_status: str = Field(pattern=r"^(PASS|FAIL|UNKNOWN|REVIEW_REQUIRED)$")
     expected_failure_reason: str
     rule_identity_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -216,16 +252,44 @@ class VerifiedBenchmarkArtifact(BaseModel):
     artifact_sha256: str
 
 
-def build_benchmark_scenarios() -> tuple[BenchmarkScenario, ...]:
-    schema_path = Path(__file__).resolve().parents[3] / "schemas" / "compiled_utility_ir.schema.json"
+def _resolve_schema_entry(version: str) -> tuple[Path, str]:
     try:
-        schema_sha256 = hashlib.sha256(schema_path.read_bytes()).hexdigest()
-    except OSError as exc:
-        raise BenchmarkArtifactError(f"CompiledUtilityIR Schema 不可读: {schema_path}: {exc}") from exc
-    if schema_sha256 != COMPILED_UTILITY_IR_SCHEMA_SHA256:
+        relative_path, expected_sha256 = IR_SCHEMA_SNAPSHOTS[version]
+    except KeyError as exc:
         raise BenchmarkArtifactError(
-            "CompiledUtilityIR Schema SHA-256 漂移: "
-            f"{schema_sha256} != {COMPILED_UTILITY_IR_SCHEMA_SHA256}"
+            f"未知 CompiledUtilityIR schema 版本: {version!r}; "
+            f"支持: {sorted(IR_SCHEMA_SNAPSHOTS)}"
+        ) from exc
+    return Path(__file__).resolve().parents[3] / relative_path, expected_sha256
+
+
+def _verify_schema_file(path: Path, expected_sha256: str, label: str) -> str:
+    try:
+        payload = path.read_bytes()
+    except OSError as exc:
+        raise BenchmarkArtifactError(f"{label} 不可读: {path}: {exc}") from exc
+    actual_sha256 = hashlib.sha256(payload).hexdigest()
+    if actual_sha256 != expected_sha256:
+        raise BenchmarkArtifactError(
+            f"{label} SHA-256 漂移: {actual_sha256} != {expected_sha256}"
+        )
+    return actual_sha256
+
+
+def verify_ir_schema(version: str = CURRENT_IR_SCHEMA_VERSION) -> str:
+    """核验指定版本的 CompiledUtilityIR schema 身份（含归档 v1.0 快照）。"""
+    path, expected_sha256 = _resolve_schema_entry(version)
+    return _verify_schema_file(path, expected_sha256, f"CompiledUtilityIR schema v{version}")
+
+
+def build_benchmark_scenarios(
+    ir_schema_version: str = CURRENT_IR_SCHEMA_VERSION,
+) -> tuple[BenchmarkScenario, ...]:
+    verify_ir_schema(ir_schema_version)
+    if ir_schema_version != CURRENT_IR_SCHEMA_VERSION:
+        raise BenchmarkArtifactError(
+            "历史 schema 快照仅用于归档身份核验；可运行 fixture 套件需要当前 IR "
+            f"{CURRENT_IR_SCHEMA_VERSION}（请求={ir_schema_version}）"
         )
     bundle = compile_municipal_rule_evidence_bundle()
     rule_identity = bundle.canonical_sha256
@@ -527,6 +591,8 @@ def _run_scenario(
             "name": scenario.name,
             "category": scenario.category,
             "input_version": scenario.input_version,
+            "ir_schema_version": CURRENT_IR_SCHEMA_VERSION,
+            "ir_schema_sha256": COMPILED_UTILITY_IR_SCHEMA_SHA256,
             "expected_status": scenario.expected_status,
             "expected_failure_reason": scenario.expected_failure_reason,
             "expected_failure_marker": _EXPECTED_FAILURE_MARKER[scenario.scenario_id],
@@ -627,7 +693,7 @@ def _run_ambiguous_rule_scenario(repetitions: int) -> tuple[str, str, list[str]]
         source_path="benchmark/B8",
         source_sha256="8" * 64,
         compiler_name="openbimagent-t7-benchmark",
-        compiler_version=BENCHMARK_VERSION,
+        compiler_version=_B8_BUNDLE_COMPILER_VERSION,
         rules=(rule, duplicate),
     )
     hashes: list[str] = []
@@ -956,7 +1022,7 @@ def _missing_evidence_payload() -> dict[str, Any]:
 
 def _ambiguous_rule_payload() -> dict[str, Any]:
     return {
-        "protocol_version": BENCHMARK_VERSION,
+        "protocol_version": _B8_FIXTURE_PROTOCOL_VERSION,
         "request_id": "benchmark-b8-rule-ambiguity",
         "rule_type": "structure_clearance",
         "facts": {"design_system": "wastewater", "obstacle_category": "building"},
@@ -1034,11 +1100,15 @@ def _node(node_id: str, node_type: str, x_m: float, y_m: float, *, anchor: float
 
 
 def _segment(segment_id: str, start: str, end: str) -> dict[str, Any]:
+    # Explicit synthetic fixture dimensions for typed-host regression. These are
+    # test geometry, not dimensions inferred from DN or a concrete-pipe standard.
     return {
         "segment_id": segment_id,
         "start_node_id": start,
         "end_node_id": end,
         "diameter_mm": 300.0,
+        "inner_diameter_mm": 300.0,
+        "outer_diameter_mm": 360.0,
         "material": "concrete",
         "design_slope": 0.003,
         "surface_context": "driveway",
@@ -1068,6 +1138,8 @@ def _write_json(path: Path, payload: Any) -> None:
 __all__ = [
     "BENCHMARK_VERSION",
     "COMPILED_UTILITY_IR_SCHEMA_SHA256",
+    "CURRENT_IR_SCHEMA_VERSION",
+    "IR_SCHEMA_SNAPSHOTS",
     "BenchmarkArtifactError",
     "BenchmarkConclusion",
     "BenchmarkReport",
@@ -1076,4 +1148,5 @@ __all__ = [
     "build_benchmark_scenarios",
     "run_m1_5_t7_benchmark",
     "verify_benchmark_artifact",
+    "verify_ir_schema",
 ]

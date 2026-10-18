@@ -18,6 +18,7 @@ from openbimagent.assembly.vectorworks_plan import (
     VectorworksOperation,
 )
 from openbimagent.utility.contracts import CompiledUtilityIR
+from openbimagent.utility.geometry import execution_geometry, execution_port_positions
 
 SEMANTIC_SNAPSHOT_VERSION = "1.0"
 SEMANTIC_COMPARISON_VERSION = "1.0"
@@ -26,6 +27,7 @@ SEMANTIC_COMPARISON_VERSION = "1.0"
 class SnapshotHost(StrEnum):
     BLENDER = "blender"
     VECTORWORKS = "vectorworks"
+    IFC = "ifc"
 
 
 class SemanticObjectKind(StrEnum):
@@ -235,6 +237,29 @@ class FakeVectorworksSemanticExecutor:
         ).finalized()
 
 
+def expected_semantic_snapshot(
+    ir: CompiledUtilityIR | dict[str, Any],
+    host: SnapshotHost | str,
+    *,
+    rule_identity: RuleProjectionIdentity | None = None,
+) -> SemanticSnapshot:
+    """Pure expected projection; this is never evidence of a host execution.
+
+    Coordinates describe the physical axis; diameter_mm is the nominal domain
+    diameter read from host properties, not a measurement of the host surface.
+    """
+    compiled = ir if isinstance(ir, CompiledUtilityIR) else CompiledUtilityIR.model_validate(ir)
+    execution_port_positions(compiled)  # Reject ambiguous legacy/DN-only geometry.
+    return SemanticSnapshot(
+        host=SnapshotHost(host),
+        host_adapter="expected-ir-projection-v1",
+        source_ir_id=compiled.ir_id,
+        source_ir_sha256=compiled.canonical_sha256(),
+        rule_identity=rule_identity,
+        objects=_objects_from_ir(compiled, host=SnapshotHost(host), rule_identity=rule_identity),
+    ).finalized()
+
+
 def compare_semantic_snapshots(
     left: SemanticSnapshot | dict[str, Any],
     right: SemanticSnapshot | dict[str, Any],
@@ -298,6 +323,7 @@ def _objects_from_ir(
     rule_identity: RuleProjectionIdentity | None = None,
 ) -> tuple[SemanticObject, ...]:
     rule_properties = rule_identity.domain_properties() if rule_identity is not None else {}
+    axis_ports = execution_port_positions(compiled) if compiled.protocol_version != "1.0" else {}
     objects: list[SemanticObject] = []
     for index, system in enumerate(sorted(compiled.systems, key=lambda item: item.system_id)):
         objects.append(SemanticObject(
@@ -319,7 +345,7 @@ def _objects_from_ir(
             stable_id=node.node_id,
             object_kind=SemanticObjectKind.NODE,
             system_id=node.system_id,
-            position=Coordinate(**node.position.model_dump()),
+            position=_readback_coordinate(node.position),
             ifc_class=node.ifc_class,
             ifc_predefined_type=node.ifc_predefined_type,
             domain_properties={
@@ -335,18 +361,19 @@ def _objects_from_ir(
                 stable_id=port.port_id,
                 object_kind=SemanticObjectKind.PORT,
                 system_id=node.system_id,
-                position=Coordinate(**port.position.model_dump()),
+                position=_readback_coordinate(axis_ports.get(port.port_id, port.position)),
                 ifc_class=port.ifc_class,
                 domain_properties={"direction": port.direction.value, **rule_properties},
                 source_ir_path=f"/nodes/{node_index}/ports/{port_index}",
                 host_handle=f"{host.value}:{port.port_id}",
             ))
     for index, segment in enumerate(sorted(compiled.segments, key=lambda item: item.segment_id)):
+        axis = execution_geometry(segment)[0] if compiled.protocol_version != "1.0" else segment.centerline
         objects.append(SemanticObject(
             stable_id=segment.segment_id,
             object_kind=SemanticObjectKind.SEGMENT,
             system_id=segment.system_id,
-            centerline=tuple(Coordinate(**point.model_dump()) for point in segment.centerline),
+            centerline=tuple(_readback_coordinate(point) for point in axis),
             topology=(segment.start_port_id, segment.end_port_id),
             diameter_mm=segment.diameter_mm,
             horizontal_length_m=segment.horizontal_length_m,
@@ -385,10 +412,10 @@ def _object_from_vectorworks_state(
         stable_id=object_id,
         object_kind=kind,
         system_id=str(records["SystemID"]),
-        position=Coordinate(**operation.position.model_dump()) if operation.position is not None else None,
-        centerline=tuple(Coordinate(**point.model_dump()) for point in operation.centerline),
+        position=_readback_coordinate(operation.position) if operation.position is not None else None,
+        centerline=tuple(_readback_coordinate(point) for point in operation.centerline),
         topology=connections.get(object_id, ()),
-        diameter_mm=operation.diameter_mm,
+        diameter_mm=_optional_float(records.get("NominalDiameterMM", records.get("DiameterMM"))),
         horizontal_length_m=_optional_float(records.get("HorizontalLengthM")),
         start_invert_m=_optional_float(records.get("StartInvertM")),
         end_invert_m=_optional_float(records.get("EndInvertM")),
@@ -401,6 +428,10 @@ def _object_from_vectorworks_state(
         host_handle=f"vectorworks:{operation.name or object_id}",
         presentation_material=f"vectorworks:{operation.material}" if operation.material else None,
     )
+
+
+def _readback_coordinate(point: Any) -> Coordinate:
+    return Coordinate(**{key: round(value, 6) for key, value in point.model_dump().items()})
 
 
 def _optional_float(value: Any) -> float | None:
@@ -443,4 +474,5 @@ __all__ = [
     "SemanticSnapshot",
     "SnapshotHost",
     "compare_semantic_snapshots",
+    "expected_semantic_snapshot",
 ]

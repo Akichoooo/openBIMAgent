@@ -13,6 +13,7 @@ import { CommandPalette, type PaletteItem } from "@/components/chat/CommandPalet
 import { ErrorBoundary } from "@/components/chat/ErrorBoundary"
 import { AuditDialog } from "@/components/chat/AuditDialog"
 import { BottomTerminalPanel } from "@/components/layout/BottomTerminalPanel"
+import { MunicipalWorkbench } from "@/components/viewport/MunicipalWorkbench"
 
 export default function App() {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
@@ -155,6 +156,17 @@ export default function App() {
   const [newTaskOpen, setNewTaskOpen] = useState(false)
   const [refreshTrigger, setRefreshTrigger] = useState(0)
   const [irData, setIrData] = useState<any>(null)
+  const [irSessionId, setIrSessionId] = useState<string | null>(null)
+  const [municipalModel, setMunicipalModel] = useState<{ sessionId: string; ir: any } | null>(null)
+  useEffect(() => {
+    const narrow = window.matchMedia("(max-width: 1023px)")
+    const adapt = () => { if (narrow.matches) { setShowLeftSidebar(false); setShowRightChat(false) } }
+    adapt()
+    narrow.addEventListener("change", adapt)
+    return () => narrow.removeEventListener("change", adapt)
+  }, [])
+  const sessionIr = irSessionId === currentSessionId ? irData : null
+  const displayedIr = municipalModel?.sessionId === currentSessionId ? municipalModel.ir : sessionIr
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [auditOpen, setAuditOpen] = useState(false)
   // Context 预算(ChatThread 上报 → Header 预算条;pi-mono 范式)
@@ -227,7 +239,7 @@ export default function App() {
     try {
       const ws = await api.listWorkspaces().catch(() => ({ current: null, items: [] }))
       let targetPlaybook = currentSession?.playbook || "municipal_utility"
-      let targetWorkspace = ws.current || undefined
+      let targetWorkspace = ws.current || (ws.items && ws.items.length > 0 ? ws.items[0].id : undefined)
 
       if (typeof param === "string") {
         const isKnownWs = ws.items?.some((it) => it.id === param)
@@ -269,7 +281,7 @@ export default function App() {
     }
   }
 
-  // Load 3D IR geometry whenever session changes（纯净模式：仅在有真实产物时投影，绝不自动插入占位圆柱）
+  // Load 3D IR geometry whenever session changes or run/events update
   useEffect(() => {
     if (!currentSessionId) {
       setIrData(null)
@@ -277,6 +289,8 @@ export default function App() {
     }
     api.getSessionArtifact(currentSessionId, "compiled_utility_ir.json")
       .then((res) => {
+        if (cancelled) return
+        setIrSessionId(currentSessionId)
         if (res && res.data) {
           setIrData(res.data)
         } else {
@@ -284,9 +298,13 @@ export default function App() {
         }
       })
       .catch(() => {
+        if (cancelled) return
+        setIrSessionId(currentSessionId)
         setIrData(null)
       })
-  }, [currentSessionId, refreshTrigger])
+    let cancelled = false
+    return () => { cancelled = true }
+  }, [currentSessionId, refreshTrigger, sessionEvents.length, agentStatus.running])
 
   // 运行中 IR 产物实时投影：事件流出现 compiled_utility_ir 新建/更新信号时合并触发 refreshTrigger，
   // 3D 视口无需手动切换会话即可跟进（窗口内多次命中只刷新一次，间隔 ≥2.5s）
@@ -320,6 +338,16 @@ export default function App() {
     }
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [])
+
+  useEffect(() => {
+    const openMunicipal = () => {
+      setChatFocusMode(false)
+      setViewMode("3d")
+      window.setTimeout(() => window.dispatchEvent(new CustomEvent("municipal-expand")), 0)
+    }
+    window.addEventListener("municipal-open", openMunicipal)
+    return () => window.removeEventListener("municipal-open", openMunicipal)
   }, [])
 
   // 工作区切换：刷新数据；若当前会话不属于新工作区则自动切到可见会话
@@ -443,9 +471,9 @@ export default function App() {
 
       {/* 主工作台三栏布局(ErrorBoundary 容错:子树崩溃隔离不白屏) */}
       <ErrorBoundary>
-      <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
+      <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden relative">
         {/* 左侧：任务与会话列表 (支持拖拽调宽与一键折叠) */}
-        <div style={{ width: sidebarWidth }} className={showLeftSidebar ? "h-full shrink-0 flex" : "hidden"}>
+        <div style={{ width: sidebarWidth }} className={showLeftSidebar ? "h-full shrink-0 flex max-lg:absolute max-lg:left-0 max-lg:inset-y-0 max-lg:z-30 max-lg:max-w-full bg-background" : "hidden"}>
           <Sidebar
             currentSessionId={currentSessionId}
             onSelectSession={handleSelectSession}
@@ -465,7 +493,7 @@ export default function App() {
           <div
             onMouseDown={startDraggingLeft}
             onDoubleClick={() => setSidebarWidth(260)}
-            className="w-1 hover:w-1.5 bg-neutral-200/50 dark:bg-neutral-800/50 hover:bg-violet-500/80 active:bg-violet-600 transition-all cursor-col-resize z-20 select-none relative group shrink-0"
+            className="hidden lg:block w-1 hover:w-1.5 bg-neutral-200/50 dark:bg-neutral-800/50 hover:bg-violet-500/80 active:bg-violet-600 transition-all cursor-col-resize z-20 select-none relative group shrink-0"
             title="按住拖拽调整左侧栏宽度，双击复位 (260px)"
           >
             <div className="absolute inset-y-0 -left-1.5 -right-1.5 cursor-col-resize" />
@@ -480,13 +508,18 @@ export default function App() {
                 sessionId={currentSessionId}
                 sessionTitle={getSessionTitle(currentSession)}
                 playbook={currentSession?.playbook || "municipal_utility"}
-                irData={irData}
+                mode={currentSession?.mode}
+                irData={displayedIr}
                 onOpenSettings={handleOpenSettings}
                 onUsageChange={(used, ctx) => setCtxUsage({ used, ctx })}
                 onEventsChange={setSessionEvents}
                 onStatusChange={setAgentStatus}
                 onSessionCreated={(newId) => {
                   setCurrentSessionId(newId)
+                  setRefreshTrigger((c) => c + 1)
+                }}
+                onSessionTitleChange={(newTitle) => {
+                  setCurrentSession((prev) => prev ? { ...prev, title: newTitle } : null)
                   setRefreshTrigger((c) => c + 1)
                 }}
                 isExpanded={true}
@@ -501,11 +534,16 @@ export default function App() {
                 <CanvasViewport
                   viewMode={viewMode}
                   onViewModeChange={(m) => setViewMode(m)}
-                  irData={irData}
+                  irData={displayedIr}
                   isDark={isDark}
                 />
               )}
             </div>
+          )}
+
+          {(!currentSession?.playbook || currentSession.playbook === "municipal_utility") && !chatFocusMode && (
+            <MunicipalWorkbench key={currentSessionId || "no-session"} sessionId={currentSessionId} sourceIr={sessionIr}
+              onModelChange={(ir) => { if (currentSessionId) setMunicipalModel({ sessionId: currentSessionId, ir }) }} />
           )}
 
           {/* 下展开是中间的 Terminal (对标 VS Code / Cursor 底部面板范式) */}
@@ -525,7 +563,7 @@ export default function App() {
           <div
             onMouseDown={startDraggingRight}
             onDoubleClick={() => setChatWidth(460)}
-            className="w-1 hover:w-1.5 bg-neutral-200/50 dark:bg-neutral-800/50 hover:bg-violet-500/80 active:bg-violet-600 transition-all cursor-col-resize z-20 select-none relative group shrink-0"
+            className="hidden lg:block w-1 hover:w-1.5 bg-neutral-200/50 dark:bg-neutral-800/50 hover:bg-violet-500/80 active:bg-violet-600 transition-all cursor-col-resize z-20 select-none relative group shrink-0"
             title="按住拖拽调整对话栏宽度，双击复位 (460px)"
           >
             <div className="absolute inset-y-0 -left-1.5 -right-1.5 cursor-col-resize" />
@@ -533,18 +571,23 @@ export default function App() {
         )}
 
         {/* 右侧：智能体对话流与 Composer (支持拖拽调宽与一键折叠；全宽模式时隐藏以避免重复) */}
-        <div style={{ width: chatWidth }} className={showRightChat && !chatFocusMode ? "h-full shrink-0 flex" : "hidden"}>
+        <div style={{ width: chatWidth }} className={showRightChat && !chatFocusMode ? "h-full shrink-0 flex max-lg:absolute max-lg:right-0 max-lg:inset-y-0 max-lg:z-30 max-lg:max-w-full bg-background" : "hidden"}>
           <ChatThread
             sessionId={currentSessionId}
             sessionTitle={getSessionTitle(currentSession)}
             playbook={currentSession?.playbook || "municipal_utility"}
-            irData={irData}
+            mode={currentSession?.mode}
+            irData={displayedIr}
             onOpenSettings={handleOpenSettings}
             onUsageChange={(used, ctx) => setCtxUsage({ used, ctx })}
             onEventsChange={setSessionEvents}
             onStatusChange={setAgentStatus}
             onSessionCreated={(newId) => {
               setCurrentSessionId(newId)
+              setRefreshTrigger((c) => c + 1)
+            }}
+            onSessionTitleChange={(newTitle) => {
+              setCurrentSession((prev) => prev ? { ...prev, title: newTitle } : null)
               setRefreshTrigger((c) => c + 1)
             }}
             isExpanded={false}

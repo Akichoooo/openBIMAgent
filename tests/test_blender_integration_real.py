@@ -30,7 +30,7 @@ import pytest
 from openbimagent.assembly.blender_plan import BlenderBuilder
 from openbimagent.assembly.semantic_snapshot import SemanticSnapshot
 from openbimagent.mcp_clients.blender import BlenderMCPClient
-from test_compiled_utility_ir import solved_payload
+from utility_host_fixtures import physical_solved_payload as solved_payload
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ADDON_PATH = PROJECT_ROOT / "mcp_servers" / "blender_mcp" / "addon.py"

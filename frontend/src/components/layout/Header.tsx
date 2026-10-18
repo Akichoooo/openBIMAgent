@@ -3,13 +3,6 @@ import { api } from "@/services/api"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog"
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -97,8 +90,7 @@ export const Header: React.FC<HeaderProps> = ({
   chatFocusMode = false,
   onToggleChatFocus,
 }) => {
-  const [exporting, setExporting] = useState<string | null>(null)
-  const [confirmHost, setConfirmHost] = useState<"blender" | "vectorworks" | null>(null)
+  const openMunicipal = () => window.dispatchEvent(new CustomEvent("municipal-open"))
   const [toolsetPreset, setToolsetPreset] = useState<string>("modeling")
   const [currentModel, setCurrentModel] = useState<string>("")
 
@@ -138,33 +130,6 @@ export const Header: React.FC<HeaderProps> = ({
     ? DISCIPLINE_MAP[currentPlaybook]
     : { label: "市政给排水", code: "GB 50289" }
 
-  // 真机导出：POST + confirm:true 过 prompt 策略门（HITL 人确认语义 = 本确认弹窗）
-  const handleExport = async (host: "blender" | "vectorworks") => {
-    setExporting(host)
-    setConfirmHost(null)
-    try {
-      const res = await api.exportCad(host)
-      if (res?.status === "success") {
-        const receipt = res.receipt
-        const detail =
-          typeof receipt === "object" && receipt !== null
-            ? receipt.path || receipt.file || receipt.summary || "已交付 CAD 宿主执行"
-            : String(receipt || "已交付 CAD 宿主执行")
-        toast.success(`导出 ${host === "blender" ? "Blender" : "Vectorworks"} 成功`, {
-          description: String(detail).slice(0, 120),
-        })
-      } else {
-        toast.error("导出被拒绝或失败", {
-          description: String(res?.error || "未知错误").slice(0, 160),
-        })
-      }
-    } catch (e: any) {
-      toast.error("导出请求失败: " + e.message)
-    } finally {
-      setExporting(null)
-    }
-  }
-
   // 训练轨迹导出(SFT/DPO jsonl 下载):仅成功交付案例,后端 fail-closed
   const handleExportTraining = async (fmt: "sft" | "dpo") => {
     try {
@@ -194,7 +159,7 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <>
-    <header className="h-12 border-b border-border/70 bg-background/80 backdrop-blur-md px-3.5 flex items-center justify-between shrink-0 select-none z-20">
+    <header className="h-12 border-b border-border/70 bg-background/80 backdrop-blur-md px-3.5 flex items-center justify-between shrink-0 select-none z-40 gap-3 overflow-x-auto whitespace-nowrap [&>div]:shrink-0">
       {/* 左侧：Logo 与会话面包屑 */}
       <div className="flex items-center space-x-3 min-w-0">
         <div className="flex items-baseline select-none cursor-pointer tracking-tight">
@@ -380,7 +345,7 @@ export const Header: React.FC<HeaderProps> = ({
           <DropdownMenuTrigger asChild>
             <button
               className="flex items-center space-x-1 text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300 transition-colors cursor-pointer outline-none text-[11px]"
-              title="导出当前已收敛几何到本地高精度 CAD 宿主软件"
+              title="检查并确认当前任务，再导出至 CAD 宿主"
             >
               <PackageCheck className="h-3 w-3 shrink-0" />
               <span>导出 CAD</span>
@@ -389,65 +354,26 @@ export const Header: React.FC<HeaderProps> = ({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-60 p-1 text-xs">
             <div className="px-2 py-1 text-[10px] font-semibold text-muted-foreground flex items-center justify-between">
-              <span>高精度 CAD 实体导出</span>
-              <span className="text-[9px] text-muted-foreground/80 font-mono">前置连通检测</span>
+              <span>确认当前任务后导出</span>
             </div>
             <DropdownMenuItem
-              onClick={async () => {
-                const toastId = toast.loading("正在检测 Blender MCP (127.0.0.1:9876) 连通性...")
-                try {
-                  const hosts = await api.listHosts()
-                  const blender = hosts.find((h) => h.id === "blender")
-                  if (!blender || blender.status !== "up") {
-                    toast.error("Blender MCP (127.0.0.1:9876) 未连接：请先在本地启动 Blender 5.2 并开启 Blender-MCP 插件后再执行导出", { id: toastId, duration: 4500 })
-                    return
-                  }
-                  toast.loading("Blender 已就绪，正在执行高精度几何装配与导出...", { id: toastId })
-                  const res = await api.exportCad("blender")
-                  if (res && res.status === "success") {
-                    toast.success("已成功导出至 Blender 5.2 宿主环境", { id: toastId })
-                  } else {
-                    toast.error(`导出失败: ${res?.error || "未知错误"}`, { id: toastId })
-                  }
-                } catch (e: any) {
-                  toast.error(`检测或导出异常: ${e.message}`, { id: toastId })
-                }
-              }}
+              onClick={openMunicipal}
               className="gap-2 cursor-pointer"
             >
               <Box className="h-3.5 w-3.5 text-amber-500 shrink-0" />
               <div>
                 <div className="font-medium">Blender (blender-mcp)</div>
-                <div className="text-[10px] text-muted-foreground">三维几何装配 · 光追渲染通道</div>
+                <div className="text-[10px] text-muted-foreground">前往管网检查与确认</div>
               </div>
             </DropdownMenuItem>
             <DropdownMenuItem
-              onClick={async () => {
-                const toastId = toast.loading("正在检测 Vectorworks 宿主连通性...")
-                try {
-                  const hosts = await api.listHosts()
-                  const vw = hosts.find((h: any) => h.id === "vectorworks")
-                  if (vw && vw.status === "down") {
-                    toast.error("Vectorworks 宿主未就绪：请先启动 Vectorworks 并配置 runner jobs 目录", { id: toastId, duration: 4500 })
-                    return
-                  }
-                  toast.loading("正在执行 Vectorworks 高精度实体导出...", { id: toastId })
-                  const res = await api.exportCad("vectorworks")
-                  if (res && res.status === "success") {
-                    toast.success("已成功导出至 Vectorworks 实体工程", { id: toastId })
-                  } else {
-                    toast.error(`Vectorworks 导出失败: ${res?.error || "宿主无响应"}`, { id: toastId })
-                  }
-                } catch (e: any) {
-                  toast.error(`检测或导出异常: ${e.message}`, { id: toastId })
-                }
-              }}
+              onClick={openMunicipal}
               className="gap-2 cursor-pointer"
             >
               <Layers className="h-3.5 w-3.5 text-sky-500 shrink-0" />
               <div>
                 <div className="font-medium">Vectorworks (VW)</div>
-                <div className="text-[10px] text-muted-foreground">BIM 实体构件 · 平立剖施工图</div>
+                <div className="text-[10px] text-muted-foreground">前往管网检查与确认</div>
               </div>
             </DropdownMenuItem>
           </DropdownMenuContent>
@@ -542,16 +468,14 @@ export const Header: React.FC<HeaderProps> = ({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
             <DropdownMenuItem
-              onClick={() => setConfirmHost("blender")}
-              disabled={exporting !== null}
+              onClick={openMunicipal}
               className="text-xs cursor-pointer"
             >
               <Layers className="h-3.5 w-3.5 mr-2 text-amber-500" />
               Blender-BIM 真机导出
             </DropdownMenuItem>
             <DropdownMenuItem
-              onClick={() => setConfirmHost("vectorworks")}
-              disabled={exporting !== null}
+              onClick={openMunicipal}
               className="text-xs cursor-pointer"
             >
               <Boxes className="h-3.5 w-3.5 mr-2 text-sky-500" />
@@ -638,36 +562,6 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
     </header>
 
-    {/* 真机导出 HITL 确认门 */}
-    <Dialog open={confirmHost !== null} onOpenChange={(o) => !o && setConfirmHost(null)}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle className="text-base flex items-center gap-2">
-            <ShieldAlert className="h-4 w-4 text-amber-500" />
-            确认真机导出
-          </DialogTitle>
-        </DialogHeader>
-        <p className="text-xs text-muted-foreground leading-relaxed py-1">
-          该操作将对当前演示场景执行自愈求解，并把结果真实写入{" "}
-          <span className="font-medium text-foreground">
-            {confirmHost === "blender" ? "Blender（headless 执行计划）" : "Vectorworks（宿主 runner）"}
-          </span>
-          。此为受控写盘动作，确认后立即执行。
-        </p>
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={() => setConfirmHost(null)}>
-            取消
-          </Button>
-          <Button
-            size="sm"
-            disabled={exporting !== null}
-            onClick={() => confirmHost && handleExport(confirmHost)}
-          >
-            {exporting ? "正在导出..." : "确认导出"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
     </>
   )
 }

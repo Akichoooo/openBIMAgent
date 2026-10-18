@@ -12,7 +12,7 @@ from openbimagent.utility import UtilitySolverError, solve_network_gravity_utili
 
 
 def network_payload() -> dict:
-    return {
+    payload = {
         "protocol_version": "0.1",
         "request_id": "network-case-001",
         "source_ir_sha256": "c" * 64,
@@ -90,6 +90,9 @@ def network_payload() -> dict:
         ],
         "collision_context": {"coverage": "complete", "obstacles": []},
     }
+    for segment in payload["segments"]:
+        segment.update(inner_diameter_mm=300.0, outer_diameter_mm=300.0)
+    return payload
 
 
 def merge_payload() -> dict:

@@ -21,7 +21,12 @@ from openbimagent.assembly.blender_plan import (
 from openbimagent.assembly.semantic_snapshot import RuleProjectionIdentity
 from openbimagent.schema_gate.gate import SchemaGate
 from openbimagent.utility import CompiledUtilityIR
-from test_compiled_utility_ir import solved_payload
+from test_compiled_utility_ir import solved_payload as legacy_solved_payload
+from openbimagent.utility.geometry import upgrade_legacy_utility_ir
+
+
+def solved_payload() -> dict:
+    return upgrade_legacy_utility_ir(legacy_solved_payload(), dimensions_by_segment={"pipe-001": {"inner_diameter_mm": 300.0, "outer_diameter_mm": 360.0}}).model_dump(mode="json")
 
 
 def _rule_identity(**overrides) -> RuleProjectionIdentity:
@@ -71,7 +76,7 @@ def test_plan_has_explicit_host_semantics_and_allowlisted_operations() -> None:
     assert all(item.object_name and item.primitive for item in creates)
     segment = next(item for item in creates if item.object_type is BlenderObjectType.PIPE_SEGMENT)
     assert segment.primitive is BlenderPrimitive.POLYLINE_CURVE
-    assert segment.diameter_mm == 300.0
+    assert segment.diameter_mm == 360.0
     assert len(segment.centerline) == 2
     properties = next(
         item
