@@ -340,3 +340,28 @@ def test_compiled_import_preserves_ids_and_leaves_missing_context_unknown():
     assert imported.solver_input["source_ir_sha256"] == validation.compiled_ir.source_ir_sha256
     assert imported.solver_input["collision_context"] is None
     assert all(segment["surface_context"] is None for segment in imported.solver_input["segments"])
+
+
+def test_critique_carries_requirement_brief_and_iteration_context(tmp_path):
+    candidate, validation, preview = preview_case(tmp_path)
+    registry = Registry(report_payload(validation, preview))
+    report = MunicipalVLMCritic(registry).critique(
+        preview,
+        validation=validation,
+        candidate=candidate,
+        requirement_brief="keep the branch clear of the building",
+        iteration_round=2,
+        prior_iteration_patches=[{
+            "path": "/segments/0/design_slope", "old_value": 0.003, "value": 0.004,
+            "reason": "tighten slope after first review", "round": 1, "source": "automatic",
+        }],
+    )
+    assert report.summary
+    context = json.loads(registry.calls[0][1][1]["content"][0]["text"])
+    assert context["requirement_brief"] == "keep the branch clear of the building"
+    assert context["iteration_round"] == 2
+    assert context["prior_iteration_patches"][0]["path"] == "/segments/0/design_slope"
+    assert context["prior_iteration_patches"][0]["source"] == "automatic"
+    system_text = registry.calls[0][1][0]["content"]
+    assert "Anti-Oscillation" in system_text
+    assert "patches as an empty array" in system_text

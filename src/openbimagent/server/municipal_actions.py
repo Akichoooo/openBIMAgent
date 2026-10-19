@@ -345,7 +345,14 @@ def propose_repairs(state: dict) -> list[dict]:
     )
 
 
-def check_visual(state: dict, output_dir: Path) -> dict:
+def check_visual(
+    state: dict,
+    output_dir: Path,
+    *,
+    requirement_brief: str | None = None,
+    iteration_round: int = 1,
+    prior_iteration_patches: list[dict] | None = None,
+) -> dict:
     from openbimagent.vision.municipal import MunicipalVLMCritic, render_municipal_preview
 
     started = time.perf_counter()
@@ -413,6 +420,9 @@ def check_visual(state: dict, output_dir: Path) -> dict:
             candidate=candidate,
             locked_paths=[item["path"] for item in state["locks"]],
             diagnostics_out=diagnostics,
+            requirement_brief=requirement_brief if requirement_brief is not None else state.get("requirement_brief"),
+            iteration_round=iteration_round,
+            prior_iteration_patches=prior_iteration_patches,
         )
     except Exception as exc:  # noqa: BLE001 — classify provider/render/schema failures explicitly
         code, stage, called = _classify_vlm_exception(exc, diagnostics)
@@ -474,6 +484,32 @@ def check_visual(state: dict, output_dir: Path) -> dict:
         }
     )
     return payload
+
+
+def run_iterative_refinement_loop(
+    session_id: str,
+    max_rounds: int = 3,
+    *,
+    store: Any | None = None,
+) -> dict:
+    """Workflow entry point for bounded deterministic + visual self-refinement."""
+    from openbimagent.server.municipal_workflow import (
+        MunicipalWorkflowStore,
+        get_default_workflow_store,
+    )
+
+    if store is None:
+        store = get_default_workflow_store()
+    if store is None:
+        from openbimagent.server.runs import _sessions_dir
+
+        store = MunicipalWorkflowStore(_sessions_dir() / "municipal")
+    return store.iterative_refine(
+        session_id,
+        {"max_rounds": max_rounds},
+        propose_repairs,
+        check_visual,
+    )
 
 
 DELIVERY_CHECKER_VERSION = "openbimagent.municipal.delivery-1.0"

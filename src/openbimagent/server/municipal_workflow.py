@@ -157,6 +157,8 @@ class MunicipalWorkflowStore:
             if source not in {"correction", "preference", "requirement_change"}:
                 raise WorkflowError("请选择修改原因：纠错、偏好或需求变更。", 422)
             validation = self.validator(candidate, old.get("rule_context") if old else None)
+            brief_value = body["requirement_brief"] if "requirement_brief" in body else (old or {}).get("requirement_brief")
+            requirement_brief = str(brief_value).strip()[:8000] or None if brief_value is not None else None
             state = {
                 "session_id": sid, "revision": (old or {}).get("revision", 0) + 1,
                 "requirement_revision": (old or {}).get("requirement_revision", 1) + int(bool(old) and source == "requirement_change"),
@@ -164,9 +166,13 @@ class MunicipalWorkflowStore:
                 "rule_context": validation.get("rule_context"), "validation": validation,
                 "locks": deepcopy((old or {}).get("locks", [])), "confirmation": None,
                 "visual": None, "proposal": None, "delivery": {},
+                "requirement_brief": requirement_brief,
+                "auto_retry_rounds": 0 if source == "requirement_change" else int((old or {}).get("auto_retry_rounds", 0)),
+                "degradation_rollback": False if source == "requirement_change" else bool((old or {}).get("degradation_rollback", False)),
                 "history": deepcopy((old or {}).get("history", [])), "updated_at": _now(),
             }
             state["history"].append({"action": "save", "source": source, "revision": state["revision"],
+                                     "requirement_revision": state["requirement_revision"],
                                      "at": state["updated_at"], "before_sha256": (old or {}).get("candidate_sha256"),
                                      "after_sha256": state["candidate_sha256"], "candidate": deepcopy(candidate)})
             return self._write(sid, state)
@@ -244,6 +250,222 @@ class MunicipalWorkflowStore:
             state.update(visual=report, confirmation=None, proposal=None, updated_at=_now())
             state["history"].append({"action": "visual", "revision": state["revision"], "at": _now(), "report": report})
             return self._write(sid, state)
+
+    def _require_current(self, sid: str, snapshot: dict) -> dict:
+        state = self.get(sid)
+        if state is None:
+            raise WorkflowError("请先保存管网条件。", 404)
+        if state["revision"] != snapshot["revision"] or state["candidate_sha256"] != snapshot["candidate_sha256"]:
+            raise WorkflowError("任务已更新，本次自动迭代结果未应用。请刷新后重试。")
+        if state.get("delivery", {}).get("status") == "running":
+            raise WorkflowError("当前版本正在交给宿主执行，完成后才能修改。")
+        return state
+
+    def iterative_refine(
+        self,
+        sid: str,
+        body: dict,
+        repair_proposer: Callable | None = None,
+        visual_checker: Callable | None = None,
+        *,
+        max_rounds: int | None = None,
+    ) -> dict:
+        """Run bounded deterministic + visual refinement and record S0 -> S1.
+
+        Deterministic repair and validation own every numeric engineering verdict.
+        The visual model may only tune the reviewable geometry paths; a round whose
+        patches increase the number of hard-failing constraints is rolled back.
+        """
+        if repair_proposer is None:
+            from openbimagent.server.municipal_actions import propose_repairs
+
+            repair_proposer = propose_repairs
+        if visual_checker is None:
+            from openbimagent.server.municipal_actions import check_visual
+
+            visual_checker = check_visual
+        requested = max_rounds if max_rounds is not None else body.get("max_rounds", 3)
+        try:
+            rounds_limit = max(1, min(int(requested), 10))
+        except (TypeError, ValueError) as exc:
+            raise WorkflowError("自动迭代轮数必须为整数。", 422) from exc
+
+        with self._guard:
+            state = self.get(sid)
+            if state is None:
+                raise WorkflowError("请先保存管网条件。", 404)
+            if state.get("delivery", {}).get("status") == "running":
+                raise WorkflowError("当前版本正在交给宿主执行，完成后才能修改。")
+            if body.get("base_revision") is not None and (
+                state["revision"] != body.get("base_revision")
+                or state["candidate_sha256"] != body.get("candidate_sha256")
+            ):
+                raise WorkflowError("任务已更新，本次操作未应用。请刷新后核对最新版本。")
+            brief_value = body["requirement_brief"] if "requirement_brief" in body else state.get("requirement_brief")
+            state["requirement_brief"] = str(brief_value).strip()[:8000] or None if brief_value is not None else None
+            requirement_revision = int(state.get("requirement_revision", 1))
+            has_s0 = any(
+                entry.get("action") == "auto_loop_start"
+                and int(entry.get("requirement_revision", requirement_revision)) == requirement_revision
+                for entry in state.get("history", [])
+            )
+            if not has_s0:
+                state["history"].append({
+                    "action": "auto_loop_start", "state_role": "S0",
+                    "revision": state["revision"], "requirement_revision": requirement_revision,
+                    "at": _now(), "candidate": deepcopy(state["candidate"]),
+                    "requirement_brief": state.get("requirement_brief"),
+                    "initial_failure_modes": sorted(_failure_rule_ids(state.get("validation") or {})),
+                    "initial_hard_failures": sorted(_hard_failure_keys(state.get("validation") or {})),
+                })
+            self._write(sid, state)
+
+        applied: list[dict] = []
+        rounds_completed = 0
+        converged = False
+        rolled_back = False
+        rollback_reason: str | None = None
+        last_report: dict | None = None
+
+        for round_idx in range(1, rounds_limit + 1):
+            with self._guard:
+                state = self.get(sid)
+                proposals = repair_proposer(deepcopy(state)) if repair_proposer else []
+                proposals = [item for item in proposals if isinstance(item, dict) and item.get("path")]
+                if proposals:
+                    candidate = deepcopy(state["candidate"])
+                    for patch in proposals:
+                        if _at(candidate, patch["path"]) != patch.get("old_value"):
+                            raise WorkflowError("确定性修复建议基于旧参数，未应用。请重新检查。")
+                        _replace(candidate, patch["path"], patch.get("value"))
+                    self._check_locks(state, candidate)
+                    result = self.validator(candidate, state.get("rule_context"))
+                    state.update(candidate=candidate, candidate_sha256=_hash(candidate), validation=result,
+                                 revision=state["revision"] + 1, confirmation=None, visual=None,
+                                 proposal=None, delivery={}, updated_at=_now())
+                    state["history"].append({
+                        "action": "repair", "source": "automatic", "round": round_idx,
+                        "revision": state["revision"], "requirement_revision": requirement_revision,
+                        "at": state["updated_at"], "patches": deepcopy(proposals),
+                        "after_sha256": state["candidate_sha256"], "candidate": deepcopy(candidate),
+                    })
+                    self._write(sid, state)
+                    applied.extend({**deepcopy(item), "round": round_idx, "source": "automatic"} for item in proposals)
+                snapshot = deepcopy(state)
+
+            output_dir = self._path(sid).parent / f"auto-r{snapshot['revision']}-round-{round_idx}-{uuid4().hex[:8]}"
+            report = visual_checker(
+                snapshot,
+                output_dir,
+                requirement_brief=snapshot.get("requirement_brief"),
+                iteration_round=round_idx,
+                prior_iteration_patches=deepcopy(applied),
+            )
+            last_report = deepcopy(report) if isinstance(report, dict) else {
+                "status": "unavailable", "failure_code": "invalid_report"
+            }
+
+            if last_report.get("status") == "unavailable" or last_report.get("failure_code"):
+                with self._guard:
+                    state = self._require_current(sid, snapshot)
+                    state.update(visual=deepcopy(last_report), confirmation=None, proposal=None, updated_at=_now())
+                    state["history"].append({
+                        "action": "auto_loop_visual_failed", "round": round_idx,
+                        "revision": state["revision"], "requirement_revision": requirement_revision,
+                        "at": state["updated_at"], "status": last_report.get("status"),
+                        "failure_code": last_report.get("failure_code"), "report": deepcopy(last_report),
+                    })
+                    self._write(sid, state)
+                break
+
+            patches = [item for item in (last_report.get("patches") or [])
+                       if isinstance(item, dict) and item.get("path")]
+            if not patches:
+                converged = True
+                rounds_completed = round_idx
+                with self._guard:
+                    state = self._require_current(sid, snapshot)
+                    state.update(visual=deepcopy(last_report), confirmation=None, proposal=None, updated_at=_now())
+                    state["auto_retry_rounds"] = max(int(state.get("auto_retry_rounds", 0)), round_idx)
+                    state["history"].append({
+                        "action": "visual", "round": round_idx, "revision": state["revision"],
+                        "requirement_revision": requirement_revision, "at": state["updated_at"],
+                        "report": deepcopy(last_report), "converged": True,
+                    })
+                    self._write(sid, state)
+                break
+
+            with self._guard:
+                state = self._require_current(sid, snapshot)
+                candidate = deepcopy(state["candidate"])
+                for patch in patches:
+                    if _at(candidate, patch["path"]) != patch.get("old_value"):
+                        raise WorkflowError("视觉修复建议基于旧参数，未应用。请重新生成建议。")
+                    _replace(candidate, patch["path"], patch.get("value"))
+                self._check_locks(state, candidate)
+                result = self.validator(candidate, state.get("rule_context"))
+                before = _hard_failure_keys(state.get("validation") or {})
+                after = _hard_failure_keys(result)
+                if len(after) > len(before):
+                    rolled_back = True
+                    rollback_reason = f"视觉补丁使硬约束失败项从 {len(before)} 项增至 {len(after)} 项，已回滚本轮补丁。"
+                    state.update(visual=deepcopy(last_report), confirmation=None, proposal=None, updated_at=_now())
+                    state["auto_retry_rounds"] = max(int(state.get("auto_retry_rounds", 0)), round_idx)
+                    state["degradation_rollback"] = True
+                    state["history"].append({
+                        "action": "auto_loop_rollback", "round": round_idx,
+                        "revision": state["revision"], "requirement_revision": requirement_revision,
+                        "at": state["updated_at"], "reason": rollback_reason,
+                        "patches": deepcopy(patches),
+                        "before_failures": sorted(before), "after_failures": sorted(after),
+                        "before_count": len(before), "after_count": len(after),
+                    })
+                    self._write(sid, state)
+                    break
+                rounds_completed = round_idx
+                state.update(candidate=candidate, candidate_sha256=_hash(candidate), validation=result,
+                             revision=state["revision"] + 1, confirmation=None, visual=deepcopy(last_report),
+                             proposal=None, delivery={}, updated_at=_now())
+                state["auto_retry_rounds"] = max(int(state.get("auto_retry_rounds", 0)), round_idx)
+                state["history"].append({
+                    "action": "repair", "source": "visual_proposal", "round": round_idx,
+                    "revision": state["revision"], "requirement_revision": requirement_revision,
+                    "at": state["updated_at"], "patches": deepcopy(patches),
+                    "after_sha256": state["candidate_sha256"], "candidate": deepcopy(candidate),
+                    "before_failures": sorted(before), "after_failures": sorted(after),
+                })
+                self._write(sid, state)
+                applied.extend({**deepcopy(item), "round": round_idx, "source": "visual_proposal"} for item in patches)
+
+        with self._guard:
+            state = self.get(sid)
+            if state is None:
+                raise WorkflowError("请先保存管网条件。", 404)
+            state["history"].append({
+                "action": "auto_loop_complete", "state_role": "S1",
+                "revision": state["revision"], "requirement_revision": requirement_revision,
+                "at": _now(), "candidate": deepcopy(state["candidate"]),
+                "auto_retry_rounds": int(state.get("auto_retry_rounds", 0)),
+                "degradation_rollback": bool(state.get("degradation_rollback", False)),
+                "converged": converged, "rounds_completed": rounds_completed,
+                "applied_patches": deepcopy(applied),
+            })
+            published = self._write(sid, state)
+
+        return {
+            "session_id": sid,
+            "requirement_revision": requirement_revision,
+            "max_rounds": rounds_limit,
+            "rounds_completed": rounds_completed,
+            "auto_retry_rounds": int(published.get("auto_retry_rounds", 0)),
+            "degradation_rollback": bool(published.get("degradation_rollback", False)),
+            "rollback_reason": rollback_reason,
+            "rolled_back": rolled_back,
+            "converged": converged,
+            "applied_patches": applied,
+            "last_visual": last_report,
+            "state": published,
+        }
 
     def confirm(self, sid: str, body: dict) -> dict:
         with self._guard:
@@ -456,9 +678,28 @@ def _blocking(validation: dict) -> set[str]:
             for i in validation.get("issues", []) if i.get("status") in {"fail", "unknown"} and i.get("severity") != "info"}
 
 
+def _hard_failure_keys(validation: dict) -> set[str]:
+    return {f"{i.get('rule_id')}|{i.get('check_name')}|{i.get('object_ids')}|{i.get('field_path')}"
+            for i in validation.get("issues", []) if i.get("status") == "fail"}
+
+
+def _failure_rule_ids(validation: dict) -> set[str]:
+    return {str(i.get("rule_id")) for i in validation.get("issues", [])
+            if i.get("status") in {"fail", "unknown"} and i.get("severity") != "info" and i.get("rule_id")}
+
+
+_DEFAULT_WORKFLOW_STORE: "MunicipalWorkflowStore | None" = None
+
+
+def get_default_workflow_store() -> "MunicipalWorkflowStore | None":
+    return _DEFAULT_WORKFLOW_STORE
+
+
 def add_municipal_workflow(app: FastAPI) -> None:
+    global _DEFAULT_WORKFLOW_STORE
     from openbimagent.server.runs import _sessions_dir
     store = MunicipalWorkflowStore(_sessions_dir() / "municipal")
+    _DEFAULT_WORKFLOW_STORE = store
     app.state.municipal_workflow = store
 
     def call(sid: str, fn: Callable, *args: Any) -> Any:
@@ -525,6 +766,7 @@ def add_municipal_workflow(app: FastAPI) -> None:
         )
         actions = {"lock": (store.lock, ()), "propose": (store.propose, (propose_repairs,)),
                    "apply": (store.apply, ()), "visual": (store.visual, (check_visual,)),
+                   "auto-refine": (store.iterative_refine, (propose_repairs, check_visual)),
                    "confirm": (store.confirm, ()), "export": (store.export, (export_revision,)),
                    "ifc-retry": (store.retry_ifc, (retry_ifc_delivery,))}
         if action not in actions:

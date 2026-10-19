@@ -17,6 +17,7 @@ import json
 import os
 import re
 import threading
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -140,6 +141,16 @@ def _retrieve_exemplars(brief: str, pack: Path, *, top_k: int = 3) -> list[dict[
     query_features = _text_features(brief)
     scored: list[tuple[float, dict[str, Any]]] = []
     for i, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            continue
+        record = entry.get("experience_record")
+        if isinstance(record, dict):
+            stats = record.get("utility_stats") or {}
+            # Only admitted, non-deactivated experience may be retrieved. Legacy
+            # entries written before experience_record existed stay eligible so
+            # existing archives keep working.
+            if record.get("admission_verified") is not True or stats.get("active") is not True:
+                continue
         cand = _bigrams(str(entry.get("brief", "")))
         if not cand or not (query & cand):
             continue  # 零重合不入选（防"无相似也硬凑"）
@@ -241,6 +252,15 @@ def _execute_run(
     finally:
         try:
             entry = _archive_run_artifacts(playbook, session_id, brief, out_dir)
+            try:
+                used_ids = [str(item) for item in (_runs[session_id].get("exemplar_session_ids") or []) if item]
+                ir_path = out_dir / "compiled_utility_ir.json"
+                if used_ids and ir_path.is_file():
+                    _runs[session_id]["exemplar_feedback"] = record_exemplar_feedback(
+                        used_ids, _failure_modes_from_ir(ir_path), pack=playbook.parent
+                    )
+            except Exception:  # noqa: BLE001 — negative-transfer bookkeeping must not break the run
+                pass
             # P0-1 自蒸馏钩子：仅成功交付（有归档工件且无错误）才蒸馏 SKILL.md 候选；
             # 候选落 skills/_candidates/，永不自动生效，须人工批准转正（fail-closed 人工门）
             if entry and not _runs[session_id].get("error"):
@@ -354,6 +374,256 @@ def _archive_root(pack: Path) -> Path:
     return pack / "assets" / "auto_archive"
 
 
+def _load_municipal_state(session_id: str) -> dict[str, Any] | None:
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", session_id):
+        return None
+    path = _sessions_dir() / "municipal" / session_id / "state.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _failure_modes_from_ir(ir_path: Path) -> set[str]:
+    try:
+        data = json.loads(ir_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return set()
+    modes: set[str] = set()
+    for evidence in data.get("evidence") or []:
+        if isinstance(evidence, dict) and evidence.get("status") in {"fail", "unknown"}:
+            rule_id = evidence.get("rule_id")
+            if rule_id:
+                modes.add(str(rule_id))
+    return modes
+
+
+def _extract_experience_record(
+    brief: str,
+    state: dict[str, Any],
+    three: dict[str, Any],
+    diff_0_1: list[dict[str, Any]],
+    diff_1_2: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Build a conditional experience record from S0/S1/S2 evidence.
+
+    Only automatic/visual repairs and human corrections qualify. Preference-only
+    edits are excluded because they are not engineering failure evidence. The
+    record never stores absolute X/Y coordinates, only field-level direction and
+    relative deltas for non-coordinate fields.
+    """
+    history = [entry for entry in (state.get("history") or []) if isinstance(entry, dict)]
+    effective: set[str] = set()
+    for entry in history:
+        action, source = entry.get("action"), entry.get("source")
+        if action == "repair" and source in {"automatic", "visual_proposal"}:
+            effective.add(str(source))
+        elif action == "save" and source == "correction":
+            effective.add("correction")
+    if not effective:
+        return None
+
+    from openbimagent.utility.state_diff import compute_candidate_state_diff
+
+    candidate = three.get("S1") or state.get("candidate") or {}
+    validation = state.get("validation") or {}
+    raw_history = state.get("history") or []
+    source_diffs = list(diff_0_1)
+    indices = three.get("indices") or {}
+    s1_index, s2_index = indices.get("S1"), indices.get("S2")
+    if isinstance(s1_index, int) and isinstance(s2_index, int) and s2_index > s1_index:
+        current = deepcopy(three.get("S1") or {})
+        for index in range(s1_index + 1, s2_index + 1):
+            entry = raw_history[index] if index < len(raw_history) else None
+            if not isinstance(entry, dict):
+                continue
+            next_candidate = entry.get("candidate")
+            if not isinstance(next_candidate, dict):
+                continue
+            action, source = entry.get("action"), entry.get("source")
+            keep = (action == "save" and source == "correction") or (
+                action == "repair" and source in {"automatic", "visual_proposal"}
+            )
+            if keep:
+                source_diffs.extend(compute_candidate_state_diff(current, next_candidate))
+            current = next_candidate
+    else:
+        source_diffs.extend(diff_1_2)
+
+    conditions = set(_text_features(brief or ""))
+    system_id = candidate.get("system_id")
+    if isinstance(system_id, str) and system_id:
+        conditions.add(f"system:{system_id}")
+    for key in ("nodes", "segments"):
+        items = candidate.get(key)
+        if isinstance(items, list):
+            conditions.add(f"{key}:{len(items)}")
+    for issue in validation.get("issues") or []:
+        if isinstance(issue, dict) and issue.get("rule_id"):
+            conditions.add(f"rule:{issue['rule_id']}")
+
+    failure_modes: set[str] = set()
+    for entry in history:
+        if entry.get("action") == "auto_loop_start":
+            for rule_id in entry.get("initial_failure_modes") or []:
+                if rule_id:
+                    failure_modes.add(str(rule_id))
+        for item in entry.get("before_failures") or []:
+            rule_id = str(item).split("|", 1)[0]
+            if rule_id:
+                failure_modes.add(rule_id)
+        report = entry.get("report") or {}
+        if isinstance(report, dict):
+            for issue in report.get("issues") or []:
+                if not isinstance(issue, dict):
+                    continue
+                for rule_id in issue.get("constraint_ids") or []:
+                    if rule_id:
+                        failure_modes.add(str(rule_id))
+        for patch in entry.get("patches") or []:
+            if not isinstance(patch, dict):
+                continue
+            for rule_id in patch.get("constraint_ids") or []:
+                if rule_id:
+                    failure_modes.add(str(rule_id))
+    if not failure_modes:
+        for issue in validation.get("issues") or []:
+            if isinstance(issue, dict) and issue.get("status") in {"fail", "unknown"} and issue.get("rule_id"):
+                failure_modes.add(str(issue["rule_id"]))
+
+    strategy: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    def add_strategy(entity_type: str, field: str, old: Any, new: Any) -> None:
+        if not field:
+            return
+        numeric = (
+            isinstance(old, (int, float)) and not isinstance(old, bool)
+            and isinstance(new, (int, float)) and not isinstance(new, bool)
+        )
+        if numeric:
+            direction = "increase" if new > old else "decrease" if new < old else "unchanged"
+        elif old is None and new is not None:
+            direction = "set"
+        elif old is not None and new is None:
+            direction = "clear"
+        else:
+            direction = "changed"
+        key = (entity_type, field, direction)
+        if key in seen:
+            return
+        seen.add(key)
+        item: dict[str, Any] = {
+            "entity_type": entity_type,
+            "field": field,
+            "direction": direction,
+            "rule_alignment": sorted(failure_modes)[:8],
+        }
+        if numeric and field not in {"x_m", "y_m"}:
+            item["delta"] = round(float(new - old), 6)
+        strategy.append(item)
+
+    for diff in source_diffs:
+        if isinstance(diff, dict):
+            add_strategy(str(diff.get("entity_type") or ""), str(diff.get("field") or ""),
+                         diff.get("old_value"), diff.get("new_value"))
+    for entry in history:
+        for patch in entry.get("patches") or []:
+            if not isinstance(patch, dict):
+                continue
+            tokens = str(patch.get("path") or "").strip("/").split("/")
+            entity_type = {"nodes": "node", "segments": "segment"}.get(tokens[0]) if tokens else None
+            if entity_type is None or len(tokens) < 2:
+                continue
+            add_strategy(entity_type, tokens[-1], patch.get("old_value"), patch.get("value"))
+
+    evidence_sources: list[str] = []
+    if "automatic" in effective:
+        evidence_sources.append("deterministic_repair")
+    if "visual_proposal" in effective:
+        evidence_sources.append("visual_proposal")
+    if "correction" in effective:
+        evidence_sources.append("human_correction")
+
+    confirmation = state.get("confirmation") or {}
+    delivery = state.get("delivery") or {}
+    receipt = delivery.get("receipt") or {}
+    delivery_ok = delivery.get("status") == "completed" or (
+        delivery.get("status") == "partial" and receipt.get("host_status") == "completed"
+    )
+    s2_sha = (three.get("sha256") or {}).get("S2")
+    admitted = bool(
+        validation.get("executable")
+        and isinstance(confirmation, dict)
+        and s2_sha
+        and confirmation.get("candidate_sha256") == s2_sha
+        and delivery_ok
+        and delivery.get("revision") == confirmation.get("revision")
+    )
+    return {
+        "applicable_conditions": sorted(conditions)[:40],
+        "failure_modes": sorted(failure_modes)[:20],
+        "repair_strategy": strategy[:20],
+        "evidence_sources": evidence_sources,
+        "admission_verified": admitted,
+        "utility_stats": {"used_count": 0, "pass_count": 0, "fail_streak": 0, "active": True},
+    }
+
+
+def record_exemplar_feedback(
+    used_session_ids: list[str] | tuple[str, ...],
+    failure_modes: list[str] | tuple[str, ...] | set[str],
+    *,
+    pack: Path | None = None,
+    archive_root: Path | None = None,
+) -> dict[str, Any]:
+    """Update exemplar utility stats and deactivate repeated negative transfer.
+
+    A repeated failure mode in two uses sets ``active`` to false. Retrieval then
+    stops injecting that exemplar while keeping the archive entry for audit.
+    """
+    if pack is None:
+        pack = _PLAYBOOKS["municipal_utility"].parent
+    root = archive_root if archive_root is not None else _archive_root(Path(pack))
+    index_path = root / "index.json"
+    if not index_path.is_file():
+        return {"updated": 0, "deactivated": [], "missing": sorted(set(used_session_ids))}
+    try:
+        entries = json.loads(index_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {"updated": 0, "deactivated": [], "missing": sorted(set(used_session_ids))}
+    if not isinstance(entries, list):
+        return {"updated": 0, "deactivated": [], "missing": sorted(set(used_session_ids))}
+    wanted_ids = set(used_session_ids)
+    wanted_modes = {str(item) for item in failure_modes if item}
+    updated: list[str] = []
+    deactivated: list[str] = []
+    for entry in entries:
+        if not isinstance(entry, dict) or entry.get("session_id") not in wanted_ids:
+            continue
+        record = entry.get("experience_record")
+        if not isinstance(record, dict):
+            continue
+        stats = record.setdefault("utility_stats", {})
+        stats["used_count"] = int(stats.get("used_count") or 0) + 1
+        repeated = wanted_modes & {str(item) for item in record.get("failure_modes") or []}
+        if repeated:
+            stats["fail_streak"] = int(stats.get("fail_streak") or 0) + 1
+            if stats["fail_streak"] >= 2:
+                stats["active"] = False
+                deactivated.append(str(entry.get("session_id")))
+        else:
+            stats["pass_count"] = int(stats.get("pass_count") or 0) + 1
+            stats["fail_streak"] = 0
+        updated.append(str(entry.get("session_id")))
+    if updated:
+        index_path.write_text(json.dumps(entries, ensure_ascii=False, indent=1), encoding="utf-8")
+    return {"updated": len(updated), "deactivated": sorted(set(deactivated)),
+            "missing": sorted(wanted_ids - set(updated))}
+
+
+
 def _archive_run_artifacts(playbook: Path, session_id: str, brief: str, out_dir: Path) -> dict[str, Any] | None:
     """P2 素材积累：交付工件只增不改地归档进 Domain Pack assets/auto_archive/<session>/。
 
@@ -391,6 +661,53 @@ def _archive_run_artifacts(playbook: Path, session_id: str, brief: str, out_dir:
         "archived_at": datetime.now(timezone.utc).isoformat(),
         "files": copied,
     }
+    three: dict[str, Any] | None = None
+    diffs = {"S0_S1": [], "S1_S2": []}
+    experience_record: dict[str, Any] | None = None
+    try:
+        state = _load_municipal_state(session_id)
+        if state is not None:
+            from openbimagent.utility.state_diff import (
+                compute_candidate_state_diff,
+                derive_revision_three_states,
+            )
+
+            three = derive_revision_three_states(state.get("history") or [])
+            s0, s1, s2 = three.get("S0"), three.get("S1"), three.get("S2")
+            if s0 is not None:
+                diffs["S0_S1"] = compute_candidate_state_diff(s0, s1 if s1 is not None else s0)
+                diffs["S1_S2"] = compute_candidate_state_diff(
+                    s1 if s1 is not None else s0,
+                    s2 if s2 is not None else s1 if s1 is not None else s0,
+                )
+                experience_record = _extract_experience_record(
+                    brief, state, three, diffs["S0_S1"], diffs["S1_S2"]
+                )
+                entry["three_state_summary"] = {
+                    "requirement_revision": three.get("requirement_revision"),
+                    "sha256": three.get("sha256"),
+                    "auto_retry_rounds": three.get("auto_retry_rounds"),
+                    "degradation_rollback": three.get("degradation_rollback"),
+                    "human_sources": three.get("human_sources"),
+                    "diff_counts": {"S0_S1": len(diffs["S0_S1"]), "S1_S2": len(diffs["S1_S2"])},
+                }
+    except Exception:  # noqa: BLE001 — experience extraction must never break archiving
+        three = None
+        experience_record = None
+    if experience_record is not None:
+        if experience_record.get("admission_verified") is True:
+            entry["experience_record"] = experience_record
+        else:
+            try:
+                from openbimagent.audit import log_audit
+
+                log_audit("experience_rejected", {
+                    "session": session_id,
+                    "reason": "admission_not_verified",
+                    "failure_modes": experience_record.get("failure_modes", []),
+                })
+            except Exception:  # noqa: BLE001 — audit failure must not break archiving
+                pass
     index.append(entry)
     index_path.write_text(json.dumps(index, ensure_ascii=False, indent=1), encoding="utf-8")
     return entry
@@ -480,6 +797,23 @@ def add_runs(app: FastAPI) -> None:
                 enriched_context = (
                     f"{brief}\n\n[相似历史交付参考（系统自素材归档检索注入，仅供对齐口径，不得照抄坐标）]\n{lines}"
                 )
+                experience_lines: list[str] = []
+                for i, exemplar in enumerate(exemplars):
+                    record = exemplar.get("experience_record")
+                    if not isinstance(record, dict):
+                        continue
+                    modes = "、".join(str(m) for m in record.get("failure_modes") or []) or "无"
+                    strategies = "；".join(
+                        f"{item.get('entity_type')}.{item.get('field')} {item.get('direction')}"
+                        + (f" Δ={item.get('delta')}" if item.get("delta") is not None else "")
+                        for item in (record.get("repair_strategy") or []) if isinstance(item, dict)
+                    ) or "无"
+                    experience_lines.append(f"- 范例{i + 1} 缺陷类：{modes}；修正策略：{strategies}")
+                if experience_lines:
+                    enriched_context = (
+                        f"{enriched_context}\n\n[历史缺陷与修正策略（系统自归档经验检索注入，仅供规避同类缺陷；"
+                        "严禁照抄坐标或直接复制数值）]\n" + "\n".join(experience_lines)
+                    )
             # P0-1 渐进披露：技能目录（仅 name/description，不含正文）注入上下文，供规划阶段按需调用
             from openbimagent.skills.registry import default_skill_registry
 
@@ -500,6 +834,7 @@ def add_runs(app: FastAPI) -> None:
                 "brief": brief,
                 "playbook": playbook_key,
                 "exemplars": [e.get("brief", "") for e in exemplars],
+                "exemplar_session_ids": [e.get("session_id") for e in exemplars if e.get("session_id")],
                 "started_at": datetime.now(timezone.utc).isoformat(),
                 "done_at": None,
                 "error": None,
