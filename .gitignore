@@ -8,6 +8,13 @@ __pycache__/
 # Environment
 .env
 .env.local
+.env.*
+!.env.example
+# 凭据/密钥类文件一律不入库（公开仓库）
+*.pem
+*.key
+*.p12
+*.pfx
 
 # Build output
 out/
