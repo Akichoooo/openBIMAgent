@@ -14,6 +14,7 @@
   - 进阶突破：规则自愈式求解器 (`SelfHealingSolver`)、三维空间拓扑图谱引擎 (`SpatialBIMGraph`)、BIMBench 消融实验套件。
   - 微内核 (2026-08)：`registry.invoke` 承重调度、UI-Slots 动态标签、Profile 补丁层（消融实验 = 补丁声明）、Benchmark 数据诚信契约 (measured/provenance)、外部插件 manifest 发现加载。
   - Web 真链路 (2026-09-24)：Web「新建任务」接工作台真 LLM 规划链 + 无 CAD 主机离线 IFC4X3/IDS 交付 + HITL 审批附执行预览 + 生成精度四项（RAG few-shot / dispatch rework 透传 / 空间约束回验 linter / 几何 diff 指标）。
+  - 市政四阶段升级 (2026-10-25)：DN300 硬编码取消改为 [150,2000]mm 动态查表分档、CEGIS 五算子修复沙箱与造价 J(S) 帕累托比选、NBV/工程纵断面/SoM 主动相机、BIM-Wiki-Ontology 经验演化（S0→S1→S2 沉淀 + Harness² 探针熔断）与 12 场景确定性消融基准；详见 [市政工作台](architecture/MUNICIPAL_WORKBENCH.md) 与[交接状态](architecture/PROJECT_HANDOFF_STATUS.md)。
 - 质量基线：**1391 passed, 9 skipped**（2026-09-24 实测，8m59s），Ruff 静态检查（src/）100% 通过。
 - 最新进度与详细交接：[持续交接与进度状态](architecture/PROJECT_HANDOFF_STATUS.md)。
 - 手动测试与快速上手：[手动测试指南](../MANUAL_TESTING_GUIDE.md)。
@@ -44,6 +45,14 @@
 | [M0_PLAN.md](architecture/M0_PLAN.md) | M0 六道验收、实施阶段和附条件收官记录 | **HISTORICAL v1** |
 | [M1_MASTER_PROMPT.md](architecture/M1_MASTER_PROMPT.md) | M1 原始总控提示词 | **SUPERSEDED**：新会话使用交接状态文档中的最新提示词 |
 | [openBIMAgent_Architecture_Graph.md](architecture/openBIMAgent_Architecture_Graph.md) | 学术展示用全景图，已增加当前 typed IR/双宿主状态注记 | **REFERENCE** |
+| [MUNICIPAL_WORKBENCH.md](architecture/MUNICIPAL_WORKBENCH.md) | 市政管网检查与修复工作台：操作流、数据流、校验边界、视觉调用链、宿主边界与 2026-10-25 升级记录 | **CURRENT** |
+| [M1_5_EXECUTION_CONTRACT.md](architecture/M1_5_EXECUTION_CONTRACT.md) | M1.5 市政 Solver 矩阵与 B1-B10 冻结 Benchmark 完成标准 | **REFERENCE v1.0** |
+| [M2_EXECUTION_CONTRACT.md](architecture/M2_EXECUTION_CONTRACT.md) | M2 服务化（FastAPI/SSE/受控写）执行契约 | **REFERENCE v1.0** |
+| [AGENT_CORE_ENHANCEMENT.md](architecture/AGENT_CORE_ENHANCEMENT.md) | Agent 工程吸收批次（对标 Claude Code/Codex/DSH）落地台账 | **REFERENCE** |
+| [DEFERRED_ITEMS.md](architecture/DEFERRED_ITEMS.md) | 延后项登记、触发条件与回填责任 | **REFERENCE** |
+| [LIMITATIONS.md](architecture/LIMITATIONS.md) | 当前能力边界与明确不做什么 | **CURRENT** |
+| [IFC_USER_ACCEPTANCE_CHECKLIST.md](architecture/IFC_USER_ACCEPTANCE_CHECKLIST.md) | IFC 交付用户验收操作清单（首次导出→下载→重试） | **ACTIVE** |
+| [VW_REAL_ACCEPTANCE_2026-10-18.md](architecture/VW_REAL_ACCEPTANCE_2026-10-18.md) | Vectorworks 2024 真机验收分级报告 | **REFERENCE** |
 
 ## 调研(research/)
 
@@ -124,3 +133,4 @@ K3/Kimi 是早期主架构师和 Relay 编排会话身份，**不是项目里程
 - 2026-08-03:Wiki 收口为四层文档模型；新增 `PROJECT_HANDOFF_STATUS.md`、`PROJECT_MASTER_WORKFLOW.md` 和 `DOCUMENTATION_GOVERNANCE.md`，明确 K3/Kimi 是早期架构/接力身份而非里程碑，Relay 历史留在 Git；ARCHITECTURE/COMPONENTS 同步标记 v0.9，README 与架构图改用当前 typed IR、双宿主和 G6 状态。
 - 2026-09-21:Agent 工程吸收批次收口回填——交接状态升 v3.5（分支/路径/测试基线 1357 实测）；research 索引收录 2026-09-17 吸收计划书；本轮新增 SSE 生产通路（EventSource ?token= 认证 + offset 增量跟随端点）、anthropic/openai-responses provider 方言、前端运行期实时联动（活动状态行/Trace/3D 视口）与 `DEFERRED_ITEMS.md` §4.1 双轨编排登记。
 - 2026-09-24:Web 真链路批次收口——交接状态升 v3.6（测试基线 1391 passed / 9 skipped 实测 8m59s）；research 新增 [Web run 真 LLM 链与生成精度批次](research/2026-09-24_web_run_llm_chain_and_accuracy_batch.md)（逐项收益/不做的后果/证据强度分级/欠账清单）。本轮九项改动：Web「新建任务」接工作台真 LLM 规划链（缺 key 降级模板并如实发事件，不假成功）、无 CAD 主机离线 IFC4X3/IDS 交付进归档与工件白名单、HITL 审批卡渲染执行预览（typed 逐操作 / 自由代码附批次资产声明）、dispatch rework 透传渲染循环首轮先验、RAG few-shot 代码语料（仅 PASS 入库 + 5 例种子）、spatial_constraints 回验 linter、benchmark 几何 diff 指标、前端模型配置变更实时联动与陈旧覆写修复、审批票据进程级共享状态污染修复（`_load_pending` 不再覆盖活跃票据 + 5 个 run 类测试模块隔离）。**已知欠账**：三档执行模式仍只有 `agent`/`yolo` 生效（承诺与实现不符未修）、few-shot 降幻觉效果无 A/B、前端审批卡未浏览器实测——详见该文档 §3。
+- 2026-10-25:市政管网四大架构升级收口——`network_solver` 取消 DN300 硬编码改为 [150,2000]mm 动态查表（`lookup_pipe_normative_limits` 分档限值）；`candidate` 新增三级刚柔约束 + 造价 J(S) + CEGIS 五算子拓扑沙箱（顺坡传导/跌水井/平面绕行/自动插井/满包特批）帕累托比选，修复 Lock 一刀切罢工 Bug；`iterative_refine` 默认 4 轮并升级回滚门禁（新违规码/硬违规增加/碰撞引入即回滚），账本与相机轨迹落 `state_diff_audit.json`；`vision/municipal` 新增 NBV 公垂线视点、Matplotlib 工程纵断面、SoM 罗盘/水流/标尺图层与 free_orbit/nbv/纵断面三模式相机工具箱（报告新增 `next_camera_requests`/`active_camera_trajectory`）；新建 `utility/wiki_ontology.py`（属性图 + 双链词条 + Harness² 探针熔断）打通 `runs.py`/工作台检索与写回双链路；新增 `scripts/run_municipal_ablation_benchmark.py` 12 场景确定性消融基准与 `tests/test_ultimate_municipal_combo.py` 28 项。COMPONENTS 升 v0.10，MUNICIPAL_WORKBENCH 补升级记录；本索引补齐 M1.5/M2 契约等 8 篇未收录文档。交接状态升 v4.7（测试基线 1633 passed / 6 skipped / 1 既有环境性失败）。

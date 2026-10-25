@@ -1,7 +1,7 @@
 # openBIMAgent 阶段交接状态
 
-版本：v4.6
-更新时间：2026-10-18（Asia/Shanghai）
+版本：v4.7
+更新时间：2026-10-25（Asia/Shanghai）
 维护状态：**ACTIVE**
 工作区：`D:\devloop\workSpace\app_codex\GenerativeBIM\openBIMAgent`
 远程仓库：`https://github.com/Akichoooo/openBIMAgent.git`
@@ -10,7 +10,21 @@
 
 ## 1. 当前阶段结论
 
-### 2026-10-18 origin/main 合并落盘（本地 main，最新）
+### 2026-10-25 市政管网四大架构升级（本地 main，最新，未提交）
+
+- **范围**：
+  - `utility/network_solver.py`：DN300 硬编码取消，能力面 [150, 2000] mm；新增 `lookup_pipe_normative_limits` 动态查表（坡度/井距/覆土/净距分档，DN300-DN600 全覆盖）；逐段证据按管径取限值。
+  - `utility/candidate.py`：三级刚柔约束（Tier-2 满包混凝土特批 0.45m）+ 工程造价 `compute_engineering_cost` + CEGIS 五算子拓扑沙箱 `evaluate_repair_sandbox`（顺坡传导 / 跌水井 / 平面绕行 / 自动插井 / 满包特批，含组合分支）+ 帕累托字典序选优；修复锁定节点"一刀切罢工"Bug；`propose_candidate_repairs` 签名与返回类型不变。
+  - `server/municipal_workflow.py`：`iterative_refine` 默认 4 轮；回滚门禁升级为新违规码 ∥ 硬违规增加 ∥ obstacle_clearance 碰撞引入即回滚；`state_diff_audit.json` 落每轮沙箱账本/造价/相机轨迹/本体演化（只增不改）。
+  - `vision/municipal.py`：`compute_clash_normal_nbv`（异面直线公垂线 NBV）、`render_longitudinal_profile_view`（Matplotlib 工程纵断面 PNG）、SoM 方位罗盘/水流箭头/米制标尺图层、`render_custom_camera_views`（free_orbit / nbv / 纵断面三模式）；`MunicipalVisualReport` 新增 `next_camera_requests` 与 `active_camera_trajectory`。
+  - `utility/wiki_ontology.py`（新建）：BIM-Wiki-Ontology 三位一体本体（属性图 + Obsidian 双链词条 + Harness² 探针熔断 `fail_streak>=2`）；`server/runs.py` 归档时同步沉淀 Wiki 案例；`server/municipal_actions.py` 将本体算子优先级注入沙箱。
+  - `scripts/run_municipal_ablation_benchmark.py`（新建）+ `tests/test_ultimate_municipal_combo.py`（新增 28 项）。
+- **测试**：全仓 `python -m pytest tests/ -q` = **1633 passed / 6 skipped / 1 failed**。唯一失败 `test_ids_schema_dependencies::test_ids_xsd_compiles_in_fresh_process_with_broken_network` 经 `git stash` 基线复核为改动前既有的环境性失败，与本轮无关。消融基准（确定性、无 VLM/宿主）：12/12 场景最终合规（首次 16.7%），本体自进化前后算子命中率 0% → 66.7%，NBV/纵断面触发 12/12；报告在 `output/benchmark/`（gitignored）。
+- **兼容性**：既有 72 项市政相关测试零修改通过；`schemas/network_utility_solver_input.schema.json` 仅追加可选字段；1 项"DN400 必须被拒绝"断言按本轮升级指令改为区间外管径（2500）并保留拒绝意图。
+- **边界**：未提交、未推送；未操作 Vectorworks/Blender 宿主、未调用 VLM；Wiki 本体目录按 `OPENBIMAGENT_ARCHIVE_DIR` 沙箱惯例 gitignored（`domain_packs/*/wiki_ontology/`、`output/`）。
+- **下一动作**：真实页面验收 NBV/纵断面/沙箱账本链路；按 `output/benchmark/ablation_report.md` 核对消融数字后纳入论文实验章节。
+
+### 2026-10-18 origin/main 合并落盘（本地 main，上一轮）
 
 - 以 `origin/main` `95267ce` 为基线，本地 `main` 通过 cherry-pick `7b39523` 落盘（提交 `836fd08`）；旧历史保留在本地备份分支 `backup/local-main-20261018-7b39523` 与标签 `pre-origin-sync-20261018`。
 - 合并修复：恢复 `sensenova` provider/model/profile（上游已移除，但本机视觉链路依赖）；web 默认直管输入补充显式内/外径；providers registry/dialects 重新合并 diagnostics/abort/streaming；XSD/JSON 快照统一 LF 并固定（`schemas/w3c/`、`schemas/frozen/`、IDS XSD）；benchmark 当前 schema pin 对齐上游 `befe4f8f…`；前端 App 适配上游 ChatThread props。

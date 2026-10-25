@@ -1,13 +1,13 @@
 # 市政管网检查与修复工作台
 
-实现说明，2026-10-17。当前验收与待验证项以 [交接状态](PROJECT_HANDOFF_STATUS.md) 顶部本轮记录为准。范围为 DN300 混凝土、小型重力污水直管网络；不包含三态经验协议、经验库或新增研究实验。
+实现说明，2026-10-25（上一版 2026-10-17）。当前验收与待验证项以 [交接状态](PROJECT_HANDOFF_STATUS.md) 顶部本轮记录为准。管网能力面已从 DN300 单一管径升级为 [150, 2000] mm 动态查表分档（DN300/DN400/DN500/DN600 全覆盖）；2026-10-25 起还包含 CEGIS 拓扑修复沙箱、工程纵断面与 NBV 主动相机、BIM-Wiki-Ontology 经验演化（S0→S1→S2 沉淀）与确定性消融基准，详见文末「2026-10-25 四大架构升级」一节。
 
 ## 从用户操作出发
 
 1. 新建或选择工程对话，在「管网检查与修复」填写节点坐标、地面/起点管底标高、管段连接、坡度、实际内外径和地表条件。可导入当前对话的已编译模型，但不猜测缺失工程参数。
 2. 明确障碍物检查范围。空障碍物清单只有经用户明确声明完整覆盖才视为该范围内无障碍物；未提供资料是未知。
 3. 「保存并检查」保存草稿，显示对象、规则、实测值和证据；有错误也能保存。问题可定位到参数。当前检查范围通过不等于工程全面合规。
-4. 「生成修复建议」先展示修改前后值，再由用户采纳。当前确定性修复仅处理有规则依据的最小坡度、端点覆土所需的统一管底锚点下移。不会凭空改管径或自动绕障碍。
+4. 「生成修复建议」先展示修改前后值，再由用户采纳。2026-10-25 起为 CEGIS 多分支拓扑沙箱：并行推演顺坡传导调坡、局部跌水井、平面正交折线绕行、超长管段自动插井、满包混凝土加固受控特批 5 类算子（含组合分支），按违规数/碰撞数/造价 J(S) 字典序选出胜出方案并返回帕累托比选账本；锁定节点绝不整体罢工，只改未锁定部分或启用其他拓扑算子。仍不凭空改管径。
 5. 可锁定具体参数；删除、替换或重排锁定对象会被后端拒绝。人工修改区分纠错、偏好和需求变更，需求变更新增需求版本。
 6. 「视觉检查」生成轴测/正视/俯视图，再调用配置的 `critic_scad` 角色。页面显示视觉角色解析到的 profile、模型、provider、端点、凭据变量是否存在（不显示值），以及本轮是否真正调用、服务返回模型、耗时和用量。耗时始终显示，不依赖 usage 是否返回；provider、端点和传输事件放在可展开详情。缺少凭据、模型未声明视觉能力、429 限流、超时、结构化结果非法会分别提示；三视图和参数草稿保留，不伪造评分或通过。视觉建议仍需审阅、确定性复核和再次视觉检查。
 7. 视觉模型输入与修复建议都绑定同一版本：三视图、构件 ID、坐标/单位、视角说明、锁定参数、冻结规则、确定性检查结果、候选/IR/规则哈希和允许修改路径一并发送。视觉输出区分可定位疑点、证据不足/遮挡、建议检查参数和有限补丁，并用 `evidence_source` 区分“图像观察”“引用确定性检查”“来源不确定”；仅复述已知确定性冲突不算独立视觉发现。补丁必须引用已知规则、精确旧值、未锁定且允许的路径，并在应用后重新通过完整确定性校验。没有再次视觉检查，不能声称视觉疑点已修复。
@@ -22,10 +22,12 @@
 | 版本、锁、修复与确认 | `src/openbimagent/server/municipal_workflow.py::MunicipalWorkflowStore` |
 | 实际动作适配 | `server/municipal_actions.py::propose_repairs/check_visual/export_revision` |
 | 草稿与冻结规则 | `utility/candidate.py::UtilityCandidate/FrozenRuleContext/validate_utility_candidate` |
-| 有界修复 | `utility/candidate.py::propose_candidate_repairs` |
+| 有界修复（CEGIS 沙箱） | `utility/candidate.py::propose_candidate_repairs`（兼容入口）、`evaluate_repair_sandbox`、`propose_candidate_repairs_with_ledger`、`compute_engineering_cost`、`check_candidate_state` |
+| 经验本体与素材复用 | `utility/wiki_ontology.py::compile_and_archive_wiki_case/retrieve_ontology_recipes/update_recipe_probe_feedback` |
 | 公共几何 | `utility/geometry.py::axis_centerline/execution_geometry/closest_segment_points/closest_segment_box_points` |
 | 管网与拓扑求解 | `utility/network_solver.py::solve_network_gravity_utility`、`utility/spatial_graph.py::SpatialBIMGraph` |
 | OpenSCAD 与视觉 | `vision/municipal.py::render_municipal_preview/MunicipalVLMCritic` |
+| NBV 视点 / 纵断面 / 自由相机 | `vision/municipal.py::compute_clash_normal_nbv/render_longitudinal_profile_view/render_custom_camera_views` |
 | 视觉配置解析与错误分类 | `server/municipal_actions.py::vision_configuration/check_visual` |
 | Vectorworks 直管实体计划 | `assembly/vectorworks_plan.py::VectorworksBuilder`（plan 1.1） |
 | Vectorworks 网格实体与几何读回 | `mcp_servers/vectorworks_mcp/runner.py::_create_pipe_mesh/_project_geometry_snapshot` |
@@ -36,7 +38,7 @@
 
 前端组件文件位于 `frontend/src/components/viewport/`；表中 Python 短路径均相对 `src/openbimagent/`。
 
-API 为 `GET/PUT /api/v1/municipal/{session_id}`、`GET /api/v1/municipal/vision-config`（只返回角色/provider/模型/端点/凭据变量与存在性，不含密钥），以及 POST `import-ir`、`lock`、`propose`、`apply`、`visual`、`confirm`、`export`。操作绑定 `base_revision` 与 `candidate_sha256`，应用修复还需匹配 `proposal_id`，人工确认需匹配当前检查证据的 `review_token`。预览接口要求当前图像版本并限制到该会话目录。只接受已存在的工程会话。
+API 为 `GET/PUT /api/v1/municipal/{session_id}`、`GET /api/v1/municipal/vision-config`（只返回角色/provider/模型/端点/凭据变量与存在性，不含密钥），以及 POST `import-ir`、`lock`、`propose`、`apply`、`visual`、`auto-refine`（有界自动迭代：默认 4 轮 + 新违规码/碰撞引入即回滚的严格门禁）、`confirm`、`export`、`ifc-retry`。操作绑定 `base_revision` 与 `candidate_sha256`，应用修复还需匹配 `proposal_id`，人工确认需匹配当前检查证据的 `review_token`。预览接口要求当前图像版本并限制到该会话目录。只接受已存在的工程会话。
 
 保存流程为：候选条件 → 固定规则验证 → `CompiledUtilityIR 1.1` → 页面/OpenSCAD/宿主适配器。该 IR 显式区分管底线与轴线、DN 与真实内外径；轴线取管底加内半径。旧 1.0 IR 保留读取与原序列化行为，执行前必须显式提供物理尺寸并升级，不能把 DN 当外径。
 
@@ -45,7 +47,7 @@ API 为 `GET/PUT /api/v1/municipal/{session_id}`、`GET /api/v1/municipal/vision
 - 领域规则沿用仓库规则编译器与设计限值证据，首次保存冻结到任务；不临时编造规范阈值。冻结规则便于复核，但不等于已证明规范适用于所有实际项目。
 - 三维几何使用有限轴线段之间、轴线段到盒体的距离，再结合明确外径。规范水平净距与物理外包络分开记录；不把 AABB 重叠体积当管道碰撞体积。
 - 直管胶囊包络端部与盒角存在近似边界；不能作确定结论的情况报告 UNKNOWN。合法连接仅在明确的共用节点局部连接区域内豁免，不能使整段管线免检。
-- 当前不校核水力、结构承载、精确开口端部实体、节点间未提供的地形。检查井是示意对象。二维纵断面是坐标轴—高程投影，并非路线桩号断面；垂直放大默认关闭。
+- 当前不校核水力、结构承载、精确开口端部实体、节点间未提供的地形。检查井是示意对象。2026-10-25 起提供真实里程—高程工程纵断面渲染（`render_longitudinal_profile_view`：地面线、0.7m 覆土控制线与 0.45m 特批线、管顶/管底线、检查井竖井剖面、障碍物投影）；3D 预览内部的高程近似仍只是坐标轴—高程投影，不替代纵断面图。
 - 确定性修复应用前必须减少阻断问题且不新增其他阻断问题。视觉修改必须重新通过确定性校验；这不能证明视觉缺陷已消除。
 - VLM 接收真实图片、当前约束/问题、构件标识、锁和视角/单位说明，输出 `observation_kind` 为 `locatable_suspicion`、`insufficient_evidence` 或 `parameter_check` 的观察，以及有限数值补丁。补丁必须引用已知规则身份、精确旧值、匹配对象、未锁定且允许的路径；非法字段、未知对象/规则、旧版本、旧值不符、非有限数值、空操作补丁均被拒绝。没有关联规则的视觉疑点允许 `constraint_ids` 为空，但仍是视觉疑点而非工程判定。
 - 视觉补丁应用后旧视觉结果和人工确认失效，必须重新运行完整确定性校验并再次视觉检查；确定性失败不能被视觉“通过”覆盖。单次动作最多 1 次传输尝试/模型，结构化输出最多 1 次修正重试，视觉调用有 90 秒单一有界截止时间；每次模型/fallback/结构化重试启动前都检查取消，超时后不再发新请求。超时/429/凭据缺失/模型无视觉能力/解析失败分别返回 `failure_code`；aborted/部分流只记录诊断，不解析为有效报告。
@@ -71,9 +73,19 @@ Vectorworks 逐管段的语义字段（稳定 ID、系统、端口拓扑、材�
 
 当前工作台宿主成功回执通常标为 `partial`：宿主文件、实体、语义和几何读回可以完成，但现有 IFC 构建器缺实体几何，且该入口未传递 IFC 所需的独立规则评估身份。回执分开报告 `geometry_status`（verified / dimension_verified_topology_unverified / failed / unverified / not_applicable）和语义比较结果；尺寸通过但闭合性未验证时界面显示「尺寸通过 · 闭合性未验证」，不等于完整几何通过；几何失败或未验证时不会显示通过，`geometry_caveats` 逐条列出读回范围与限制。不能宣称 IFC 工程交付完成，也不会因此自动重复宿主执行。
 
+## 2026-10-25 四大架构升级（CEGIS 沙箱 · 主动相机 · 本体演化 · 消融基准）
+
+- **动态查表管径**：`network_solver.py` 移除 DN300 硬编码，能力面放宽为 [150, 2000] mm（区间外报 `unsupported_diameter`）；新增 `lookup_pipe_normative_limits(diameter_mm, surface_type)` 按分档返回最小坡度（DN300 0.003 / DN400 0.002 / DN500 0.0015 / DN600+ 0.0010）、检查井间距分档（DN300-600 设计保守 40m / >600 50m，规范判定仍按 MU-WELL-001 编译限值）、最小覆土（车行道 0.7 / 人行道绿地 0.6）与最小障碍物净距 0.15m；逐段证据链按管径分档取限值。`schemas/network_utility_solver_input.schema.json` 仅追加可选字段（`manhole_type`/`drop_height_m`/`protection_measure`/`exception_approval_id`/`constraints`），向后兼容。
+- **三级刚柔约束与造价 J(S)**：Tier 1 冻结国标红线（确定性校验器独占判定，不可放宽）；Tier 2 国标受控特批——满包混凝土加固（`protection_measure=concrete_encasement`）或显式 `constraints.allow_exception_approval` 时，覆土红线从 0.7m 受控放宽至 0.45m，检查报告附 `exception_applied` 与 `exception_approval_id`（默认 `EXC-MU-ELEV-001-ENCASEMENT`）；Tier 3 以 `compute_engineering_cost` 的土方开挖指数 `L·(D+0.6)·h̄²` 与管井/加固材料加权造价做比选，同时返回最小覆土/净距裕度。
+- **CEGIS 五算子沙箱**：`evaluate_repair_sandbox` 在内存深拷贝中并行推演 5 类拓扑修复算子——顺坡传导调坡（含向下游未锁定节点传导）、局部跌水井、平面正交折线绕行（沿障碍物包络盒法向插入绕行井对并重算长度/坡度）、超长管段自动插井（W_mid 线性插值拆分）、满包加固受控特批——及其组合分支，逐分支运行 `check_candidate_state` + `compute_engineering_cost`，按 `(violation_count, hard_clash_count, total_cost_score)` 字典序选出胜出方案。`propose_candidate_repairs` 返回胜出补丁（签名与 `list[dict]` 返回类型不变），`propose_candidate_repairs_with_ledger` 返回完整帕累托账本。锁定节点绝不整体罢工：只修改未锁定节点或启用其他拓扑算子。
+- **严格回滚门禁与默认轮次**：`iterative_refine` 默认 4 轮（可用 `max_rounds` 覆盖，仍夹在 [1, 10]）；回滚条件升级为「出现修改前不存在的新违规码 ∥ 硬违规总数增加 ∥ 引入 obstacle_clearance 碰撞」任一即回滚本轮补丁；每轮把 `pareto_proposals_ledger`、`engineering_cost`（before/after）与 `active_camera_trajectory` 写入 history 与 `state_diff_audit.json`（只增不改）。
+- **具身主动相机**：`compute_clash_normal_nbv` 以管轴线 × 障碍物主轴/轴线的叉乘公垂线求正交于冲突平面的最佳视线（方位/仰角/对焦中心，支持模型自由偏移角）；`render_longitudinal_profile_view` 以 Matplotlib 渲染里程-高程纵断面 PNG；3D 视图自动叠加 Set-of-Mark 方位罗盘（`+X = E`、`+Y = N`、`+Z = Up`）、水流方向箭头（`W1 → W2`）与米制高程标尺；`render_custom_camera_views` 支持 `free_orbit` / `nbv_clash_normal` / `longitudinal_profile` 三模式（OpenSCAD 缺失或失败时如实报 `render_unavailable`，不伪造图片）。`check_visual` 默认附挂 1 张 NBV 特写与 1 张纵断面图送入 VLM；`MunicipalVisualReport` 新增 `next_camera_requests`（模型复拍请求）与 `active_camera_trajectory`。
+- **BIM-Wiki-Ontology**：`utility/wiki_ontology.py` 维护属性图 `ontology_graph.json` 与 Obsidian 双链词条（`rules/ patterns/ assets/ cases/`，五类实体节点）；`compile_and_archive_wiki_case` 在确认 + 零硬冲突 + 真实宿主回执时沉淀 S0→S1→S2 案例词条（含最佳相机配方、胜出算子、造价指标）并同步旧 `exemplars/auto_archive/index.json`；`retrieve_ontology_recipes` 两跳检索（违规 → 冲突模式 → 案例/算子优先级/推荐相机/复用构件）驱动沙箱算子优先级与相机请求，`demoted` 经验自动过滤；`update_recipe_probe_feedback` 实现 Harness² 探针门控（`fail_streak >= 2` 自动熔断并写入 `> [!WARNING]` 标注）。检索严格只读，绝不写盘。
+- **消融基准**：`scripts/run_municipal_ablation_benchmark.py` 确定性运行 12 个标准场景（DN300/400/500/600 × 5 类空间病害：坡度不足、下游浅埋、跨中障碍物碰撞、超长管段缺井、起点锁定受限浅埋），输出 `output/benchmark/ablation_report.md` 与 `ablation_metrics.json`；实测首次合规率 16.7% → 最终合规率 100%（≤4 轮），本体自进化前后算子命中率 0% → 66.7%，NBV 与纵断面触发 12/12。
+
 ## 验证与后续接入
 
-单元/集成测试覆盖草稿校验、几何距离、规则来源、参数锁、过期修复/视觉结果拒绝、确认失效、进程中断、真实读回证据要求、视觉配置解析、错误分类、上下文内容、未知对象/规则/字段拒绝、非有限数值与空操作补丁拒绝、视觉补丁重新校验、证据来源、预取消零请求、部分流诊断保留、超时后不 fallback/不重试、fallback 元数据一致、直管实体网格、尺寸/拓扑分层读回、拓扑负例（删面/反转/重复面）、快照 1.1 严格校验、心跳与 IPC 目录契约、有界会话与 stop 文件、逐操作验证式保存与静默 no-op 拒绝、验收判定分项（partial 误放行/缺哈希/空集合/不同 plan）、benchmark schema 版本选择与篡改拒绝、IFC 空腔实体生成与文件重开测量（缺 Body/实心冒充/单位/长度/管径/放置错误/缺对象/重复 ID/断连接/规则身份缺失）、IFC 重试复用宿主回执、页面几何。2026-10-18 相关后端 79 项通过（`test_vw_runner` 45 + `test_municipal_delivery` 34）；验收判定 23 项；IFC 几何/交付 9 项；benchmark 版本/篡改新增 4 项。全仓 `uv run pytest tests/ -q` = **1653 passed / 6 skipped / 0 failed**；前端 28 项通过；`npm run build` 通过（保留既有大包与 Vite 告警）；lint 0 errors（118 既有 warnings）。当前验收数字与真实外部运行证据见交接状态，合成测试数据不作为研究实验结果。
+单元/集成测试覆盖草稿校验、几何距离、规则来源、参数锁、过期修复/视觉结果拒绝、确认失效、进程中断、真实读回证据要求、视觉配置解析、错误分类、上下文内容、未知对象/规则/字段拒绝、非有限数值与空操作补丁拒绝、视觉补丁重新校验、证据来源、预取消零请求、部分流诊断保留、超时后不 fallback/不重试、fallback 元数据一致、直管实体网格、尺寸/拓扑分层读回、拓扑负例（删面/反转/重复面）、快照 1.1 严格校验、心跳与 IPC 目录契约、有界会话与 stop 文件、逐操作验证式保存与静默 no-op 拒绝、验收判定分项（partial 误放行/缺哈希/空集合/不同 plan）、benchmark schema 版本选择与篡改拒绝、IFC 空腔实体生成与文件重开测量（缺 Body/实心冒充/单位/长度/管径/放置错误/缺对象/重复 ID/断连接/规则身份缺失）、IFC 重试复用宿主回执、页面几何。2026-10-18 相关后端 79 项通过（`test_vw_runner` 45 + `test_municipal_delivery` 34）；验收判定 23 项；IFC 几何/交付 9 项；benchmark 版本/篡改新增 4 项。2026-10-25 升级轮：全仓 `python -m pytest tests/ -q` = **1633 passed / 6 skipped / 1 failed**（唯一失败 `test_ids_xsd_compiles_in_fresh_process_with_broken_network` 经 git stash 基线复核为改动前既有的环境性失败，与本轮无关）；新增 `test_ultimate_municipal_combo.py` 28 项。当前验收数字与真实外部运行证据见交接状态，合成测试数据不作为研究实验结果。
 
 ### Vectorworks 直管实体验证边界
 
@@ -108,4 +120,4 @@ Vectorworks 逐管段的语义字段（稳定 ID、系统、端口拓扑、材�
 
 上一轮视觉结论：单图、三图和结构化检查已达到；没有得到可应用的补丁，因此没有执行“真实修复后复查”。90 秒是实测后的有界余量，不是成功保证；`reasoning_effort: low` 的官方语义未知，真实运行中 reasoning 长度仍可能很长。模型在 90 秒结果中把 P-002/SYN-BLDG-1 标为 `visual_observation`，但该冲突已由确定性输入提供，不能据此宣称独立视觉发现。本轮不追加 VLM 调用。
 
-本轮 Vectorworks 结论：代码已支持直管内外表面网格实体、实际顶点尺寸读回，并明确区分尺寸验证与闭合性验证（VW 2024 无面读回 API，闭合性恒为 unverified 且不可声称通过）；离线假宿主测试通过；**真机验收已通过**（2026-10-18：22/22 落盘、尺寸读回全对、语义 PASS、重开哈希一致），并修复了两个真机才暴露的宿主兼容缺陷。带实体几何和规则身份的 IFC 交付已在同日接通最小闭环：真实空腔拉伸实体、保存后重开测量、四层报告、模型级规则证据聚合、IFC 单独重试与前端分层展示；benchmark/schema 冻结基线已修复（全仓 1641 passed / 0 failed）。下一阶段为 IFC 与外部工具链互操作、完整 IDS 覆盖和工程合规验证。工作台已有修改记录仅用于本次任务可追溯，不代表实现 S0/S1/S2 或经验演进。
+本轮 Vectorworks 结论：代码已支持直管内外表面网格实体、实际顶点尺寸读回，并明确区分尺寸验证与闭合性验证（VW 2024 无面读回 API，闭合性恒为 unverified 且不可声称通过）；离线假宿主测试通过；**真机验收已通过**（2026-10-18：22/22 落盘、尺寸读回全对、语义 PASS、重开哈希一致），并修复了两个真机才暴露的宿主兼容缺陷。带实体几何和规则身份的 IFC 交付已在同日接通最小闭环：真实空腔拉伸实体、保存后重开测量、四层报告、模型级规则证据聚合、IFC 单独重试与前端分层展示；benchmark/schema 冻结基线已修复（全仓 1641 passed / 0 failed）。下一阶段为 IFC 与外部工具链互操作、完整 IDS 覆盖和工程合规验证。2026-10-25 起工作台已实现 S0→S1 自动迭代记录与 BIM-Wiki-Ontology 经验演化（确认交付后沉淀案例词条、两跳检索驱动修复与相机），工程判定仍由确定性校验独占。

@@ -2,6 +2,8 @@
 
 本文档提供清晰、一键复制执行的命令与验证流程，帮助你手动测试验证 **openBIMAgent** 的所有核心功能与前沿特性。
 
+> **时效说明（2026-10-25）**：文中标注的测试通过数（如 `999 passed`）是 2026-08 记录的当时快照，仅用于判断命令本身可运行；当前权威测试基线一律以 [`docs/architecture/PROJECT_HANDOFF_STATUS.md`](docs/architecture/PROJECT_HANDOFF_STATUS.md) 顶部轮次为准。市政管网能力自 2026-10-25 起已升级为 [150,2000]mm 动态查表 + CEGIS 五算子修复沙箱 + NBV/纵断面主动相机，升级细节见 [`docs/architecture/MUNICIPAL_WORKBENCH.md`](docs/architecture/MUNICIPAL_WORKBENCH.md)。
+
 ---
 
 ## 快速导航

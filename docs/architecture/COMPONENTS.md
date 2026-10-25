@@ -1,6 +1,6 @@
 # openBIMAgent 组件与运行配置详设
 
-版本：v0.9（M1 typed dual-host delivery）· 2026-08-03 · 姊妹篇：[ARCHITECTURE.md](ARCHITECTURE.md) · 实时进度：[PROJECT_HANDOFF_STATUS.md](PROJECT_HANDOFF_STATUS.md)
+版本：v0.10（M1 typed dual-host delivery + 2026-10-25 市政四阶段升级）· 2026-10-25 · 姊妹篇：[ARCHITECTURE.md](ARCHITECTURE.md) · 实时进度：[PROJECT_HANDOFF_STATUS.md](PROJECT_HANDOFF_STATUS.md)
 
 > 本文维护稳定组件事实，不重复维护实时测试数字。当前 G6 状态和真实宿主工件统一见交接状态文档。
 
@@ -65,6 +65,9 @@
 - production 晋级门禁：`confidence=high` 只是必要条件，还必须由 `verification.production_eligible()` 确认标准身份/状态、官方公开副本、核验日期和 URL、第 4.1.9 条/表 4.1.9、内容 SHA-256、原表定位、独立交叉复核及适用条件完整。任何证据漂移都降为 `review_required`，不能靠手改置信度绕过。属性缺失、无适用规则或多条同时适用分别为 `review_required/unsupported/ambiguous`，均不能产生生产 PASS/FAIL。
 - 双 PDF 原表核验后共编译 12 条 production 规则：建筑物 2.5m；给水外径 ≤200mm 为 1.0m、>200mm 为 1.5m；燃气 low/medium_b/medium_a/sub_high_b/sub_high_a 分别为 1.0/1.2/1.2/1.5/2.0m；通信 direct_buried/duct 均为 1.0m；电力 direct_buried/protective_conduit 均为 0.5m。旧通信 0.5m 和旧燃气中压 1.5m 已纠正；电力目标单元格不按电压分档。
 - `solver.py` 定义 `StraightGravitySolverInput v0.4` 与 `municipal-straight-gravity-solver v0.4.0`：限定两井一直管 DN300 混凝土污水，根据两端平面坐标、地面标高、设计坡度和地表类型计算最浅合规内底标高。障碍物只携带类别、几何及 `outer_diameter_mm/pressure_class/burial_method/voltage_kv` 等工程事实，不能携带 `ClearanceRule`。
+- `network_solver.py` 定义 `NetworkGravitySolverInput v0.1` 与多节点重力 DAG Solver（稳定拓扑序传播标高）。2026-10-25 起管径不再硬编码 DN300：能力面放宽为 [150, 2000] mm（区间外报 `unsupported_diameter`），逐段限值由 `lookup_pipe_normative_limits(diameter_mm, surface_type)` 动态查表分档返回（最小坡度 DN300 0.003 / DN400 0.002 / DN500 0.0015 / DN600+ 0.0010；井距设计保守档 40/50m；覆土 driveway 0.7 / sidewalk·green 0.6；净距 0.15m；特批下限 0.45m），逐段证据链按管径取用对应限值。
+- `utility/candidate.py` 实现三级刚柔约束与 CEGIS 拓扑修复沙箱：Tier 1 冻结国标红线（确定性校验器独占判定）；Tier 2 满包混凝土加固（`protection_measure=concrete_encasement` 或显式 `constraints.allow_exception_approval`）受控放宽覆土至 0.45m 并附 `exception_approval_id`；Tier 3 以 `compute_engineering_cost`（土方 `L·(D+0.6)·h̄²` + 管井/加固材料加权）做比选。`evaluate_repair_sandbox` 深拷贝并行推演 5 类拓扑修复算子（顺坡传导调坡 / 局部跌水井 / 平面正交折线绕行 / 超长管段自动插井 / 满包加固特批）及组合分支，按 `(violation_count, hard_clash_count, total_cost_score)` 字典序帕累托选优；`propose_candidate_repairs` 返回胜出补丁（签名向后兼容），`propose_candidate_repairs_with_ledger` 返回完整账本。锁定节点只改未锁定部分或启用其他算子，绝不整体罢工。
+- `utility/wiki_ontology.py` 维护 BIM-Wiki-Ontology 三位一体经验本体（属性图 `ontology_graph.json` + Obsidian 双链词条 + Harness² 探针门控）：`compile_and_archive_wiki_case` 在确认交付后沉淀 S0→S1→S2 案例词条（同步旧 `exemplars/auto_archive/index.json` 并更新算子边权重）；`retrieve_ontology_recipes` 两跳图谱检索输出算子优先级/推荐相机/复用构件（demoted 经验自动过滤，检索只读）；`update_recipe_probe_feedback` 连续 2 次探针失败自动熔断 `demoted`。`scripts/run_municipal_ablation_benchmark.py` 提供 12 场景（4 管径 × 5 病害）确定性消融基准，输出 `output/benchmark/`。
 - `collision_context` 缺失时 `clash_free=UNKNOWN`；`coverage=complete` 时按表 4.1.9 的水平净距语义，在 XY 平面计算设计管到 AABB 投影矩形或既有管投影中心线的实体表面距离并扣除管半径，Z 高差不参与。规则选择为 production 时逐障碍物生成 PASS/FAIL RuleEvidence；未晋级或选择不完整时生成 UNKNOWN。显式完整空清单可 PASS，等于限值按 `CLASH_TOLERANCE_M=1e-6` 通过。
 - 障碍物保持为 Solver Context，不进入 `CompiledUtilityIR` 交付实体集合；Evidence 保存障碍物 ID、实测水平净距、规则键、标准/表号、规范副本 SHA-256、原表定位和 Rule Set hash。安全措施减距尚无独立审批协议，不能自动放宽；水力参数仍缺失，`hydraulics_in_spec=UNKNOWN`。
 - Pipeline 只在 Playbook 声明 Solver 时执行，并把 `rule_source` 限制在当前 Domain Pack 内，拒绝绝对路径、`..` 越界、缺文件、Rule Set Schema/版本漂移。结果落盘 `municipal_rule_set.json`、`compiled_utility_ir.json` 与 `domain_gate_report.json`；Solver 已判定的 PASS/FAIL 不允许被外部 evidence 覆盖，外部检查器只能补齐 UNKNOWN。
@@ -129,6 +132,7 @@
 - 两环维度裁剪与 rubric 定稿见 ARCH §3;收敛四选一 + best-so-far(ADR-0004)。
 - **critic 强制 CoT**;评分事件落盘 `rubric_scores` + `reasoning` + `anchor_ref` + `actionable_feedback`。
 - 环阈值在 playbook `acceptance`;超限 ESCALATE 不死循环。
+- 2026-10-25 市政视觉升级（`vision/municipal.py`）：`compute_clash_normal_nbv` 以管轴线 × 障碍物主轴/轴线叉乘公垂线求正交冲突平面最佳视点（支持 `delta_azimuth/elevation_deg` 偏移）；`render_longitudinal_profile_view` 以 Matplotlib 渲染里程-高程工程纵断面 PNG（地面线/覆土控制线/管顶底线/井剖面/障碍物投影）；`municipal_to_scad` 自动叠加 Set-of-Mark 方位罗盘、水流方向箭头与米制高程标尺图层；`render_custom_camera_views` 支持 `free_orbit` / `nbv_clash_normal` / `longitudinal_profile` 三模式（渲染不可用如实报 `render_unavailable`）。`MunicipalVisualReport` 新增 `next_camera_requests` 与 `active_camera_trajectory`；`check_visual` 默认附挂 1 张 NBV 特写 + 1 张纵断面，迭代轮次的相机轨迹写入 `state_diff_audit.json`。
 
 ### 2.12 session（trace + 多会话，schema 定稿自 07 报告）
 
