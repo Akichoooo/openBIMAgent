@@ -276,10 +276,16 @@ def test_network_solver_rejects_wrong_junction_semantics_and_unsupported_diamete
     with pytest.raises(UtilitySolverError, match="必须声明为 junction"):
         solve_network_gravity_utility(wrong_type)
 
+    # 动态查表能力面为 [150, 2000] mm：DN400 合法（分档限值由 lookup 提供），
+    # 只有区间外管径才 unsupported_diameter。
     unsupported = network_payload()
-    unsupported["segments"][0]["diameter_mm"] = 400.0
-    with pytest.raises(UtilitySolverError, match="300.0 was expected|仅支持 DN300"):
+    unsupported["segments"][0]["diameter_mm"] = 2500.0
+    with pytest.raises(UtilitySolverError, match="unsupported_diameter"):
         solve_network_gravity_utility(unsupported)
+    nonpositive = network_payload()
+    nonpositive["segments"][0]["diameter_mm"] = 0.0
+    with pytest.raises(UtilitySolverError, match="greater than 0"):
+        solve_network_gravity_utility(nonpositive)
 
 
 def test_network_solver_rejects_cover_conflict_and_preserves_unknown_hydraulics() -> None:

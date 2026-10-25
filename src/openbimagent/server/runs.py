@@ -624,6 +624,19 @@ def record_exemplar_feedback(
 
 
 
+def retrieve_municipal_ontology_recipes(state: dict[str, Any], base_dir: Path | None = None) -> dict[str, Any]:
+    """检索市政本体配方（runs 入口的薄封装；两跳图谱检索见 ``utility.wiki_ontology``）。
+
+    输入为 municipal workflow state（或含 ``candidate``/``validation`` 的等价 dict），
+    返回 ``operator_priority`` / ``recommended_camera_requests`` / ``reusable_assets``。
+    只读：本体目录不存在时返回模式驱动的缺省配方，绝不写盘。
+    """
+    from openbimagent.utility.wiki_ontology import retrieve_ontology_recipes
+
+    issues = [item for item in ((state or {}).get("validation") or {}).get("issues", []) if isinstance(item, dict)]
+    return retrieve_ontology_recipes((state or {}).get("candidate") or {}, issues, base_dir=base_dir, top_k=3)
+
+
 def _archive_run_artifacts(playbook: Path, session_id: str, brief: str, out_dir: Path) -> dict[str, Any] | None:
     """P2 素材积累：交付工件只增不改地归档进 Domain Pack assets/auto_archive/<session>/。
 
@@ -710,6 +723,23 @@ def _archive_run_artifacts(playbook: Path, session_id: str, brief: str, out_dir:
                 pass
     index.append(entry)
     index_path.write_text(json.dumps(index, ensure_ascii=False, indent=1), encoding="utf-8")
+    # BIM-Wiki-Ontology 写回链路：经验录取通过（confirm + 零硬冲突 + 交付完成）时，
+    # 把同一会话编译为 Wiki 案例词条（落在 <pack>/wiki_ontology/，与本归档同包）。
+    if experience_record is not None and experience_record.get("admission_verified") is True and state is not None:
+        try:
+            from openbimagent.utility.wiki_ontology import compile_and_archive_wiki_case
+
+            wiki = compile_and_archive_wiki_case(
+                session_id,
+                {"candidate": (three or {}).get("S0"), "validation": None},
+                state,
+                {},
+                base_dir=pack / "wiki_ontology",
+            )
+            entry["wiki_case"] = {key: wiki.get(key) for key in ("case_id", "markdown_path", "winning_operators", "total_cost_score")}
+            index_path.write_text(json.dumps(index, ensure_ascii=False, indent=1), encoding="utf-8")
+        except Exception:  # noqa: BLE001 — Wiki 沉淀失败不影响既有归档
+            pass
     return entry
 
 

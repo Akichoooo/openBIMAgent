@@ -57,4 +57,7 @@ domain_packs/*/assets/auto_archive/
 
 # Pytest run logs
 .pytest-*.log
-
+# BIM-Wiki-Ontology 运行时生成的经验词条（同 auto_archive 惯例）
+domain_packs/*/wiki_ontology/
+# 消融基准输出
+output/

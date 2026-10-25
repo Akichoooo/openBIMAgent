@@ -338,10 +338,12 @@ def _classify_vlm_exception(
 
 
 def propose_repairs(state: dict) -> list[dict]:
+    ontology = state.get("ontology") if isinstance(state.get("ontology"), dict) else {}
     return propose_candidate_repairs(
         UtilityCandidate(solver_input=state["candidate"]),
         rule_context=state["rule_context"],
         locked_paths=[item["path"] for item in state["locks"]],
+        operator_priority=ontology.get("operator_priority"),
     )
 
 
@@ -389,6 +391,24 @@ def check_visual(
         )
     render_ms = int((time.perf_counter() - render_started) * 1000)
 
+    # 具身主动相机：默认挂接 1 张 NBV 冲突正交特写 + 1 张工程纵断面剖切图。
+    # 3D 特写依赖 OpenSCAD，不可用时如实记录 render_unavailable，绝不伪造。
+    extra_views: list[dict[str, Any]] = []
+    try:
+        from openbimagent.vision.municipal import render_custom_camera_views
+
+        extra_views = render_custom_camera_views(
+            state["validation"]["compiled_ir"],
+            state["candidate"],
+            [
+                {"mode": "nbv_clash_normal", "view_id": "nbv_clash_normal"},
+                {"mode": "longitudinal_profile", "view_id": "longitudinal_profile"},
+            ],
+            output_dir,
+        )
+    except Exception:  # noqa: BLE001 — 主动相机失败不阻断基础三视图检查
+        extra_views = []
+
     if registry is None or config.get("status") != "ready":
         code = str(config.get("status") or "configuration_error")
         return _failure(
@@ -423,6 +443,8 @@ def check_visual(
             requirement_brief=requirement_brief if requirement_brief is not None else state.get("requirement_brief"),
             iteration_round=iteration_round,
             prior_iteration_patches=prior_iteration_patches,
+            extra_views=extra_views,
+            active_camera_trajectory=extra_views,
         )
     except Exception as exc:  # noqa: BLE001 — classify provider/render/schema failures explicitly
         code, stage, called = _classify_vlm_exception(exc, diagnostics)
@@ -481,6 +503,12 @@ def check_visual(
             "preview": preview.model_dump(mode="json"),
             "workflow_candidate_sha256": state["candidate_sha256"],
             "vision_config": config,
+            "active_camera_trajectory": [
+                {key: value for key, value in view.items() if key in {"view_id", "mode", "status", "path", "camera", "image_sha256"}}
+                for view in extra_views
+                if isinstance(view, dict)
+            ],
+            "next_camera_requests": [dict(item) for item in (getattr(report, "next_camera_requests", None) or []) if isinstance(item, dict)],
         }
     )
     return payload

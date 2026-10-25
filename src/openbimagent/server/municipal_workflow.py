@@ -83,12 +83,14 @@ class MunicipalWorkflowStore:
     No claim of a transaction across the filesystem and an external CAD host.
     """
 
-    def __init__(self, root: Path, *, validator: Callable = _validate):
+    def __init__(self, root: Path, *, validator: Callable = _validate, ontology_base_dir: Path | None = None):
         self.root = Path(root)
         self.validator = validator
         self._guard = threading.RLock()
         self._host_guard = threading.Lock()
         self._instance = uuid4().hex
+        # BIM-Wiki-Ontology 存储目录；None 走模块缺省（domain_packs/municipal_utility/wiki_ontology）。
+        self.ontology_base_dir = Path(ontology_base_dir) if ontology_base_dir is not None else None
 
     def _path(self, session_id: str) -> Path:
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", session_id):
@@ -284,7 +286,8 @@ class MunicipalWorkflowStore:
             from openbimagent.server.municipal_actions import check_visual
 
             visual_checker = check_visual
-        requested = max_rounds if max_rounds is not None else body.get("max_rounds", 3)
+        # 默认自动迭代轮次为 4（可用 body.max_rounds 覆盖，仍被夹在 [1, 10]）。
+        requested = max_rounds if max_rounds is not None else body.get("max_rounds", 4)
         try:
             rounds_limit = max(1, min(int(requested), 10))
         except (TypeError, ValueError) as exc:
@@ -321,6 +324,8 @@ class MunicipalWorkflowStore:
             self._write(sid, state)
 
         applied: list[dict] = []
+        audit_rounds: list[dict] = []
+        all_cited_cases: list[str] = []
         rounds_completed = 0
         converged = False
         rolled_back = False
@@ -328,8 +333,44 @@ class MunicipalWorkflowStore:
         last_report: dict | None = None
 
         for round_idx in range(1, rounds_limit + 1):
+            audit: dict[str, Any] = {"round": round_idx, "at": _now()}
+            audit_rounds.append(audit)
+            recipes: dict | None = None
+            ontology_trace: list[dict[str, Any]] = []
+            cited_cases: list[str] = []
             with self._guard:
                 state = self.get(sid)
+                # 两跳本体检索：违规 → 冲突模式 → {算子优先级, 相机配方, 复用构件}。
+                try:
+                    from openbimagent.utility.wiki_ontology import retrieve_ontology_recipes
+
+                    issues = [item for item in ((state.get("validation") or {}).get("issues") or []) if isinstance(item, dict)]
+                    recipes = retrieve_ontology_recipes(
+                        state.get("candidate") or {}, issues, base_dir=self.ontology_base_dir, top_k=3
+                    )
+                    cited_cases = [str(case.get("case_id")) for case in recipes.get("cases", []) if case.get("case_id")]
+                    all_cited_cases.extend(case for case in cited_cases if case not in all_cited_cases)
+                    ontology_trace.append({
+                        "event": "retrieve",
+                        "matched_patterns": recipes.get("matched_patterns"),
+                        "operator_priority": recipes.get("operator_priority"),
+                        "cited_cases": cited_cases,
+                        "demoted_excluded": recipes.get("demoted_excluded"),
+                    })
+                except Exception as exc:  # noqa: BLE001 — 本体检索失败绝不阻断迭代
+                    ontology_trace.append({"event": "retrieve_failed", "error": str(exc)[:200]})
+                if recipes is not None:
+                    state["ontology"] = {
+                        "operator_priority": recipes.get("operator_priority"),
+                        "cited_cases": cited_cases,
+                        "recommended_camera_requests": recipes.get("recommended_camera_requests"),
+                    }
+                audit["ontology_evolution_trace"] = ontology_trace
+                ledger = _safe_sandbox_ledger(state, (recipes or {}).get("operator_priority") if recipes else None)
+                if ledger is not None:
+                    audit["pareto_proposals_ledger"] = ledger.get("pareto_proposals", [])
+                    audit["winning_operator"] = ledger.get("winning_operator")
+                    audit["engineering_cost"] = {"before": (ledger.get("baseline") or {}).get("engineering_cost")}
                 proposals = repair_proposer(deepcopy(state)) if repair_proposer else []
                 proposals = [item for item in proposals if isinstance(item, dict) and item.get("path")]
                 if proposals:
@@ -343,14 +384,19 @@ class MunicipalWorkflowStore:
                     state.update(candidate=candidate, candidate_sha256=_hash(candidate), validation=result,
                                  revision=state["revision"] + 1, confirmation=None, visual=None,
                                  proposal=None, delivery={}, updated_at=_now())
+                    if isinstance(audit.get("engineering_cost"), dict):
+                        audit["engineering_cost"]["after"] = _safe_engineering_cost(candidate)
                     state["history"].append({
                         "action": "repair", "source": "automatic", "round": round_idx,
                         "revision": state["revision"], "requirement_revision": requirement_revision,
                         "at": state["updated_at"], "patches": deepcopy(proposals),
                         "after_sha256": state["candidate_sha256"], "candidate": deepcopy(candidate),
+                        "pareto_proposals_ledger": _compact_sandbox_ledger(ledger) if ledger else None,
+                        "engineering_cost": audit.get("engineering_cost"),
                     })
                     self._write(sid, state)
                     applied.extend({**deepcopy(item), "round": round_idx, "source": "automatic"} for item in proposals)
+                    audit["applied_patches"] = deepcopy(proposals)
                 snapshot = deepcopy(state)
 
             output_dir = self._path(sid).parent / f"auto-r{snapshot['revision']}-round-{round_idx}-{uuid4().hex[:8]}"
@@ -364,6 +410,8 @@ class MunicipalWorkflowStore:
             last_report = deepcopy(report) if isinstance(report, dict) else {
                 "status": "unavailable", "failure_code": "invalid_report"
             }
+            if isinstance(last_report.get("active_camera_trajectory"), (list, tuple)):
+                audit["active_camera_trajectory"] = list(last_report["active_camera_trajectory"])
 
             if last_report.get("status") == "unavailable" or last_report.get("failure_code"):
                 with self._guard:
@@ -406,9 +454,22 @@ class MunicipalWorkflowStore:
                 result = self.validator(candidate, state.get("rule_context"))
                 before = _hard_failure_keys(state.get("validation") or {})
                 after = _hard_failure_keys(result)
-                if len(after) > len(before):
+                # 严格回滚门禁：修旧引新（出现修改前不存在的新违规码）、硬违规总数
+                # 增加、或引入 obstacle_clearance 碰撞，任一成立立即回滚本轮补丁。
+                new_codes = after - before
+                obstacle_introduced = any("clash" in code or "obstacle" in code for code in new_codes)
+                if new_codes or len(after) > len(before) or obstacle_introduced:
                     rolled_back = True
-                    rollback_reason = f"视觉补丁使硬约束失败项从 {len(before)} 项增至 {len(after)} 项，已回滚本轮补丁。"
+                    reasons: list[str] = []
+                    if len(after) > len(before):
+                        reasons.append(f"视觉补丁使硬约束失败项从 {len(before)} 项增至 {len(after)} 项")
+                    if new_codes:
+                        reasons.append(f"引入修改前不存在的新违规码 {sorted(new_codes)}")
+                    if obstacle_introduced:
+                        reasons.append("引入 obstacle_clearance 碰撞")
+                    rollback_reason = "；".join(reasons) + "，已回滚本轮补丁。"
+                    audit["rolled_back"] = True
+                    audit["rollback_reason"] = rollback_reason
                     state.update(visual=deepcopy(last_report), confirmation=None, proposal=None, updated_at=_now())
                     state["auto_retry_rounds"] = max(int(state.get("auto_retry_rounds", 0)), round_idx)
                     state["degradation_rollback"] = True
@@ -437,6 +498,19 @@ class MunicipalWorkflowStore:
                 self._write(sid, state)
                 applied.extend({**deepcopy(item), "round": round_idx, "source": "visual_proposal"} for item in patches)
 
+        # Harness² 探针门控：按本轮是否触发回滚，对引用的历史案例回写真实结果。
+        final_ontology_trace: list[dict[str, Any]] = []
+        if all_cited_cases:
+            probe_passed = not rolled_back
+            try:
+                from openbimagent.utility.wiki_ontology import update_recipe_probe_feedback
+
+                for case_id in all_cited_cases:
+                    feedback = update_recipe_probe_feedback(case_id, probe_passed, base_dir=self.ontology_base_dir)
+                    final_ontology_trace.append({"event": "probe_feedback", "case_id": case_id, "probe_passed": probe_passed, **{k: feedback.get(k) for k in ("pass_count", "fail_streak", "demoted")}})
+            except Exception as exc:  # noqa: BLE001 — 探针回写失败不阻断主流程
+                final_ontology_trace.append({"event": "probe_feedback_failed", "error": str(exc)[:200]})
+
         with self._guard:
             state = self.get(sid)
             if state is None:
@@ -451,6 +525,18 @@ class MunicipalWorkflowStore:
                 "applied_patches": deepcopy(applied),
             })
             published = self._write(sid, state)
+            self._write_state_diff_audit(sid, {
+                "session_id": sid,
+                "requirement_revision": requirement_revision,
+                "max_rounds": rounds_limit,
+                "rounds_completed": rounds_completed,
+                "converged": converged,
+                "rolled_back": rolled_back,
+                "rollback_reason": rollback_reason,
+                "rounds": audit_rounds,
+                "ontology_evolution_trace": [*final_ontology_trace, *(trace for audit_round in audit_rounds for trace in audit_round.get("ontology_evolution_trace", []))],
+                "written_at": _now(),
+            })
 
         return {
             "session_id": sid,
@@ -466,6 +552,24 @@ class MunicipalWorkflowStore:
             "last_visual": last_report,
             "state": published,
         }
+
+    def _write_state_diff_audit(self, sid: str, document: dict) -> None:
+        """把每轮迭代的沙箱账本/造价/相机轨迹/本体演化写入 state_diff_audit.json。
+
+        只增不改：同名文件存在时追加到 ``runs`` 列表，保留全部历史轮次供审计。
+        """
+        path = self._path(sid).parent / "state_diff_audit.json"
+        runs: list[dict] = []
+        if path.is_file():
+            try:
+                existing = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(existing, dict) and isinstance(existing.get("runs"), list):
+                    runs = existing["runs"]
+            except (json.JSONDecodeError, OSError):
+                runs = []
+        runs.append(document)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"session_id": sid, "runs": runs}, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
 
     def confirm(self, sid: str, body: dict) -> dict:
         with self._guard:
@@ -556,7 +660,61 @@ class MunicipalWorkflowStore:
             state = self.get(sid)
             state["delivery"] = result
             state["history"].append({"action": "export", **result})
-            return self._write(sid, state)
+            written = self._write(sid, state)
+            self._compile_wiki_case_after_export(sid, state)
+            return written
+
+    def _compile_wiki_case_after_export(self, sid: str, state: dict) -> dict | None:
+        """确认交付成功后沉淀 Wiki 案例词条（confirm + 零硬冲突 + 真实宿主回执）。
+
+        仅当宿主回执带有语义/几何读回证据（真实执行，而非测试桩回执）、当前
+        版本已确认且确定性校验全部通过时才归档；任何失败静默跳过，不影响交付。
+        """
+        try:
+            delivery = state.get("delivery") or {}
+            receipt = delivery.get("receipt") or {}
+            if delivery.get("status") not in {"completed", "partial"}:
+                return None
+            if not (receipt.get("semantic_snapshot") or receipt.get("geometry_snapshot")):
+                return None
+            if not (state.get("validation") or {}).get("executable"):
+                return None
+            confirmation = state.get("confirmation") or {}
+            if confirmation.get("candidate_sha256") != state.get("candidate_sha256"):
+                return None
+            from openbimagent.utility.wiki_ontology import compile_and_archive_wiki_case
+
+            history = [entry for entry in state.get("history", []) if isinstance(entry, dict)]
+            s0_entry = next((entry for entry in history if entry.get("action") == "auto_loop_start"), None)
+            initial_candidate = (s0_entry or {}).get("candidate") or next(
+                (entry.get("candidate") for entry in history if entry.get("action") == "save" and entry.get("candidate")), state.get("candidate")
+            )
+            initial_state = {
+                "candidate": initial_candidate,
+                "validation": {"issues": [
+                    {"rule_id": rule_id, "status": "fail", "severity": "error"}
+                    for rule_id in ((s0_entry or {}).get("initial_failure_modes") or [])
+                ]},
+            }
+            audit: dict = {}
+            audit_path = self._path(sid).parent / "state_diff_audit.json"
+            if audit_path.is_file():
+                try:
+                    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, OSError):
+                    audit = {}
+            compiled = compile_and_archive_wiki_case(sid, initial_state, state, audit, base_dir=self.ontology_base_dir)
+            state["history"].append({
+                "action": "wiki_case_compiled", "revision": state["revision"],
+                "at": _now(), "case_id": compiled.get("case_id"),
+                "markdown_path": compiled.get("markdown_path"),
+                "winning_operators": compiled.get("winning_operators"),
+                "total_cost_score": compiled.get("total_cost_score"),
+            })
+            self._write(sid, state)
+            return compiled
+        except Exception:  # noqa: BLE001 — 经验沉淀失败绝不影响已完成的交付
+            return None
 
     def retry_ifc(self, sid: str, body: dict, retryer: Callable) -> dict:
         """Rebuild the IFC stage only; the host receipt and host file are reused unchanged."""
@@ -676,6 +834,45 @@ class MunicipalWorkflowStore:
 def _blocking(validation: dict) -> set[str]:
     return {f"{i.get('rule_id')}|{i.get('check_name')}|{i.get('object_ids')}|{i.get('field_path')}"
             for i in validation.get("issues", []) if i.get("status") in {"fail", "unknown"} and i.get("severity") != "info"}
+
+
+def _compact_sandbox_ledger(ledger: dict) -> dict:
+    """压缩沙箱帕累托账本以便写进 history（去掉补丁正文，保留比选指标）。"""
+    return {
+        "winning_operator": ledger.get("winning_operator"),
+        "baseline": ledger.get("baseline"),
+        "pareto_proposals": [
+            {key: value for key, value in proposal.items() if key not in {"patches", "engineering_cost"}}
+            for proposal in ledger.get("pareto_proposals", [])
+        ],
+    }
+
+
+def _safe_sandbox_ledger(state: dict, operator_priority: list[str] | None = None) -> dict | None:
+    """计算当前状态的 CEGIS 沙箱账本；任何失败都不得阻断主流程。"""
+    try:
+        from openbimagent.utility.candidate import UtilityCandidate, propose_candidate_repairs_with_ledger
+
+        candidate = state.get("candidate")
+        if not isinstance(candidate, dict):
+            return None
+        return propose_candidate_repairs_with_ledger(
+            UtilityCandidate(solver_input=deepcopy(candidate)),
+            rule_context=state.get("rule_context"),
+            locked_paths=[item.get("path") for item in state.get("locks", []) if isinstance(item, dict)],
+            operator_priority=operator_priority,
+        )
+    except Exception:  # noqa: BLE001 — 账本只做审计，绝不影响迭代主路径
+        return None
+
+
+def _safe_engineering_cost(candidate: dict) -> dict | None:
+    try:
+        from openbimagent.utility.candidate import compute_engineering_cost
+
+        return compute_engineering_cost(candidate)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _hard_failure_keys(validation: dict) -> set[str]:
